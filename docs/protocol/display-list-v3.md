@@ -111,6 +111,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
 | `0x50` | `PACKAGE` | host → client | JSON (§11.8; Typst host, `accept` `packages-v1`) |
 | `0x51` | `PROFILE` | host → client | JSON (§6.9; the reply to a client's `PROFILE`) |
+| `0x52` | `SPAN_SHIFT` | host → client | JSON (§5.3.1; `accept` `span-shift-v1`) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
@@ -604,6 +605,49 @@ engine run of a compile starts its span ids afresh and declares them again.
 Spans are ids, not byte offsets: an edit shifts lines, and the next
 compile's `SOURCES` say where every span now is.
 
+#### 5.3.1 `SPAN_SHIFT`: moved lines in one message (`span-shift-v1`)
+
+Kind `0x52`, host to client, accept-gated: the host sends it only to a
+client whose `HELLO.accept` lists `span-shift-v1` (the LaTeX host lists it
+in `capabilities`); any other client gets the `SOURCES` re-declarations of
+§5.3, unchanged. An edit that turns a file's old lines `from..old_end` into
+`from..new_end` moves every span on a later line by `new_end - old_end`
+lines; a line inserted near the top of a long source moves every later
+span, and re-declaring them all was one `SOURCES` entry per span (60,000
+for a long book), applied span by span on the client's main thread. The
+shift says it once:
+
+```json
+{"shifts": [[1, 13, 1], [1, 40, -2]]}
+```
+
+Each entry is `[file, from, delta]`. Applied in order, it moves every span
+the client holds in `file` whose line is `>= from` to line `+ delta`; the
+host sends only entries with `from + delta >= 1`, so no line goes below 1
+(a client refuses one that does not). Spans on other lines and files stay.
+
+It comes where the re-declaring `SOURCES` came: after an incremental
+compile's `STARTED`, before its first page, and it says where the spans
+went since the client's last compile (all its edits, in order, across
+files). A `SOURCES` may follow it, re-declaring the spans the shifts do not
+place (one that moved some other way, or that was sent where it already
+was); a client applies the `SPAN_SHIFT` first, then the `SOURCES`. The two
+together leave the client exactly the spans the `SOURCES` of every moved
+span would: the host checks each span the client holds against where the
+shifts put it, and re-declares any that differ. Spans of the edited lines
+themselves (retired, §5.3: they keep their line) are not moved: their lines
+are below `from` (the `from` of a shift is the edit's `old_end`).
+
+Lines only: spans carry no byte offsets (a GLYPH's `col` is a column within
+its line, which a shift of whole lines leaves alone), so there is no byte
+delta. A host that keeps too few shifts to describe a client's (it keeps
+the last few thousand) re-declares the moved spans in `SOURCES` instead.
+
+The macOS app applies a shift lazily (`DL3SourceMap`): it records it, and a
+lookup carries a span's line forward through the shifts since the span was
+declared, or a line backward through them to find its spans; the shifts are
+folded into the table off the main thread.
+
 ## 6. The engine host and its socket
 
 ### 6.1 Transport
@@ -674,7 +718,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
 
 A client may add `"accept": [...]` to its `HELLO`: the optional message
 families it wants, of those the host lists in `capabilities` (`diag-v1`,
-§6.7; `progress-v1`, §6.8; 3.3's features, §11.7). The host ignores names
+§6.7; `progress-v1`, §6.8; `span-shift-v1`, §5.3.1; 3.3's features, §11.7). The host ignores names
 it does not know.
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
@@ -1424,6 +1468,15 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
   INCOMPLETE, not expressed (2 of the 82 parity fixtures use `gs`).
+- The LaTeX host also flags INCOMPLETE (lane RENDER-AUDIT,
+  `fixtures/preview-probes`): a form drawn in a graphics state other than
+  a new page's (a PDF form inherits the colour, text render mode and pen it
+  is drawn in, a `FORM` starts from §4.3's state; pdfTeX writes no colour
+  at a form's start); stroked text (modes 1, 2) whose pen is not a new
+  graphics state's or whose CTM scales or turns it, for a client without
+  `line-state` (§11.4); and a glyph a `\pdfliteral` shows in a code TeX has
+  not typeset in that font (it is not in the PDF's font subset, and past
+  `/LastChar` its width is 0).
 - TrueType, OpenType and Type 3 (PK) fonts reach a display list (§5.1,
   §5.1.1) for a client that asks for them; a Type 3 font from a `.pgc`
   file, and a PK font on the compile that first makes its PK file, are
@@ -1443,9 +1496,8 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
-- Typst (3.3, §11): the Typst host produces E1–E4 and E7 (E3, E4 for a
-  client that accepts them); images and islands (E5, E6) are flagged
-  INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not answered yet.
+- Typst (3.3, §11): the Typst host produces E1–E7 (E3–E6 for a client
+  that accepts them); `RESOLVE`/`LOCATE` (E8) is not answered yet.
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1466,7 +1518,10 @@ items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
 "…: pixel gate row pending (DESIGN.md §15.5)", so the client shows
 `DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
 rows only. Pending today: ICCBased and Separation colours
-(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs.
+(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs,
+raster images (`IMAGE` with `data`), PDF islands (§11.5). Colour glyphs
+(drawn by typst-pdf as Type 3 procedures) are neither islanded nor drawn
+yet: a page with one is INCOMPLETE whatever the client accepts.
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1620,7 +1675,7 @@ strokes the glyph's outline, mapped by the glyph matrix, with that pen in
 stream space. Under a CTM that is not a similarity (a non-uniform scale, a
 skew) the pen is no circle and has no one width: the page is INCOMPLETE.
 
-### 11.5 Images from bytes and PDF islands (E5, E6; specified)
+### 11.5 Images from bytes and PDF islands (E5, E6; produced)
 
 Typst images come from bytes as often as from files (`image(bytes)`,
 packages), and typst-pdf re-encodes them. For a client that accepts
@@ -1631,11 +1686,37 @@ after it:
 ```
 u32 id                 the IMAGE's id
 u32 n                  parts, then n × { u32 len; u8[len] }:
-                       part 0: the image data;
-                       part 1 (when the IMAGE says "smask": true): the soft mask
+                       the image data;
+                       then, when the IMAGE says "smask": true, the soft mask
                          samples, 8 bits per pixel, rows top first;
-                       part 2 (when the IMAGE says "icc": true): the ICC profile
+                       then, when the IMAGE says "icc": true, the ICC profile
 ```
+
+The parts present follow in that order (`n` is 1, 2 or 3): an image with a
+profile and no soft mask has the profile as its second part. `raw` samples
+are rows top first, each row `width × components × bits / 8` bytes rounded
+up (16-bit samples big-endian, as the PDF has them).
+
+**The Typst host (E6).** For a raster image the host sends what typst-pdf's
+export draws: the image XObject's samples after Flate (`type` `raw`;
+typst-pdf has already converted the file to 8-bit grey or RGB, or CMYK),
+or the JPEG it passes through (`type` `jpeg`), its `/SMask` samples and
+the ICC profile of its `ICCBased` space, drawn by an IMAGE item whose
+matrix is the CTM at the PDF's `Do`. An image is sent once per connection
+(its `key` is the SHA-256 of these keys and its streams), and the walk
+finds each `Do` where the frame puts the image (the unit square's corners
+within 0.01 bp; a JPEG's EXIF orientation as typst-pdf draws it). What a
+v3.3 IMAGE cannot carry -- a `/Decode` array (an inverted CMYK JPEG), an
+image mask, a colour-key mask, a soft mask of another size, an image under
+constant alpha or any other ExtGState key (§11.3) -- flags the page
+INCOMPLETE. So does an image past the per-compile budget of IMAGE_DATA
+bytes (`--image-budget`, default 128 MiB, counted before anything is
+decoded), or one whose IMAGE_DATA would pass the frame limit (§2), so that
+no image can end the connection. Streams are inflated to at most their
+expected size (an image's samples) or 256 MiB, and an ICC profile is read
+up to 4 MiB; past that the page is INCOMPLETE. Measured on Typst's test
+suite: every raster image of the 2,622 snippets that compile (71) is the
+PDF's bit for bit, CTM and pixels (`examples/positions_suite.rs`).
 
 3.3 `IMAGE` keys:
 
@@ -1654,15 +1735,38 @@ unless the PDF carries the file's own bytes (a JPEG it passes through), when
 `type` is `jpeg` and the data is the file.
 
 **PDF islands (E5).** What v3 cannot draw item by item — gradients
-(conic included), tilings, SVG images, colour glyphs, gradient-filled text
-— the Typst host may send as a one-page PDF that typst-pdf exports for the
-construct's bounding box (`page_ranges`, untagged): an `IMAGE` with
-`"type": "pdf"`, `"island": true`, `"data": true`, `page` 1, `page_box`
-`media`, its `width`/`height` and `orig_x`/`orig_y` in bp, drawn by an IMAGE
-item whose matrix maps the island's page space to stream space (§5.2). A
-page that would need an island but whose client does not accept
-`image-data` is INCOMPLETE. Parity by construction is a **belief** until its
-gate row passes (DESIGN.md §15.4).
+(conic included), tilings, SVG and PDF images, gradient-filled or
+gradient-stroked text, a gradient page fill — the Typst host sends as a
+one-page PDF: an `IMAGE` with `"type": "pdf"`, `"island": true`,
+`"data": true`, `page` 1, `page_box` `media`, `width`/`height` and
+`orig_x`/`orig_y` (bp) of its box, drawn by an IMAGE item whose matrix maps
+the island's page space to stream space (§5.2); its one part is the PDF.
+
+The Typst host exports, untagged, a page **of the page's own size and
+bleed** holding only that construct, inside the same chain of frames
+(sizes, hard or soft), groups, transforms and clips as on the page (a page
+fill: an empty page with that fill). typst-pdf then composes the same
+transforms in the same order, so the island's content stream carries the
+page's own numbers, the island's box is the page's, and the IMAGE item's
+matrix is the identity. A client draws it clipped as the display list's
+clip stack says (the island repeats its groups' clips). An island is sent
+once per connection while a page the client holds uses it; an image or
+island id no held page uses is released after the compile and rebound by
+a later one (§5), so moving an island on every edit does not grow the
+client's store. A page that would need an island but whose client does
+not accept `image-data` is INCOMPLETE.
+
+*Measured (2026-10-04, `examples/positions_suite.rs`):* on Typst's test
+suite, the 828 islands of the 2,622 snippets that compile all have the
+page's box, and every glyph (1,466), path (754) and XObject their content
+streams show is, in order, one the page's content stream shows bit for bit
+(the independent checker's `check_island`); with `--draw-ungated` (no
+pixel gate yet, §11), the only pages INCOMPLETE for a client that accepts
+`color-spaces`, `line-state` and `image-data` are the 26 with colour
+glyphs. An island export took 10 ms on average (at most 177 ms) and 15 kB
+(at most 236 kB), under load. That the
+client's drawing of an island equals the page's pixels at 2× and 3× is a
+**belief** until its gate row passes (DESIGN.md §15.4).
 
 ### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; specified)
 
@@ -1690,8 +1794,8 @@ The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
 draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
 `font-program-refs` and `font-files` (§11.1). The host lists in
 `capabilities` what it can send: the Typst host says `opentype-glyphs`,
-`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces` and
-`line-state` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
+`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces`,
+`line-state` and `image-data` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
 is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
 send sections 8 and 10 to any 3.x client; a reader that does not know them
 skips them.

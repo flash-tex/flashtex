@@ -1,0 +1,27 @@
+e0-origin_main: a hit saves 0.255 M, a recording costs 0.799 M (break-even 3.14 hits per recording)
+   beamer-5: net -0.112 G, hits 1552, recordings 573, fit +0.063 G
+   beamer-30: net -6.641 G, hits 31844, recordings 1794, fit -6.674 G
+   fx:beamer-madrid: net +0.056 G, hits 3571, recordings 1319, fit +0.145 G
+   fx:beamer-polish: net -0.271 G, hits 3845, recordings 989, fit -0.189 G
+   fx:beamer-overlays: net -0.683 G, hits 3796, recordings 454, fit -0.604 G
+   fx:beamer-blocks-columns: net +0.629 G, hits 951, recordings 1205, fit +0.721 G
+   fx:framed-tikz-theorems: net +0.099 G, hits 39, recordings 165, fit +0.122 G
+   infdesc: net +12.332 G, hits 11039, recordings 18920, fit +12.311 G
+e1-in_agent_kabir-claude-l6_bm-first-write: a hit saves 0.257 M, a recording costs 0.867 M (break-even 3.38 hits per recording)
+   beamer-5: net -0.091 G, hits 1552, recordings 573, fit +0.098 G
+   beamer-30: net -6.583 G, hits 31844, recordings 1794, fit -6.623 G
+   fx:beamer-madrid: net +0.106 G, hits 3571, recordings 1319, fit +0.226 G
+   fx:beamer-polish: net -0.248 G, hits 3850, recordings 984, fit -0.136 G
+   fx:beamer-overlays: net -0.667 G, hits 3796, recordings 454, fit -0.581 G
+   fx:beamer-blocks-columns: net +0.677 G, hits 951, recordings 1205, fit +0.800 G
+   fx:framed-tikz-theorems: net +0.115 G, hits 39, recordings 165, fit +0.133 G
+   infdesc: net +12.979 G, hits 11587, recordings 18372, fit +12.952 G
+e2-origin_agent_kabir-claude-l6_bm-inplace: a hit saves 0.265 M, a recording costs 1.086 M (break-even 4.09 hits per recording)
+   beamer-5: net -0.054 G, hits 1552, recordings 573, fit +0.211 G
+   beamer-30: net -6.419 G, hits 31844, recordings 1794, fit -6.496 G
+   fx:beamer-madrid: net +0.196 G, hits 3571, recordings 1319, fit +0.485 G
+   fx:beamer-polish: net -0.185 G, hits 3850, recordings 984, fit +0.047 G
+   fx:beamer-overlays: net -0.635 G, hits 3796, recordings 454, fit -0.514 G
+   fx:beamer-blocks-columns: net +0.747 G, hits 951, recordings 1205, fit +1.056 G
+   fx:framed-tikz-theorems: net +0.151 G, hits 39, recordings 165, fit +0.169 G
+   infdesc: net +16.928 G, hits 11587, recordings 18372, fit +16.871 G

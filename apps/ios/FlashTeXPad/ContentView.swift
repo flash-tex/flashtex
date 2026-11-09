@@ -136,11 +136,38 @@ struct EditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ForEach(model.recoverableDrafts) { offered in
+                HStack {
+                    Label("Unsaved edits to \(offered.draft.title) from \(offered.draft.savedAt.formatted(date: .abbreviated, time: .shortened)) were kept.",
+                          systemImage: "clock.arrow.circlepath")
+                        .font(.footnote)
+                    Spacer()
+                    Button("Restore") { model.restoreDraft(offered) }.buttonStyle(.borderedProminent).controlSize(.small)
+                        .accessibilityIdentifier("editor.restoreDraft")
+                    Button("Discard", role: .destructive) { model.discardDraft(offered) }.buttonStyle(.bordered).controlSize(.small)
+                        .accessibilityIdentifier("editor.discardDraft")
+                }
+                .padding(.horizontal).padding(.vertical, 6).background(.yellow.opacity(0.15))
+            }
             if let d = model.document {
                 HStack {
                     Text("\(d.path) · revision \(d.revision) · \(d.utf8Count) UTF-8 bytes · caret UTF-16 \(model.caretUTF16)")
                         .font(.footnote.monospaced()).foregroundStyle(.secondary)
                         .accessibilityIdentifier("editor.status")
+                    if model.saveState != .none {
+                        Text(model.saveState.label).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                            .accessibilityIdentifier("editor.saveState")
+                    }
+                    if case .conflict(let disk) = model.saveState {
+                        Button("Keep mine") { model.keepBufferOverDisk() }.buttonStyle(.borderedProminent).controlSize(.small)
+                            .accessibilityHint("Saves this text over the file's current version")
+                            .accessibilityIdentifier("editor.keepMine")
+                        if disk != nil {
+                            Button("Use the file's version") { Task { await model.reloadFromDisk() } }.buttonStyle(.bordered).controlSize(.small)
+                                .accessibilityHint("Replaces this text, and its unsaved edits, with the file's current text")
+                                .accessibilityIdentifier("editor.useDisk")
+                        }
+                    }
                     if let note = model.editorStatus {
                         Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                             .accessibilityIdentifier("editor.note")
@@ -235,6 +262,7 @@ struct DiagnosticsList: View {
                         HStack {
                             Image(systemName: d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                                 .foregroundStyle(d.severity == .error ? .red : .orange)
+                                .accessibilityLabel(d.severity == .error ? "Error" : "Warning")
                             Text(d.message).font(.footnote)
                         }
                         if let r = d.range {
@@ -274,6 +302,7 @@ struct DiagnosticsPanel: View {
                         HStack {
                             Image(systemName: d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                                 .foregroundStyle(d.severity == .error ? .red : .orange)
+                                .accessibilityLabel(d.severity == .error ? "Error" : "Warning")
                             Text(d.message)
                         }
                         if let r = d.range {
@@ -371,7 +400,10 @@ struct MacLinkPanel: View {
     var body: some View {
         Form {
             Section("Link") {
-                Text(model.linkStatus).accessibilityIdentifier("link.status")
+                Text(model.linkStatus)
+                    .accessibilityLabel("Connection status")
+                    .accessibilityValue(model.linkStatus)
+                    .accessibilityIdentifier("link.status")
                 if let e = model.linkError { Text(e).foregroundStyle(.red).accessibilityIdentifier("link.error") }
                 if let p = model.pairedMac {
                     Text("Stored in the Keychain (this iPad only): \(p.macName) fp=\(p.fingerprint) pair_id=\(p.pairId), paired \(p.pairedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -380,7 +412,10 @@ struct MacLinkPanel: View {
                         Button { Task { await model.autoReconnect() } } label: {
                             Label(model.reconnecting ? "Reconnecting…" : "Reconnect to \(p.macName)", systemImage: "arrow.clockwise")
                         }
-                        .buttonStyle(.borderedProminent).disabled(model.reconnecting).accessibilityIdentifier("link.reconnect")
+                        .buttonStyle(.borderedProminent).disabled(model.reconnecting)
+                        .accessibilityLabel("Reconnect to \(p.macName)")
+                        .accessibilityValue(model.reconnecting ? "Reconnecting" : "Available")
+                        .accessibilityIdentifier("link.reconnect")
                     }
                 }
             }
@@ -388,7 +423,10 @@ struct MacLinkPanel: View {
             Section("Nearby Macs (Bonjour \(NearbyWire.serviceType))") {
                 HStack {
                     Button { Task { await model.browseNearby() } } label: { Label(model.browsing ? "Browsing…" : "Find nearby Macs", systemImage: "dot.radiowaves.left.and.right") }
-                        .buttonStyle(.bordered).disabled(model.browsing).accessibilityIdentifier("pair.browse")
+                        .buttonStyle(.bordered).disabled(model.browsing)
+                        .accessibilityLabel("Find nearby Macs")
+                        .accessibilityValue(model.browsing ? "Browsing" : "Available")
+                        .accessibilityIdentifier("pair.browse")
                     TextField("6-digit code from the Mac", text: $code).keyboardType(.numberPad).frame(maxWidth: 220).accessibilityIdentifier("pair.code")
                 }
                 if model.nearbyMacs.isEmpty {
@@ -407,9 +445,12 @@ struct MacLinkPanel: View {
                                 }
                                 Spacer()
                                 Image(systemName: "laptopcomputer")
+                                    .accessibilityLabel("Mac computer")
                             }
                         }
                         .disabled(code.count != 6)
+                        .accessibilityLabel("Pair with \(mac.macName)")
+                        .accessibilityValue(code.count == 6 ? "Ready to pair" : "Enter the 6-digit code first")
                         .accessibilityIdentifier("pair.nearby.\(mac.fingerprint ?? mac.name)")
                     }
                 }

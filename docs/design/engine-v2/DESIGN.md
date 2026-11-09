@@ -10,8 +10,10 @@ instruction, it wins. Deviations need evidence and owner approval and are record
 Appendix A is the master prompt for any Commander session.
 
 **Design review: nightly, lean** (owner, 2026-09-30; see §14). First nightly review: 2026-09-30.
-**Last review:** 2026-10-05, [`reviews/2026-10-05.md`](reviews/2026-10-05.md): the
-critical-path inventory for P3–P5. Previous: [`reviews/2026-10-02.md`](reviews/2026-10-02.md),
+**Last review:** 2026-11-01, [`reviews/2026-11-01.md`](reviews/2026-11-01.md): the day S7
+and S8 landed (no review was recorded 2026-10-06 … 10-31). Previous:
+[`reviews/2026-10-05.md`](reviews/2026-10-05.md), the critical-path inventory for P3–P5;
+[`reviews/2026-10-02.md`](reviews/2026-10-02.md),
 which superseded the unmerged 2026-10-01 review (PR #1334); [`reviews/2026-09-30.md`](reviews/2026-09-30.md).
 
 **Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
@@ -19,7 +21,12 @@ P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/1
 pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
 T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 ✔ verified and gated on main
 `2e7203e03` (2026-10-05): preview 669/669 at 0 px, P-T2 86/86, positions 86/86 exact; CI
-`preview-parity.yml` run 37381958089** (§12) · P4 and P5 in progress (§12).
+`preview-parity.yml` run 37381958089** (§12) · **P4 ✔ met 2026-10-21** under the owner's
+ruling at S4 (T7 reference run #1876, 120/120 gated rows; §12) · **P5: retirement complete
+(S7 #1888, S8 #1902, 2026-11-01); the first board after S7 that has #1915's T3 baseline is
+pending** (§12).
+
+*The rest of this block is the 2026-10-05 snapshot, kept as recorded; §12 is current.*
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
 (reviews/2026-10-05.md §2):
 - lockstep **1,466/1,466**;
@@ -154,6 +161,8 @@ close as 50 ms apart** (about 240 wpm; the owner's floor is 200 wpm, ~60 ms), no
 keys: every key at 50, 60, 80, 100 and 150 ms intervals meets the targets above for its *own* edited page, and every key is painted by its
 own compile (a key folded into a later compile is a miss). T7 gates these as its `typing@Nms`
 rows (#1605; 50/60/80 ms rows added by lane P4-TYPING-200WPM).
+
+*Superseded (review 2026-11-01):* P4 was met on 2026-10-21 by the T7 reference run #1876 (120/120 gated rows; §12 P4). The status below is the 2026-10-05 record.
 
 **Status (review 2026-10-05; REPORTED unless marked; no reference run exists).** The one
 harness is `tools/incr-bench/t7.py` (#1391). Its only run is on main `ab9893935`. It was on an
@@ -416,8 +425,19 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   running app, which meets the row; **at launch, 101–365 ms** (stored pages, plain-10 to
   plain-1000, including window and editor creation), which does not. The cold-reopen gap is
   open work for P4 (§12). On the host side, a cold reopen takes 544–721 ms to page 1 (T7,
-  non-reference, 2026-10-02). It is a 3-pass cold compile; #1537 (open) keeps S₀ and the
-  `.aux`, so a reopen takes 1 pass (−65.7 % instructions, REPORTED).
+  non-reference, 2026-10-02). It is a 3-pass cold compile; #1537 (landed 2026-10-07) keeps S₀
+  and the `.aux`, so a reopen takes 1 pass (−65.7 % instructions, REPORTED).
+- **Persisted body checkpoint S₁ (#1899, 2026-11-01).** Once a compile settles and the host is
+  idle, it persists S₁, the page checkpoint a page or two before the last viewport, bound to
+  S₀ (the chunks that differ from S₀'s file, a key over the reads between S₀ and S₁, the host
+  record, the output prefixes by length and hash, the journal and the page frames). A reopen
+  at or after S₁ checks the build, the S₀ tag, the key and the PDF prefix hash, writes S₁ over
+  S₀ through the barrier and runs from there; the pages before S₁ are filled from S₀ by a pass
+  that must converge with S₁'s run, like any other. `FLASHTEX_S1=off` disables its use.
+  Measured (REPORTED, PC): *Infinite Descent ×2* reopened at page 882 shows that page in 0.30 s
+  instead of 34.9 s. Its convergence rules landed separately (#1897). Its reopen test
+  `a_reopen_from_s1_puts_back_a_file_rewritten_after_it` failed on main's macOS release leg
+  the same day (#1917; reviews/2026-11-01.md §3).
 - **Keep-warm (owner, 2026-09-30, decision 10):** only while the user is typing. After each
   compile the host alternates 100 µs sleeps and spins for 2 s, never while idle, because an idle
   Apple Silicon core runs the next keystroke at about a third of its clock (first page 18 ms
@@ -987,17 +1007,32 @@ Rules:
   - the Mac app and IDE;
   - the Core Graphics drawing approach of the preview (§6.2), now as the v3 pane's
     `DL3Renderer`; the v2 pane's code is not extended;
-  - the parity tooling (`tools/parity`, visual-oracle);
+  - the parity tooling (`tools/parity`; visual-oracle was deleted in S7, its role taken by
+    the preview parity check, `preview-parity.yml`);
   - oracle fixtures and the corpora;
-  - `display-list-v2`, which becomes v3;
+  - `display-list-v2`, which became v3 (`crates/display-list-v3`; v2's runtime-v1 contracts went with S7);
   - the iPad companion;
   - the coordination tooling.
-- **Kept as oracles and tests:** tex-expansion, tex-boxes, paragraph-layout,
-  math-layout, page-builder, the TFM readers.
-- **Retired at P5 switch-over:**
+- **Kept as oracles and tests:** tex-expansion, tex-boxes, paragraph-layout (with
+  document-style and microtype), math-layout and page-builder, moved to
+  [`tests/oracles/`](../../../tests/oracles/README.md) by S8 (#1902). No product crate depends
+  on them, and their expected data comes only from pdflatex.
+- **Retired at P5 switch-over: done** (S7 #1888 and S8 #1902, 2026-11-01; stage statuses in
+  `tools/parity/retirement-stages.json`):
   - the compiler's hand parser, about 42k LOC of package ports and the marker hand-off;
   - render-pipeline's adapter and typeset paths that the engine supersedes;
   - the three math layout copies, the vendored copies and the ten unused crates.
+  - S7 deleted, in one PR (−795,864 lines): `compiler`, `render-pipeline`, the old
+    `flashtex-cli`, `perf-bench` (superseded by T7), `preview-controller` (RQ7) and the
+    orphans `class-geometry`, `vector-graphics`, `bibliography`, `font-engine`,
+    `font-resources` and `tex-text-encoding`; the old CI legs, `perf.yml`, and
+    `tools/{real-world-corpus,visual-oracle,font-metric-sweep,kernel-math-gap}`. `pdf` and
+    `font-discovery` stay, because the Unicode mode links them. `flashtex-v3`
+    (`crates/flashtex-build`) is now `flashtex`, the packaged CLI (RQ6), and
+    `supported-latex.json` is generated from the new engine's measured package support
+    (RQ5).
+  - The old compiler's `document-runtime` stdio session manager was deleted after S8:
+    it had no remaining consumer (review 2026-11-01, §5 item 5).
 - **Old-pane work stops (adopted 2026-09-30, §13).** No new features go into the v2 preview
   pane or its producer routes (D13); #1228's renderer-agnostic tile core moves to the v3
   pane (§6.2). The v3 pane still lacks features the v2 pane has, and **each of these app
@@ -1063,7 +1098,7 @@ Rules:
 | Snapshot memory on very long documents | Retention budget; measured in P4 |
 | Page-count shifts defeat convergence | Viewport first (L4) is the answer; convergence is an optimisation |
 | Preview of Type 1 fonts: `CGFont` loads Type 1 today, undocumented, and Apple could remove it as it did from Core Text | Canary test on each macOS beta; engine-side CFF conversion as the fallback, with no protocol change (§6.2) |
-| The new engine's parity is only partly protected by CI: T0 is required (#1336), but T2 has never completed cleanly on main, the nightly has failed 4 nights of 4, the board is not gated and lacks T4, and the zero-tolerance preview sweep skips in CI (§8, 2026-10-05) | Lanes T2-TRIAGE, NIGHTLY-GREEN, T4-ON-BOARD, BOARD-OFFICIAL and P3-PARITY-CI (reviews/2026-10-05.md §4); a second `flashtex-heavy` runner |
+| The new engine's parity is only partly protected by CI. *2026-10-05:* T2 never clean on main, the nightly red 4 of 4, the board ungated and without T4, the preview sweep skipping. *2026-11-01:* those were fixed under S4 (T2 and T4 on the board, 3 complete green boards, `preview-parity.yml` after every merge, the nightly green 10-30 and 10-31); what remains is that the board and the macOS legs run only after the merge, and main's post-merge CI failed on 14 of 19 completed pushes on 2026-11-01, mostly the macOS legs (#1917), while the merge queue passed 25 of 26 groups | Post-merge `main-red` with a 2 h fix-forward rule (§9); the first post-S7 board (§12 P5) |
 | Convergence false negatives make large documents re-typeset to the end after many edits (newline, split and sentence edits never converge on plain-* documents, T7 2026-10-02) | Semantic-state comparison and the convergence rate in T7 and the P4 gate (§5.3); line shift and object relocation (lane CONVERGENCE-LINESHIFT) |
 | A hand-proved convergence rule is wrong, and the preview silently differs from a from-scratch run (two such rules in one day, 2026-09-30) | A soundness case per rule; sweeps A, C, D and budget nightly; hash-pinned § tests (§4.1, §5.3) |
 | Landing throughput: fixes wait for review and landing longer than they took to write (17–19 h for the three remaining arXiv failure classes on 2026-10-01; 51 % merge-group pass rate on infrastructure, 76 % the next day) | Written self-queue rule, a 6 h reviewer rule and base-is-main (§9.5); hosted fallbacks and the PC memory cap (§9.2) |
@@ -1118,10 +1153,19 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
     `-10-21*`. Runs f–i are on `389821f53` (#1882). Two of the ten pass 120 of 120 (e and i,
     both on battery). The other eight miss 1 to 12 rows: 10-20 misses 12, b 5, g 4, 10-21 2,
     and c, d, f and h 1 each. The best run on mains power is 119 of 120 (c, d and f).
-  - Since then the cold-open and keystroke work (#1891, #1897, #1898 and others) has landed.
-    No reference run has been recorded after it.
-- **P5: not met (status 2026-11-01).** The flip is done, and P5 is met when S7 and S8 land.
-  Decision 3's gate, item by item:
+  - Since then the cold-open and keystroke work has landed (2026-11-01: #1891, #1897, #1898,
+    #1899's S₁, #1907, #1908, #1913 and #1914, all on the restart, restore and convergence
+    paths). No reference run has been recorded after it; the review of 2026-11-01 recommends
+    one (reviews/2026-11-01.md §5).
+- **P5: retirement complete; met pending the first board after S7 (status 2026-11-01, review
+  2026-11-01).** S7 (#1888) and S8 (#1902) landed on 2026-11-01. The first board after S7
+  (p5-scoreboard 41306949575) had the new engine at 100 % on every T3 row but read "not all
+  green (24 rows)": every T3 old cell was `missing`, since no v1 run exists any more. #1915
+  makes T3's old column a committed one-off v1 measurement, as T4's already was
+  (`tools/parity/baselines/t3-v1-oneoff.json`, from the last complete green board with v1,
+  41203982275, 2026-10-31). **No board has run with #1915 yet** (the scheduled run 41312997356
+  is on `a6b02e7a7`, before it). P5 is met when that board is all green on main and main is
+  green (it is red today, #1917). Decision 3's gate, item by item:
   - **Board all green on a complete nightly: met.** S4 asks for 3 consecutive complete green
     boards. They are 39350717288, 39365978113 and 39388695484, on main, ruled on #1319.
   - **P-T2 ≥ 99 %, P-T1 ≥ 98 % on arXiv and T4; zero T4 panics; T2 with 0 unexpected
@@ -1135,9 +1179,11 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
   - **Retirement:** S0–S6 are done: S1b, S2 (#1610), S3 (#1421, #1427) with S3r (#1611), S4,
     S5 (#1849; app v0.2.0, 2026-10-20, carries the #1421/#1427 records), S6a (#1877) and
     S6 (#1881).
-    - S7 is #1888. It deletes the old engine at once. RQ5 and RQ6 are ruled, T7 has
-      gated for ten runs, and 0 open PRs touch old-engine paths.
-    - S8 (oracles to `tests/`) follows S7.
+    - **S7: done (#1888, 2026-11-01).** It deleted the old engine at once, after RQ5 and RQ6
+      were ruled, T7 had gated for ten runs, and with 0 open PRs on old-engine paths.
+    - **S8: done (#1902, 2026-11-01):** the oracle crates moved to `tests/oracles/`, licence
+      fields on every package, the `gate.sh` mapping and the final sweep of the reference
+      allowlist.
     - `tools/parity/retirement-stages.json` holds the stage statuses.
 - **P6: in progress ahead of its phase, by measured wins. Under the owner's 2026-10-05 rule, P6
   extras are parked** while any P3–P5 lane is unstaffed.
@@ -1260,6 +1306,11 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-11 | **P5 board:** the hosted board route (#1774) is accepted. Hosted reports are tagged `-hosted` and count toward S4's 3 consecutive complete boards | Commander (kabir-claude) |
 | 2026-10-20 | **BOX-MEMO on where edits are served** (§5.6 item 4, BOX-MEMO.md §11): on by default in the socket, `serve` and `iserve` hosts; off on the command line and in selftest/bench. Evidence: #1692, #1852; sweeps 39415839755 and 39415836376 (0 bad in about 26k compiles each); P-T1/P-T2 88/88 with it on and off; lockstep 1468/1468; −72 to −82 % instructions per beamer keystroke | Commander (kabir-claude), under the owner's speed-and-maintainability delegation |
 | 2026-10-21 | **S6 app rulings** (retirement plan §4.4, §7), decided on speed and maintainability. **E2:** accepted. The capture `projectId` is `"demo"` on both routes, so the row is reclassified as the same on both, and `projectId` stays the constant `"demo"` once the runtime-v1 `result` goes; a per-project id is out of scope. **E3:** the old route's shadow-compile proposal preview is retired. Approve inserts one edit that ⌘Z undoes, and the live v3 compile shows the real diagnostics. **E5 / RQ7:** the preview-controller route is retired from the app (Durable History, `PreviewControllerClient`, `ShellModel+Controller`, `HistoricalPreview`, Citation Rename's helper path). Ledgers stay on disk untouched (§5.5), and the `preview-controller` crate goes in S7. **RQ20 / A17:** a declined bundle download never falls back to another engine. The app shows a plain, non-blocking message that compiling needs the TeX bundle or a TeX Live install, with a Download button that retries. **Ruling 4 at S6 (§5.3):** a document recorded as `previous` opens on the new engine, with a one-time, dismissable banner saying so and why (a banner, not a sheet). **Licence (§6 item 2):** the GPL v2 text is enough for the GPL-2.0-or-later host; no v3 text is needed | Commander (kabir-claude), under delegated app rulings |
+| 2026-11-01 | **S7 and S8 landed** (§10, §12): the old engine deleted at once (#1888), `flashtex-v3` renamed `flashtex` (RQ6), `supported-latex.json` generated (RQ5); the oracle crates moved to `tests/oracles/` (#1902). Retirement is complete | Commander (kabir-claude), from the stage preconditions |
+| 2026-11-01 | **T3's old column comes from a committed one-off v1 measurement** (#1915), as T4's does: `tools/parity/baselines/t3-v1-oneoff.json`, copied from the last complete green board with v1 (41203982275, 2026-10-31), with input hashes and an oracle record; a missing, malformed or uncovered baseline makes a cell `missing`, never green. A technique refinement within decision 3 (new ≥ old and the owner bars unchanged) | Commander (kabir-claude) |
+| 2026-11-01 | **Persisted body checkpoint S₁** (§5.1, #1899): a reopen at a stored viewport runs from S₁ instead of typesetting the pages before it, and fills them from S₀ with a pass that must converge. An implementation of decision 8's reopen goal within §5's soundness rules, not a change to them | Commander (kabir-claude), on review (reviews/2026-11-01.md) |
+| 2026-11-01 | **Undefined C behaviour in pdfTeX** (INT_MIN negation, division by 0): FlashTeX matches TeX Live's macOS arm64 build; other compilers may differ; never a crash (web2rust `--total-division` #2080, `--exact-abs` and `changes/intmin.ch` #2089) | Commander (kabir-claude), from lane WEB2RUST-AUDIT's evidence |
+| 2026-11-01 | **pdfTeX's crashes are not replicated.** Parity means pdfTeX's defined observable output. Where pdfTeX has none (a segfault, an abort, undefined behaviour), FlashTeX keeps going with a clear error or warning instead. The three cases found so far (lane REVIEW-PDF): (1) writettf.c's `assert`s, such as line 1125's on an encoding that names `index0`, `index-1` or `uni0000` (SIGABRT); (2) an empty `\pdfmapline` (subfont.c's `assert(fm->tfm_name != NULL)`, an abort) and a subfont map entry with no font file (`xstrdup(NULL)`, a segfault); (3) subfont.c's warnings that print `cur_file_name` after it was freed | Commander (kabir-claude) |
 
 ---
 
@@ -1276,7 +1327,7 @@ verification process that produced this document on 2026-09-29, at the **lean** 
    status (§12). Re-measure, rather than trust
    notes:
    - the parity scoreboard on every tier;
-   - perf-bench and the §1.2 latency benchmarks;
+   - the §1.2 latency benchmarks (T7, `tools/incr-bench`; perf-bench was deleted in S7);
    - the code-health metrics: LOC by crate, duplication, unused crates, the largest
      functions, the CI duration and pass rate, and the share of mechanical commits.
 2. **Re-research every aspect with primary sources.** Run parallel research tracks
@@ -1491,7 +1542,7 @@ The LaTeX host is never required to emit any of it.
 | E2 | section `ORIGINS_F64` | per-glyph f64 bp origins as the PDF viewer computes them (§15.5) |
 | E3 | section `COLORSPACES` + `FILL/STROKE_COLOR_CS`, `ALPHA` | ICC profile bytes, Separation (spot), constant alpha; components as the PDF's u8-quantised values |
 | E4 | `LINE_STATE` | stroked text (or via E5) |
-| E5 | **PDF islands** — no protocol change | constructs v3 can't express are exported by typst-pdf as a one-page frame of their bounding box (`page_ranges`, `tagged: false`) and sent as `IMAGE` type `pdf`: gradients (incl. conic), tilings, SVG images, colour glyphs, gradient-filled text. Parity by construction is **belief** until its gate row passes |
+| E5 | **PDF islands** — no protocol change | constructs v3 can't express are exported by typst-pdf as a one-page PDF **of the page's own size and bleed**, holding only that construct inside the same chain of frames, groups, transforms and clips as on the page (`tagged: false`), and sent as `IMAGE` type `pdf` drawn with the **identity matrix**, so its content stream carries the page's own numbers (spec §11.5): gradients (incl. conic), tilings, SVG and PDF images, gradient-filled or -stroked text, a gradient page fill. *Commander ruling 2026-10-04 (#1528): this whole-page, identity-matrix design replaces "a one-page frame of their bounding box", which would need another matrix and other numbers.* Measured: 828 of 828 islands in Typst's test suite show the page's own glyphs, paths and XObjects bit for bit (`docs/evidence/typst-t1-2026-10-04/islands.md`). Pixel parity of the app's drawing is **belief** until its gate row passes; colour glyphs are not islanded yet (gated INCOMPLETE) |
 | E6 | `IMAGE` from bytes (`IMAGE_DATA`), types `gif`/`webp`, `interpolate`, `icc` | the pixels the PDF has, not the source file |
 | E7 | section `PAGE_META` | page label, logical number, bleed, trim box, `engine`; `counts` stays TeX-only |
 | E8 | `RESOLVE`/`LOCATE` messages | on-demand span → source and source → page; eager re-declaration of all spans costs 507 ms at 300 pages (`TE/raw-a/jumps-d300.jsonl`), click → source 4–37 µs, forward search 2.9–3.2 ms |
