@@ -6778,3 +6778,59 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// (lane AUDIT-SPANS, #2219) A font number names a font only in its
+/// timeline: an edit's restore takes the fonts loaded after the checkpoint
+/// away, and the re-run may load another font at the same number. BOX-MEMO
+/// keys a call's fonts by number (`cur_font` in K2) and their arrays by the
+/// font version, which named only the changes made to loaded fonts
+/// (`\hyphenchar` & co.), not which font was loaded: NFSS's
+/// `\hyphenchar\font=45` on cmsl10 and on cmss10 at the same number reached
+/// the same version. Here a registered `\measure` of a word in `\slshape`
+/// (cmsl10, first used there) is recorded and replayed in edits' windows;
+/// the family then becomes `\sffamily` (cmss10, loaded at cmsl10's number),
+/// every other key equal, and the width typeset after it must be cmss10's,
+/// not the slanted word's replayed.
+#[test]
+fn a_call_measuring_a_font_loaded_at_another_fonts_number() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("font-identity-measure");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let before: String = (0..12).map(|i| para(i, "alpha")).collect();
+    let after: String = (12..30).map(|i| para(i, "beta")).collect();
+    let doc = |shape: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             {{{shape} A\\measure{{Hello}}\\the\\dimen1\\par}}\n\n{after}\\end{{document}}\n"
+        )
+    };
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BOXMEMO", "on"),
+            ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+        ],
+    );
+    let slanted = doc("\\slshape", "plain");
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &slanted)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // edits before the call: their windows record it, then replay it
+    for word in ["plainx", "plain", "plainx", "plain"] {
+        let text = doc("\\slshape", word);
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], word);
+    }
+    // the family changed: cmss10 at cmsl10's number
+    let sans = doc("\\sffamily", "plain");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &sans)], "sans");
+}
