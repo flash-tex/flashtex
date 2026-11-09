@@ -488,7 +488,7 @@ impl<M: Metrics> Builder<'_, M> {
                 match p.object() {
                     Some(o) => {
                         let o = self.fixup(o);
-                        self.doc.named.insert(name, Named::Obj(o));
+                        self.define(name, Named::Obj(o));
                     }
                     None => self
                         .doc
@@ -682,14 +682,10 @@ impl<M: Metrics> Builder<'_, M> {
                         "pdf:put to @{}, which is not a dictionary or array",
                         lossy(&name)
                     )),
-                    None => {
-                        // dvipdfmx makes the object on a put to an unknown name
-                        let o = match objs.len() {
-                            1 => objs.pop().expect("one"),
-                            _ => Obj::Array(objs),
-                        };
-                        self.doc.named.insert(name, Named::Obj(o));
-                    }
+                    // spc_handler_pdfm_put: nothing is made
+                    None => self
+                        .doc
+                        .diag(format!("Specified object not exist: {}", lossy(&name))),
                 }
             }
         }
@@ -728,7 +724,19 @@ impl<M: Metrics> Builder<'_, M> {
         } else {
             s
         };
-        self.doc.named.insert(name, Named::Stream(dict, data));
+        self.define(name, Named::Stream(dict, data));
+    }
+
+    /// `pdf:obj`, `pdf:stream`, `pdf:fstream` (specials.c's
+    /// spc_push_object, pdfnames.c's pdf_names_add_object): a name already
+    /// defined keeps its first object ("Object @name already defined.").
+    fn define(&mut self, name: Vec<u8>, o: Named) {
+        if self.doc.named.contains_key(&name) {
+            self.doc
+                .diag(format!("Object @{} already defined.", lossy(&name)));
+            return;
+        }
+        self.doc.named.insert(name, o);
     }
 
     /// `pdf:ann [@name] dims|bbox <<dict>>`: an annotation at the current
