@@ -4408,7 +4408,18 @@ thread_local! {
     /// run's, until the engine writes one whole again.
     static FOREIGN: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+    /// What an output file held when the engine had written it whole
+    /// (`stamp_output`), with the stamp it had then: a file another program
+    /// wrote again with the same bytes (an `export` run of the same job in
+    /// the same directory rewrites the `.aux` it reads, alike) is not
+    /// changed (`why_changed_as`). Dropped at the engine's next write to it.
+    static STAMP_HASHES: std::cell::RefCell<std::collections::HashMap<String, (Stamp, [u64; 2])>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
+
+/// The largest output file whose content `stamp_output` hashes; a larger
+/// one is the engine's only while its stamp is.
+const STAMP_HASH_MAX: u64 = 1 << 20;
 
 fn stamp_of(m: &std::fs::Metadata) -> Stamp {
     let ino = crate::os::file_id(m);
@@ -4420,7 +4431,16 @@ fn disk_stamp(path: &str) -> Option<Stamp> {
 }
 
 fn set_stamp(path: &str, st: Stamp) {
-    STAMPS.with(|m| m.borrow_mut().insert(out_key(path), st));
+    let k = out_key(path);
+    // (a write: what the file held whole is gone; `stamp_output` hashes it
+    // again)
+    STAMP_HASHES.with(|h| {
+        let mut h = h.borrow_mut();
+        if !h.is_empty() {
+            h.remove(&k);
+        }
+    });
+    STAMPS.with(|m| m.borrow_mut().insert(k, st));
 }
 
 /// The host's copy of a file it wrote in this compile (the editor's text:
@@ -4524,10 +4544,48 @@ pub fn known_content(path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
 /// or cut it back to a checkpoint's length after checking it was the
 /// run's): what it holds now is the engine's.
 pub fn stamp_output(path: &str) {
+    let k = out_key(path);
     if let Some(st) = disk_stamp(path) {
-        set_stamp(path, st);
+        // the content's hash, kept while the stamp is the one it was
+        // taken at (not of a PDF, which another run never writes alike --
+        // an export's is compressed -- and is the largest, nor of a file
+        // over `STAMP_HASH_MAX`; a log is, as Unicode mode's export writes
+        // the preview's: about 20 µs for 100 KB)
+        let kept = STAMP_HASHES.with(|h| h.borrow().get(&k).filter(|(s, _)| *s == st).copied());
+        STAMPS.with(|m| m.borrow_mut().insert(k.clone(), st));
+        let hashed = st.0 <= STAMP_HASH_MAX && !k.ends_with(".pdf");
+        let hash = match kept {
+            Some((_, h)) => Some(h),
+            None if hashed => content_hash(path),
+            None => None,
+        };
+        STAMP_HASHES.with(|h| {
+            let mut h = h.borrow_mut();
+            match hash {
+                Some(x) => h.insert(k.clone(), (st, x)),
+                None => h.remove(&k),
+            }
+        });
     }
-    FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
+    FOREIGN.with(|f| f.borrow_mut().remove(&k));
+}
+
+/// `path`'s stamp changed from `st` to `now`, but what it holds is what the
+/// engine wrote whole there (`STAMP_HASHES`): another program wrote the
+/// same bytes again. The stamp becomes `now`'s.
+fn rewritten_alike(path: &str, k: &str, st: Stamp, now: Stamp) -> bool {
+    let Some((_, h)) = STAMP_HASHES.with(|m| m.borrow().get(k).filter(|(s, _)| *s == st).copied())
+    else {
+        return false;
+    };
+    // (a length that differs is another content, without a read)
+    if now.0 != st.0 || content_hash(path) != Some(h) {
+        return false;
+    }
+    file_trace(|| format!("rewritten alike {path}: {st:?}, now {now:?}"));
+    STAMPS.with(|m| m.borrow_mut().insert(k.to_string(), now));
+    STAMP_HASHES.with(|m| m.borrow_mut().insert(k.to_string(), (now, h)));
+    true
 }
 
 /// Before the engine writes more to `path` (`Tracked`), whose stamp is
@@ -4579,6 +4637,9 @@ fn why_changed_as(path: &str, foreign_too: bool, now: Option<Stamp>) -> Option<S
     let st = STAMPS.with(|m| m.borrow().get(&k).copied())?;
     let now = now.or_else(|| disk_stamp(path));
     if now == Some(st) {
+        return None;
+    }
+    if now.is_some_and(|n| rewritten_alike(path, &k, st, n)) {
         return None;
     }
     file_trace(|| format!("changed_outside {path}: {st:?}, now {now:?}"));
@@ -6047,6 +6108,64 @@ mod known_content_tests {
         // the next compile does not trust it
         clear_known_content();
         assert!(known_content(&path).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::*;
+
+    /// An output file another program wrote again with the bytes the
+    /// engine left in it (an export rewriting the `.aux`) is the engine's
+    /// still; with other bytes (another length, or the same length) it is
+    /// changed; the engine's own write drops what the file held, and a PDF
+    /// is never taken as unchanged by its content.
+    #[test]
+    fn a_file_written_again_alike_is_unchanged() {
+        let d = std::env::temp_dir().join(format!("flashtex-stamps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        // another inode and another modification time
+        let again = |p: &std::path::Path, b: &[u8]| {
+            let tmp = p.with_extension("tmp");
+            std::fs::write(&tmp, b).unwrap();
+            let f = std::fs::File::options().write(true).open(&tmp).unwrap();
+            f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(5))
+                .unwrap();
+            std::fs::rename(&tmp, p).unwrap();
+        };
+        let aux = d.join("main.aux");
+        let path = aux.to_string_lossy().into_owned();
+        std::fs::write(&aux, b"\\relax\n\\newlabel{a}{{1}{1}}\n").unwrap();
+        stamp_output(&path);
+        assert!(outside_change(&path).is_none());
+        again(&aux, b"\\relax\n\\newlabel{a}{{1}{1}}\n");
+        assert!(outside_change(&path).is_none(), "written again alike");
+        assert!(outside_change(&path).is_none(), "the new stamp taken over");
+        again(&aux, b"\\relax\n\\newlabel{a}{{2}{1}}\n");
+        assert!(
+            outside_change(&path).is_some(),
+            "the same length, other bytes"
+        );
+        stamp_output(&path);
+        again(&aux, b"\\relax\n");
+        assert!(outside_change(&path).is_some(), "another length");
+        // the engine's write: what the file held whole is gone
+        stamp_output(&path);
+        set_stamp(&path, disk_stamp(&path).unwrap());
+        again(&aux, b"\\relax\n");
+        assert!(
+            outside_change(&path).is_some(),
+            "after a write, by stamp only"
+        );
+        // a PDF: by stamp only
+        let pdf = d.join("main.pdf");
+        let pp = pdf.to_string_lossy().into_owned();
+        std::fs::write(&pdf, b"%PDF-1.5\n").unwrap();
+        stamp_output(&pp);
+        again(&pdf, b"%PDF-1.5\n");
+        assert!(outside_change(&pp).is_some(), "a PDF");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

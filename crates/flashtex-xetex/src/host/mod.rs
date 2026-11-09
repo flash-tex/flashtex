@@ -719,6 +719,46 @@ fn run_job(
         done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
         return;
     }
+    // An export runs in a directory of its own, seeded with the session's
+    // files: the session's `.aux` and log, which the resident engine's
+    // checkpoints hold, are never written by it (spec §6.3 `export_dir`).
+    let exporting;
+    let job = if job.export {
+        use flashtex_engine::host::export_dir::{prepare, Seed};
+        let base = job
+            .export_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(format!("{}-export", scratch.display())));
+        let what = if job.output_dir == job.root {
+            Seed::Job(&job.jobname)
+        } else {
+            Seed::All
+        };
+        match prepare(&base, &job.output_dir, what) {
+            Ok(d) => {
+                exporting = Job {
+                    output_dir: d,
+                    ..job.clone()
+                };
+                &exporting
+            }
+            Err(e) => {
+                send_json(
+                    out,
+                    kind::ERROR,
+                    &obj([
+                        ("id", Json::Int(job.id)),
+                        ("code", js("request")),
+                        ("message", js(e)),
+                    ]),
+                );
+                done(out, job, &compile::Outcome::none("failed"), t0, None);
+                return;
+            }
+        }
+    } else {
+        job
+    };
     let fmt_dir = match host.format_dir(&job.format) {
         Ok(d) => d,
         Err(e) => {

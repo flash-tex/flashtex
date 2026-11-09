@@ -23,7 +23,8 @@
 //!
 //! `"export": true` asks instead for a one-shot run of the engine as a child
 //! process with pdflatex's command line (the exported PDF, compressed, which
-//! the parity gates compare with pdflatex's): the path of lane P3, kept.
+//! the parity gates compare with pdflatex's): the path of lane P3, kept. It
+//! runs in an output directory of its own (`export_dir`, `super::export_dir`).
 //!
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
@@ -205,6 +206,11 @@ pub(crate) enum Req {
         conn: Arc<Conn>,
         req: Json,
         t0: Instant,
+    },
+    ExportSeed {
+        job: Job,
+        base: PathBuf,
+        done: mpsc::Sender<Result<PathBuf, String>>,
     },
     Closed(u64),
     Warm(mpsc::Sender<Result<f64, String>>),
@@ -919,7 +925,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                     run.cancel();
                 }
                 if req.get("export").and_then(Json::as_bool) == Some(true) {
-                    match start_export(cfg, &out, &req, id, conn.diag) {
+                    match start_export(cfg, &out, &req, id, conn.diag, &tx) {
                         Ok(run) => export = Some(run),
                         Err(e) => error(&out, req.int_field("id"), "request", &e),
                     }
@@ -1090,7 +1096,7 @@ impl Job {
     /// (with it, pdfTeX finds an included figure through the output
     /// directory and writes its absolute path as `/PTEX.FileName`, where a
     /// plain run writes `./fig.pdf`: P-T2 differs).
-    fn out_is_root(&self) -> bool {
+    pub(crate) fn out_is_root(&self) -> bool {
         let canon = |p: &Path| std::fs::canonicalize(p).ok();
         let out = if self.out_dir.is_absolute() {
             self.out_dir.clone()
@@ -1358,9 +1364,26 @@ fn start_export(
     req: &Json,
     conn: u64,
     diag: bool,
+    tx: &mpsc::Sender<Req>,
 ) -> Result<Running, String> {
     let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
-    let job = Job::parse(req, conn)?;
+    let mut job = Job::parse(req, conn)?;
+    // A directory of its own, seeded with the session's files: the
+    // session's `.aux` and log, which the resident engine's checkpoints
+    // hold, are never written by an export (`super::export_dir`).
+    let base = req
+        .str_field("export_dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| super::export_dir::default_base(conn));
+    let lease = super::export_dir::reserve(&base, &job.out_dir)?;
+    let (done, wait) = mpsc::channel();
+    tx.send(Req::ExportSeed {
+        job: job.clone(),
+        base,
+        done,
+    })
+    .map_err(|_| "the engine thread has stopped")?;
+    job.out_dir = wait.recv().map_err(|_| "the engine thread has stopped")??;
     let have_fonts = have_fonts(req);
     let font_formats = font_formats(req);
     let argv = job.argv();
@@ -1532,6 +1555,7 @@ fn start_export(
                 js(stderr_text.chars().take(4000).collect::<String>()),
             ));
         }
+        drop(lease);
         send_json(&out2, kind::DONE, &Json::Obj(kv));
     });
     Ok(Running {

@@ -1497,7 +1497,8 @@ fn export_runs_the_engine_as_a_child() {
     assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
     assert!(view.count >= 3);
     assert_eq!(o.order, (0..view.count as u32).collect::<Vec<_>>());
-    let pdf = std::fs::read(out.join("main.pdf")).unwrap();
+    // (in the export's own directory, spec §6.3 `export_dir`)
+    let pdf = std::fs::read(o.done.str_field("pdf").unwrap()).unwrap();
     assert!(pdf.starts_with(b"%PDF-"));
     // Compressed, as pdflatex writes it (the preview's PDF stores streams).
     assert!(pdf.windows(12).any(|w| w == b"/FlateDecode"));
@@ -3283,7 +3284,9 @@ fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
             r.export = true;
             let o = compile(&mut c, &mut view, &r);
             assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
-            let pdf = std::fs::read(out.join("main.pdf")).unwrap();
+            let exported = PathBuf::from(o.done.str_field("pdf").unwrap());
+            assert!(!exported.starts_with(&out), "{}", o.done);
+            let pdf = std::fs::read(exported).unwrap();
             assert!(pdf.windows(12).any(|w| w == b"/FlateDecode"));
         }
         id += 1;
@@ -3314,6 +3317,279 @@ fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
         log1 == log2,
         "the log after an export differs\n{done1}\n{done2}"
     );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Seeding waits for an already started resident compile's output to close.
+#[test]
+fn export_waits_for_the_sessions_running_compile() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-export-wait");
+    let (proj, out, exports) = (base.join("proj"), base.join("out"), base.join("exports"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("main.tex"), article(300)).unwrap();
+    let host = start_host("expwait");
+    let mut c = Client::connect(&host.1).unwrap();
+    c.compile(&req(1, &proj, &out, "main.tex")).unwrap();
+    loop {
+        match c.next_event().unwrap().expect("host closed the connection") {
+            Event::Started(j) if j.int_field("id") == Some(1) => break,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    }
+    let mut export = req(2, &proj, &out, "main.tex");
+    export.export = true;
+    export.export_dir = Some(exports.to_str().unwrap().into());
+    c.compile(&export).unwrap();
+    let mut preview_done = false;
+    let mut export_done = false;
+    while !export_done {
+        match c.next_event().unwrap().expect("host closed the connection") {
+            Event::Started(j) if j.int_field("id") == Some(2) => {
+                assert!(
+                    preview_done,
+                    "export started before the session's compile finished"
+                );
+            }
+            Event::Done(j) if j.int_field("id") == Some(1) => preview_done = true,
+            Event::Done(j) if j.int_field("id") == Some(2) => export_done = true,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    }
+    assert!(preview_done);
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn export_refuses_a_paused_session_then_seeds_its_completed_aux() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-export-paused");
+    let (proj, out, exports) = (base.join("proj"), base.join("out"), base.join("exports"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("main.tex"), article(300)).unwrap();
+    let host = start_host("exppaused");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    c.compile(&req(1, &proj, &out, "main.tex")).unwrap();
+    let mut cancelled = false;
+    loop {
+        match c.next_event().unwrap().expect("host closed the connection") {
+            Event::Started(j) if j.get("keep").and_then(Json::as_bool) != Some(true) => {
+                view = View::default();
+            }
+            Event::Font(f) => {
+                view.fonts.insert(f.id, f.key);
+            }
+            Event::Sources(s) => {
+                view.files.extend(s.files);
+                view.spans
+                    .extend(s.spans.into_iter().map(|(i, f, l)| (i, (f, l))));
+            }
+            Event::Page(p) => {
+                if !cancelled {
+                    c.cancel(1).unwrap();
+                    cancelled = true;
+                }
+                view.page_fonts.insert(p.index, view.fonts.clone());
+                view.pages.insert(p.index, p);
+            }
+            Event::Done(j) if j.int_field("id") == Some(1) => {
+                assert_eq!(j.str_field("status"), Some("cancelled"), "{j}");
+                break;
+            }
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    }
+    assert!(cancelled);
+    let mut export = req(2, &proj, &out, "main.tex");
+    export.export = true;
+    export.export_dir = Some(exports.to_str().unwrap().into());
+    c.compile(&export).unwrap();
+    match c.next_event().unwrap().expect("host closed the connection") {
+        Event::Error(e) => assert!(
+            e.str_field("message").unwrap_or("").contains("paused"),
+            "{e}"
+        ),
+        other => panic!("expected paused export error, got {other:?}"),
+    }
+    let done = compile(&mut c, &mut view, &req(3, &proj, &out, "main.tex")).done;
+    assert_eq!(done.str_field("status"), Some("ok"), "{done}");
+    let seeded = flashtex_engine::host::export_dir::prepare(
+        &exports,
+        &out,
+        flashtex_engine::host::export_dir::Seed::All,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(seeded.join("main.aux")).unwrap(),
+        std::fs::read(out.join("main.aux")).unwrap()
+    );
+    export.id = 4;
+    let done = compile(&mut c, &mut view, &export).done;
+    assert_eq!(done.str_field("status"), Some("ok"), "{done}");
+    let seeded = PathBuf::from(done.str_field("pdf").unwrap())
+        .parent()
+        .unwrap()
+        .join("main.aux");
+    assert_eq!(
+        std::fs::read(seeded).unwrap(),
+        std::fs::read(out.join("main.aux")).unwrap()
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An export runs in a directory of its own (spec §6.3 `export_dir`): it
+/// writes none of the session's files, whose `.aux` and log the resident
+/// engine's checkpoints hold, so the keystroke after it restarts from a page
+/// near its edit, as the keystroke before it did, not from S₀ or from the
+/// format ("main.log was changed by another program"), and its pages are a
+/// scratch compile's. The exported PDF is a fresh host's export of the same
+/// text in the same directory (pdfTeX's `/ID` is made from the output
+/// file's path), and nothing of the session's directory is the export's.
+#[test]
+fn an_export_leaves_the_next_keystroke_restarting_from_a_page() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-exp3");
+    let (proj, out, exports) = (base.join("proj"), base.join("out"), base.join("exports"));
+    let main = "main.tex";
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join(main), article(12)).unwrap();
+    let host = start_host("exp3");
+    let scratch = start_host("exp3s");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let settle = |c: &mut Client, view: &mut View, id: &mut i64, proj: &Path, out: &Path| {
+        for _ in 0..4 {
+            *id += 1;
+            let o = compile(c, view, &req(*id, proj, out, main));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+    };
+    settle(&mut c, &mut view, &mut id, &proj, &out);
+    // an edit on the last page, before the export and after it
+    let keystroke = |c: &mut Client, view: &mut View, id: i64, text: &str| {
+        let at = std::fs::read_to_string(proj.join(main))
+            .unwrap()
+            .rfind("\\end{document}")
+            .unwrap();
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at as u64,
+            delete: 0,
+            insert: text.into(),
+        }];
+        let o = compile(c, view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        o.done
+    };
+    let export = |c: &mut Client, id: i64, proj: &Path, out: &Path| -> Vec<u8> {
+        let mut r = CompileRequest::new(id, proj.to_str().unwrap(), main);
+        r.output_dir = Some(out.to_str().unwrap().into());
+        r.export = true;
+        r.export_dir = Some(exports.to_str().unwrap().into());
+        // (the export's own frames, not the preview's pages)
+        let o = compile(c, &mut View::default(), &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        let dir = PathBuf::from(o.started.str_field("output_dir").unwrap());
+        assert!(dir.starts_with(&exports));
+        assert_eq!(
+            o.done.str_field("pdf"),
+            dir.join("main.pdf").to_str(),
+            "{}",
+            o.done
+        );
+        assert_eq!(
+            o.done.str_field("log"),
+            dir.join("main.log").to_str(),
+            "{}",
+            o.done
+        );
+        std::fs::read(dir.join("main.pdf")).unwrap()
+    };
+    id += 1;
+    let before = keystroke(&mut c, &mut view, id, "One more word. ");
+    let rp_before = before.int_field("restart_page").unwrap_or(-1);
+    assert!(rp_before > 0, "the premise: {before}");
+    let session = |out: &Path| -> BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(out)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .map(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                (n, std::fs::read(e.path()).unwrap())
+            })
+            .collect()
+    };
+    let files = session(&out);
+    id += 1;
+    let exported = export(&mut c, id, &proj, &out);
+    assert!(exported.windows(12).any(|w| w == b"/FlateDecode"));
+    assert!(
+        files == session(&out),
+        "the export wrote in the session's directory"
+    );
+    // the oracle: a fresh host's export of the same text, settled first
+    {
+        let (p3, o3) = (base.join("proj3"), base.join("out3"));
+        copy_dir(&proj, &p3);
+        std::fs::create_dir_all(&o3).unwrap();
+        let mut s = Client::connect(&scratch.1).unwrap();
+        let mut v = View::default();
+        let mut sid = 0;
+        settle(&mut s, &mut v, &mut sid, &p3, &o3);
+        assert_eq!(
+            std::fs::read(o3.join("main.aux")).unwrap(),
+            std::fs::read(out.join("main.aux")).unwrap()
+        );
+        let fresh = export(&mut s, sid + 1, &p3, &out);
+        assert!(
+            fresh == exported,
+            "the export differs from a fresh host's ({} and {} bytes)",
+            exported.len(),
+            fresh.len()
+        );
+        let _ = s.bye();
+    }
+    id += 1;
+    let after = keystroke(&mut c, &mut view, id, "And another. ");
+    assert_eq!(after.str_field("mode"), Some("incremental"), "{after}");
+    let rp = after.int_field("restart_page").unwrap_or(-1);
+    assert!(
+        rp > 0,
+        "the keystroke after the export restarted at page {rp} (before it: {rp_before}): {after}"
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "x");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        main,
+        "the keystroke after an export",
+    );
+    let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
 

@@ -1674,12 +1674,14 @@ fn destination_renaming_survives_a_page_checkpoint() {
 }
 
 /// An export (Export PDF…, Print…) between two keystrokes is a run of its
-/// own, in a process of its own (spec §6.3): it leaves the resident engine's
-/// S₀, so the keystroke after it goes on from S₀ or a page, not from the
-/// format (run by the resident engine, the export replaced S₀ and the page
-/// checkpoints with its own, made without the display list's source map),
-/// and every compile writes what the same compiles in processes of their
-/// own write (`FLASHTEX_UNICODE_INPROCESS=0`, the oracle).
+/// own, in a process of its own and a directory of its own (spec §6.3
+/// `export_dir`): it leaves the resident engine's S₀ and writes none of the
+/// session's files, so the keystroke after it goes on from a page, not from
+/// S₀ or the format (run by the resident engine, the export replaced S₀ and
+/// the page checkpoints with its own, made without the display list's source
+/// map; in the session's directory, it wrote the `.aux` and log again), and
+/// every compile, the export too, writes what the same compiles in processes
+/// of their own write (`FLASHTEX_UNICODE_INPROCESS=0`, the oracle).
 #[test]
 fn an_export_leaves_the_next_keystroke_incremental() {
     if !texlive() {
@@ -1712,6 +1714,7 @@ fn an_export_leaves_the_next_keystroke_incremental() {
         (&first, false),
     ];
     type Out = (String, Option<String>, Vec<u8>, Vec<Vec<u8>>);
+    let exports = dir.join("exports");
     let run = |tag: &str, envs: &[(&str, &str)]| -> Vec<Out> {
         let sub = dir.join(tag);
         let (proj, out) = project(&sub, &doc);
@@ -1725,8 +1728,42 @@ fn an_export_leaves_the_next_keystroke_incremental() {
             let mut r = request(id, &proj, &out);
             r.buffers = vec![("main.tex".into(), text.to_string())];
             r.export = *export;
+            if *export {
+                r.export_dir = Some(exports.to_str().unwrap().into());
+            }
+            let session = |out: &str| -> Vec<(String, Vec<u8>)> {
+                // (none before the first compile)
+                let Ok(d) = std::fs::read_dir(out) else {
+                    return vec![];
+                };
+                let mut f: Vec<_> = d
+                    .flatten()
+                    .filter(|e| e.path().is_file())
+                    .map(|e| {
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        (n, std::fs::read(e.path()).unwrap())
+                    })
+                    .collect();
+                f.sort();
+                f
+            };
+            let files = session(&out);
             c.compile(&r).unwrap();
             let (ev, done) = events(&mut c, id);
+            let pdf = PathBuf::from(done.str_field("pdf").unwrap_or_default());
+            if *export {
+                let dir = exports.join("ftx-export");
+                assert_eq!(pdf, dir.join("main.pdf"), "{tag}: {done}");
+                assert_eq!(
+                    done.str_field("log"),
+                    dir.join("main.log").to_str(),
+                    "{tag}"
+                );
+                assert!(
+                    files == session(&out),
+                    "{tag}: the export wrote in the session's directory"
+                );
+            }
             let starts = done
                 .get("starts")
                 .and_then(Json::as_array)
@@ -1747,7 +1784,7 @@ fn an_export_leaves_the_next_keystroke_incremental() {
             outs.push((
                 starts,
                 done.str_field("status").map(String::from),
-                std::fs::read(Path::new(&out).join("main.pdf")).unwrap_or_default(),
+                std::fs::read(&pdf).unwrap_or_default(),
                 pages,
             ));
         }
@@ -1759,8 +1796,10 @@ fn an_export_leaves_the_next_keystroke_incremental() {
     let got = run("resident", &[]);
     // (the compile before the export went on from a page: the premise)
     assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    // (from a page: the export wrote none of the session's files, which
+    // the page checkpoints after its opening hold)
     assert!(
-        got[3].0.starts_with("s0") || got[3].0.starts_with("page"),
+        got[3].0.starts_with("page"),
         "the keystroke after the export: {:?}",
         got[3].0
     );

@@ -1728,9 +1728,13 @@ final class EngineV3Session {
     }
 
     private func sendExport(model: ShellModel) {
-        guard let connection, project != nil else { finishExport(.failure(.failed("the preview engine is not connected"))); return }
+        guard let connection, let project else { finishExport(.failure(.failed("the preview engine is not connected"))); return }
         var req = request(model: model)
         req.export = true
+        // Every file the export writes lands in the project copy's export
+        // folder (the app's cache, never next to the sources): the session's
+        // `.aux` and log, which the resident engine resumes from, stay its own.
+        req.exportDir = Self.exportDirectory(of: project.base).path
         req.haltOnError = false // the exported PDF is nonstopmode's, as pdflatex writes it
         req.externalTools = "off" // the resident run's cycle already made the .bbl/.ind
         exportStage = .running(id: req.id)
@@ -1756,9 +1760,9 @@ final class EngineV3Session {
         } else {
             finishExport(.failure(.failed("the engine wrote no PDF (status \(status))\(firstError.map { ": " + $0 } ?? "")")))
         }
-        // The export wrote the preview's PDF path (same output directory and
-        // job name): pages drawn from the PDF take theirs from the new file.
-        loadFallbacks(pdf: pdf)
+        // (The export ran in a directory of its own, `exportDir`: the
+        // preview's PDF and log, and the pages drawn from that PDF, are the
+        // last compile's still.)
         sendHeld()
     }
 
@@ -1832,7 +1836,15 @@ final class EngineV3Session {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exportToolsTimeout, execute: item)
     }
 
+    /// An export's folder (spec §6.3 `export_dir`): beside the project copy's
+    /// `src` and `out`, in the app's cache; the host runs each export in its
+    /// `ftx-export`, and the PDF alone is copied to the destination.
+    nonisolated static func exportDirectory(of base: URL) -> URL {
+        base.appendingPathComponent("export", isDirectory: true)
+    }
+
     /// TeX's `.log` of the last compile (gap A21): `<output dir>/<jobname>.log`.
+    /// The preview's: an export writes its own in `exportDirectory`.
     var texLogURL: URL? {
         guard let project else { return nil }
         let job = (mainFile as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")

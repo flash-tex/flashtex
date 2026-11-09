@@ -29,6 +29,10 @@ public struct DL3CompileRequest: Sendable {
     public var buffers: [(path: String, text: String)] = []
     public var edits: [Edit] = []
     public var export = false
+    /// With `export`: the folder in which the host makes the export's own
+    /// output directory (`export_dir`, spec §6.3), so that the session's
+    /// files are never written by it; nil: the host's temporary one.
+    public var exportDir: String?
     /// 3.2: `auto` runs bibtex, biber and makeindex as latexmk would (a
     /// trusted project only, DESIGN.md §4.5); `off` never; nil: the host's default.
     public var externalTools: String?
@@ -59,6 +63,7 @@ public struct DL3CompileRequest: Sendable {
                                                      "delete": .int(Int64($0.delete)), "insert": .string($0.insert)]) })
         }
         if export { o["export"] = .bool(true) }
+        if let exportDir { o["export_dir"] = .string(exportDir) }
         if let externalTools { o["external_tools"] = .string(externalTools) }
         if haltOnError { o["halt_on_error"] = .bool(true) }
         if let includeOnly { o["includeonly"] = .array(includeOnly.map(DL3JSON.string)) }
