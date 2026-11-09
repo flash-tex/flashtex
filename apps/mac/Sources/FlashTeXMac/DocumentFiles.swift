@@ -534,12 +534,22 @@ final class DocumentFilesState {
         }
     }
 
-    // MARK: saves off the main thread (autosave)
+    // MARK: requests off the main thread (autosave, status probes)
 
-    /// A save `saveInBackground` hashes, encodes, sends and awaits off the
-    /// main thread; its outcome is applied on main exactly once (`settle`).
-    private final class BackgroundSave: @unchecked Sendable {
+    /// What `settleBackgroundSaves` settles, whatever its reply type.
+    private protocol BackgroundJob: AnyObject {
+        var url: URL { get }
+        var isSave: Bool { get }
+        /// The outcome's application once it is due (and the job marked
+        /// settled), or nil: settled already, or not due yet.
+        @MainActor func take(waiting: Bool) -> (@MainActor () -> Void)?
+    }
+
+    /// A request made, sent and awaited off the main thread (`saveInBackground`,
+    /// `diskStatusInBackground`); its outcome is applied on main exactly once (`settle`).
+    private final class BackgroundRequest<Reply>: BackgroundJob, @unchecked Sendable {
         let url: URL
+        let isSave: Bool
         let timeout: TimeInterval
         let deadline: DispatchTime
         /// Signalled when `reply` is set (never for a reply after `gaveUp`).
@@ -547,32 +557,99 @@ final class DocumentFilesState {
         let lock = NSLock()
         /// Under `lock`: the sent text's hash (set before the request goes
         /// out), the reply, and whether its wait expired (a reply after that
-        /// goes to the late path, as a main-thread save's does).
+        /// goes to the late path, as a main-thread request's does).
         var sent: String?
-        var reply: Result<ProjectFilesV1.SaveOutcome, LineProcessFailure>?
+        var reply: Result<Reply, LineProcessFailure>?
         var gaveUp = false
         /// Main thread only.
         var settled = false
-        let finish: @MainActor (Outcome<ProjectFilesV1.SaveOutcome>, _ sent: String) -> Void
+        let finish: @MainActor (Outcome<Reply>, _ sent: String) -> Void
 
-        init(url: URL, timeout: TimeInterval, finish: @escaping @MainActor (Outcome<ProjectFilesV1.SaveOutcome>, String) -> Void) {
+        init(url: URL, isSave: Bool, timeout: TimeInterval, finish: @escaping @MainActor (Outcome<Reply>, String) -> Void) {
             self.url = url
+            self.isSave = isSave
             self.timeout = timeout
             self.deadline = .now() + timeout
             self.finish = finish
         }
+
+        /// The reply, from the reply queue: false when it came after the
+        /// wait expired (it goes to the late path).
+        func record(_ result: Result<Reply, LineProcessFailure>) -> Bool {
+            let inTime: Bool = lock.withLock {
+                if gaveUp { return false }
+                reply = result
+                return true
+            }
+            if inTime { replied.signal() }
+            return inTime
+        }
+
+        /// Its reply; or, once its deadline passed (or, `waiting`, when the
+        /// reply did not come by then), a timeout whose reply then goes to
+        /// the late path. Not due yet: nil.
+        @MainActor func take(waiting: Bool) -> (@MainActor () -> Void)? {
+            guard !settled else { return nil }
+            if waiting { _ = replied.wait(timeout: deadline) }
+            let state: (reply: Result<Reply, LineProcessFailure>?, sent: String)? = lock.withLock {
+                if let r = reply { return (r, sent ?? "") }
+                guard waiting || DispatchTime.now() >= deadline else { return nil }
+                gaveUp = true
+                return (nil, sent ?? "")
+            }
+            guard let state else { return nil }
+            settled = true
+            let outcome: Outcome<Reply>
+            switch state.reply {
+            case .success(let v)?: outcome = .reply(v)
+            case .failure(let f)?: outcome = .failed(f)
+            case nil: outcome = .timedOut(timeout)
+            }
+            let finish = finish
+            return { finish(outcome, state.sent) }
+        }
     }
 
-    /// Saves sent by `saveInBackground` whose outcome is not applied yet.
-    @ObservationIgnored private var backgroundSaves: [BackgroundSave] = []
+    /// Requests sent off the main thread whose outcome is not applied yet.
+    @ObservationIgnored private var backgroundJobs: [BackgroundJob] = []
     /// Saves `saveInBackground` sent through the helper (tests, evidence).
     @ObservationIgnored private(set) var backgroundSavesSent = 0
-    /// Hashing, encoding and sending a background save: never the main thread.
+    /// Status probes `diskStatusInBackground` sent through the helper (tests, evidence).
+    @ObservationIgnored private(set) var backgroundStatusesSent = 0
+    /// Hashing, encoding and sending a background request: never the main thread.
     nonisolated static let backgroundSaveQueue = DispatchQueue(label: "flashtex.project-files.background-save", qos: .userInitiated)
 
     /// A background save of `url` is in flight.
-    func backgroundSaveInFlight(for url: URL) -> Bool { backgroundSaves.contains { $0.url == url } }
-    var backgroundSavesInFlight: Bool { !backgroundSaves.isEmpty }
+    func backgroundSaveInFlight(for url: URL) -> Bool { backgroundJobs.contains { $0.isSave && $0.url == url } }
+    var backgroundSavesInFlight: Bool { backgroundJobs.contains { $0.isSave } }
+    /// Any background request (a save, a status probe) is in flight.
+    var backgroundRequestsInFlight: Bool { !backgroundJobs.isEmpty }
+
+    /// Sends `job`'s request from the background queue: `prepare` (there)
+    /// makes the sent text's hash and the request; the reply settles it on
+    /// main (`settle`), a reply after its deadline goes to `late`.
+    private func sendInBackground<Req: Encodable, Reply: Decodable>(
+        _ job: BackgroundRequest<Reply>, client: ProjectFilesClient,
+        prepare: @escaping @Sendable () -> (sent: String, make: (String) -> Req),
+        late: @escaping @MainActor (Result<Reply, LineProcessFailure>, String) -> Void
+    ) {
+        backgroundJobs.append(job)
+        let settleOnMain: @MainActor () -> Void = { [weak self] in self?.settle(job, waiting: false) }
+        Self.backgroundSaveQueue.async {
+            let (sent, make) = prepare()
+            job.lock.withLock { job.sent = sent }
+            client.send(make, as: Reply.self) { result in
+                guard job.record(result) else {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { late(result, sent) } }
+                    return
+                }
+                // A run-loop block, not the main queue: AppKit drains that late under typing.
+                RunLoop.main.perform(inModes: [.common]) { MainActor.assumeIsolated { settleOnMain() } }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: job.deadline) { MainActor.assumeIsolated { settleOnMain() } }
+    }
 
     /// `save` (never forced) for the timed autosave, without holding the
     /// main thread (lane APP-LAG-AUDIT): the text's hash, the expectation
@@ -594,73 +671,72 @@ final class DocumentFilesState {
             return
         }
         let name = url.lastPathComponent
-        let job = BackgroundSave(url: url, timeout: helperTimeout) { [weak self] outcome, sent in
+        let job = BackgroundRequest<ProjectFilesV1.SaveOutcome>(url: url, isSave: true, timeout: helperTimeout) { [weak self] outcome, sent in
             guard let self else { return }
             completion(saveResult(outcome, url: url, sent: sent, recordsState: recordsState))
             onSaveSettledLate?() // a watcher check parked while this save was in flight runs now
         }
-        backgroundSaves.append(job)
         backgroundSavesSent += 1
-        let late: @MainActor (Result<ProjectFilesV1.SaveOutcome, LineProcessFailure>, String) -> Void = { [weak self] result, sent in
-            self?.lateSaveReply(result, url: url, sent: sent, recordsState: recordsState, lateReceipt: lateReceipt)
-        }
-        let settleOnMain: @MainActor () -> Void = { [weak self] in self?.settle(job, waiting: false) }
-        Self.backgroundSaveQueue.async {
-            let sent = SourceDigest.sha256Hex(text)
+        sendInBackground(job, client: client, prepare: {
             let expected = expectation()
-            job.lock.withLock { job.sent = sent }
-            client.send({ ProjectFilesV1.SaveRequest(id: $0, path: name, text: text, expected: expected.wire, force: false) },
-                        as: ProjectFilesV1.SaveOutcome.self) { result in
-                let isLate: Bool = job.lock.withLock {
-                    if job.gaveUp { return true }
-                    job.reply = result
-                    return false
-                }
-                if isLate {
-                    DispatchQueue.main.async { MainActor.assumeIsolated { late(result, sent) } }
-                    return
-                }
-                job.replied.signal()
-                // A run-loop block, not the main queue: AppKit drains that late under typing.
-                RunLoop.main.perform(inModes: [.common]) { MainActor.assumeIsolated { settleOnMain() } }
-                CFRunLoopWakeUp(CFRunLoopGetMain())
+            return (SourceDigest.sha256Hex(text),
+                    { ProjectFilesV1.SaveRequest(id: $0, path: name, text: text, expected: expected.wire, force: false) })
+        }, late: { [weak self] result, sent in
+            self?.lateSaveReply(result, url: url, sent: sent, recordsState: recordsState, lateReceipt: lateReceipt)
+        })
+    }
+
+    /// `diskStatus` for the app's activation and the file watcher, without
+    /// holding the main thread (lane APP-LAG-AUDIT): the baseline's hash,
+    /// and the wait for the helper (which reads and hashes the whole file),
+    /// happen off it. At 3 MB that was ~10–15 ms of main thread per window
+    /// at every switch back to the app, up to `helperTimeout` with a slow
+    /// helper. `baseline`: the text the editor expects on disk (nil: no
+    /// file). Without the helper the probe is made here, as `diskStatus`.
+    func diskStatusInBackground(_ url: URL, baseline: String?,
+                                completion: @escaping @MainActor (Result<ProjectFilesV1.Status, StatusFailure>) -> Void) {
+        guard case .client(let client) = acquire(for: url) else {
+            completion(diskStatus(url, expectedSha256: baseline.map { SourceDigest.sha256Hex($0) }))
+            return
+        }
+        let name = url.lastPathComponent
+        let job = BackgroundRequest<ProjectFilesV1.Status>(url: url, isSave: false, timeout: helperTimeout) { [weak self] outcome, _ in
+            guard let self else { return }
+            let result: Result<ProjectFilesV1.Status, StatusFailure>
+            switch outcome {
+            case .reply(let s): result = .success(s)
+            case .failed(let f): result = .failure(.init(f.text))
+            case .timedOut(let t): result = .failure(.init("no status reply from the project-files helper within \(String(format: "%.1f", t)) s"))
             }
+            if case .success(let s) = result { lastDiskState = s.state }
+            completion(result)
+            onSaveSettledLate?() // a watcher check parked while this probe was in flight runs now
         }
-        DispatchQueue.main.asyncAfter(deadline: job.deadline) { MainActor.assumeIsolated { settleOnMain() } }
+        backgroundStatusesSent += 1
+        sendInBackground(job, client: client, prepare: {
+            let expected = baseline.map { SourceDigest.sha256Hex($0) }
+            return ("", { ProjectFilesV1.StatusRequest(id: $0, path: name, expectedSha256: expected) })
+        }, late: { [weak self] result, _ in
+            self?.lateReplies.append("status \(name): \(Self.describe(result))")
+            self?.note("late status reply for \(name) ignored")
+        })
     }
 
-    /// Applies `job`'s outcome once: its reply; or, once its deadline passed
-    /// (or, `waiting`, when the reply did not come by then), a timeout whose
-    /// reply then goes to the late path. Not due yet: nothing.
-    private func settle(_ job: BackgroundSave, waiting: Bool) {
-        guard !job.settled else { return }
-        if waiting { _ = job.replied.wait(timeout: job.deadline) }
-        let state: (reply: Result<ProjectFilesV1.SaveOutcome, LineProcessFailure>?, sent: String)? = job.lock.withLock {
-            if let r = job.reply { return (r, job.sent ?? "") }
-            guard waiting || DispatchTime.now() >= job.deadline else { return nil }
-            job.gaveUp = true
-            return (nil, job.sent ?? "")
-        }
-        guard let state else { return }
-        job.settled = true
-        backgroundSaves.removeAll { $0 === job }
-        let outcome: Outcome<ProjectFilesV1.SaveOutcome>
-        switch state.reply {
-        case .success(let v)?: outcome = .reply(v)
-        case .failure(let f)?: outcome = .failed(f)
-        case nil: outcome = .timedOut(job.timeout)
-        }
-        job.finish(outcome, state.sent)
+    /// Applies `job`'s outcome once it is due (`BackgroundJob.take`).
+    private func settle(_ job: BackgroundJob, waiting: Bool) {
+        guard let finish = job.take(waiting: waiting) else { return }
+        backgroundJobs.removeAll { $0 === job }
+        finish()
     }
 
-    /// Settles every background save now, waiting (each at most until its
-    /// own deadline) for replies still to come. Main-thread file operations,
-    /// and the baselines they compare with, call it first. It waits only for
-    /// an operation made inside a save's own window (a ⌘S just as the
-    /// autosave fired), which then waits what it used to wait behind the
-    /// main-thread save; the save's outcome is applied before the operation.
+    /// Settles every background request now, waiting (each at most until
+    /// its own deadline) for replies still to come. Main-thread file
+    /// operations, and the baselines they compare with, call it first. It
+    /// waits only for an operation made inside a request's own window (a ⌘S
+    /// just as the autosave fired), which then waits what it used to wait
+    /// behind the main-thread request; that outcome is applied first.
     func settleBackgroundSaves() {
-        while let job = backgroundSaves.first { settle(job, waiting: true) }
+        while let job = backgroundJobs.first { settle(job, waiting: true) }
     }
 
     /// Asks whether `url` still matches `expectedSha256` (nil: the editor expects no file).
@@ -1434,10 +1510,35 @@ extension ShellModel {
     }
 
     /// `checkDiskStatus()` for the watcher and app activation, which call it
-    /// from a task.
+    /// from a task: the probe is hashed, sent and awaited off the main thread
+    /// (`DocumentFilesState.diskStatusInBackground`, lane APP-LAG-AUDIT).
+    /// A probe answered after the window moved on (another document, or a
+    /// save that moved the baseline) is not applied.
     @discardableResult
     func refreshDiskStatus() async -> ProjectFilesV1.DiskState? {
-        checkDiskStatus()
+        files.settleBackgroundSaves() // the baseline compared with is the one after an autosave in flight
+        guard let url = documentURL else { return nil }
+        let baseline = savedText, generation = projectGeneration
+        let result = await withCheckedContinuation { (c: CheckedContinuation<Result<ProjectFilesV1.Status, DocumentFilesState.StatusFailure>, Never>) in
+            files.diskStatusInBackground(url, baseline: baseline) { c.resume(returning: $0) }
+        }
+        let current = switch (savedText, baseline) {
+        case (nil, nil): true
+        case (let a?, let b?): a.sameBytes(as: b)
+        default: false
+        }
+        guard documentURL == url, projectGeneration == generation, current else {
+            FlashTeXLog.write("files: a status probe of \(url.lastPathComponent) answered after the window moved on; not applied")
+            return nil
+        }
+        switch result {
+        case .failure(let failure):
+            noteProbeFailure(url, failure.reason)
+            return nil
+        case .success(let s):
+            applyDiskState(s.state, url: url, sha256: s.sha256, bytes: s.bytes, mtimeUnixMs: s.mtimeUnixMs, viaHelper: files.usesHelper)
+            return s.state
+        }
     }
 
     /// Shows a save confirmation and remembers it (see `lastSaveConfirmation`).

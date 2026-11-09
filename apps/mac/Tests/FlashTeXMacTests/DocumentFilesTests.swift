@@ -740,6 +740,40 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.lateReplies, [])
     }
 
+    /// Lane APP-LAG-AUDIT: switching back to the app (and the file watcher)
+    /// probes the disk without holding the main thread. The probe used to
+    /// hash the baseline and wait for the helper (which reads and hashes the
+    /// whole file) on main, per window, at every activation. Here the fake
+    /// answers 1 s late: the main actor keeps running meanwhile, and the
+    /// external change is still reported when the reply comes.
+    func testActivationProbeWaitsForTheHelperOffTheMainThread() async throws {
+        let dir = try tempDir("bg-status")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop() // the probe under test is the activation's
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+        try "changed elsewhere\n".write(to: url, atomically: true, encoding: .utf8)
+
+        let t0 = Date()
+        let probe = Task { @MainActor in await model.refreshDiskStatus() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let ran = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(ran, 0.6, "the main actor was held for the probe's reply (\(ran) s)")
+        XCTAssertEqual(model.files.backgroundStatusesSent, 1)
+        XCTAssertTrue(model.files.backgroundRequestsInFlight, "the reply is still to come")
+        XCTAssertNil(model.files.conflict)
+        let state = await probe.value
+        XCTAssertEqual(state, .modified)
+        XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
+        XCTAssertEqual(model.files.conflict?.theirs, SourceDigest.sha256Hex("changed elsewhere\n"))
+        XCTAssertFalse(model.files.backgroundRequestsInFlight)
+        XCTAssertEqual(model.files.lateReplies, [])
+    }
+
     func testGarbageReplyIsAProtocolFailureNotASave() throws {
         let dir = try tempDir("garbage")
         let url = dir.appendingPathComponent("paper.tex")
