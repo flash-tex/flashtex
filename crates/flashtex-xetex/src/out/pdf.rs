@@ -2078,7 +2078,11 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
         }
         pos += 12 + len;
     }
-    if interlace != 0 || bits > 8 || !matches!(ctype, 0 | 2 | 3) {
+    // A 16-bit grey or RGB PNG with a colour key passes through too (PDF
+    // takes 16-bit samples with the PNG predictor): the other route has no
+    // colour keys.
+    let key16 = bits == 16 && matches!(ctype, 0 | 2) && trns.is_some();
+    if interlace != 0 || (bits > 8 && !key16) || !matches!(ctype, 0 | 2 | 3) {
         return None;
     }
     let colors = if ctype == 2 { 3 } else { 1 };
@@ -2803,6 +2807,13 @@ mod tests {
             PngTrans::None
         );
         assert_eq!(t(png((7, 5, 8, 0), &[])), PngTrans::None);
+        // 16-bit grey, tRNS 300: "/BitsPerComponent 16 ... /Mask [300 300]"
+        let d = png((7, 5, 16, 0), &[(b"tRNS", &[1, 44])]);
+        let p = png_passthrough(&d).expect("passes through");
+        assert_eq!(p.trans, PngTrans::Key(vec![300, 300]));
+        assert!(p.dict.contains("/BitsPerComponent 16"), "{}", p.dict);
+        // without a key it still takes the other route
+        assert!(png_passthrough(&png((7, 5, 16, 0), &[])).is_none());
     }
 
     /// The soft mask of a 7 x 5, 4-bit palette PNG with `tRNS` 00 80 ff
