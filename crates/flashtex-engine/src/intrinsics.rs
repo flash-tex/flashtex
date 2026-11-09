@@ -198,10 +198,18 @@ const S_REC_CATCODES: usize = 20; // 1: the catcodes are already read
 const S_REC_LOG_LO: usize = 21;
 const S_REC_LOG_HI: usize = 22;
 const S_REC_SCANNER: usize = 23;
+// (where TeX's stacks and the buffer stood at the call, and the deepest
+// group level it opened above its start, -1 for none: the room it takes,
+// #2308)
+const S_REC_FIRST: usize = 24;
+const S_REC_INPUT: usize = 25;
+const S_REC_PARAM: usize = 26;
+const S_REC_SAVE: usize = 27;
+const S_REC_PEAK_LEVEL: usize = 28;
 /// For the convergence test (`crate::incr`): the slot being recorded,
 /// and the scratch a recording sets at its start.
 pub(crate) const REC_SLOT: usize = S_REC_SLOT;
-pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_SCANNER);
+pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_PEAK_LEVEL);
 const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
@@ -244,6 +252,17 @@ const F_HEAD: usize = 14; // the chain's first slot, plus one
 const F_DIS: usize = 15; // (head) 1: neither replayed nor recorded
 const F_NOREC: usize = 16; // (head) 1: no more recordings
 const F_LAST: usize = 17; // call number of the last hit
+
+// The room the call takes (#2308): above `first`, `pool_ptr` and `str_ptr`
+// (`crate::capacity::Need`), and above the group level, `save_ptr`,
+// `input_ptr` and `param_ptr` (`Globals::intr_room_ok`).
+const F_NEED_BUF: usize = 18;
+const F_NEED_POOL: usize = 19;
+const F_NEED_STR: usize = 20;
+const F_ROOM_LEVEL: usize = 21;
+const F_ROOM_SAVE: usize = 22;
+const F_ROOM_INPUT: usize = 23;
+const F_ROOM_PARAM: usize = 24;
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -421,6 +440,9 @@ pub enum Why {
     Mode,
     Align,
     ParToken,
+    /// the call's normal path would overflow one of TeX's arrays or stacks
+    /// (#2308); as an abandoned recording: it came too close to one to tell
+    Room,
     Disabled,
     NoSlot,
     /// no valid recording (yet, or the macro is left alone)
@@ -1111,6 +1133,14 @@ impl Globals {
         self.set_st(S_REC_NEST_PTR, self.nest_ptr);
         self.set_st(S_REC_TAIL, self.cur_list.tail_field);
         self.set_st(S_REC_SCANNER, self.scanner_status);
+        self.set_st(S_REC_FIRST, self.first);
+        self.set_st(S_REC_INPUT, self.input_ptr);
+        self.set_st(S_REC_PARAM, self.param_ptr);
+        self.set_st(S_REC_SAVE, self.save_ptr);
+        self.set_st(S_REC_PEAK_LEVEL, -1);
+        // (the markers `cap_need` reads at the end; their places follow from
+        // the pointers just kept)
+        self.cap_probe();
         self.set_st(S_REC_VERIFY, verify as i32);
         self.set_st(S_REC_CATCODES, 0);
         let len = self.log_len();
@@ -1198,6 +1228,11 @@ impl Globals {
             return self.rec_abort(Why::Group);
         }
         if let Some(slot) = self.rec_slot() {
+            // (`new_save_level` tests `cur_level` before it raises it)
+            let d = self.cur_level - self.st(S_REC_LEVEL);
+            if d > self.st(S_REC_PEAK_LEVEL) {
+                self.set_st(S_REC_PEAK_LEVEL, d);
+            }
             if !self.rec_verify_or_push(slot, K_BEGIN, c, 0, 0) {
                 self.rec_abort(Why::Capacity);
             }
@@ -1305,6 +1340,9 @@ impl Globals {
     pub fn flashtex_intr_fed(&mut self) {
         if self.st(S_REC_BASE) == 0 {
             self.set_st(S_REC_BASE, self.input_ptr);
+            // (after `macro_call`'s "conserve stack space" pops, which an
+            // offer cannot foresee: `intr_keep_room`)
+            self.set_st(S_REC_PARAM, self.param_ptr);
         }
     }
 
@@ -1471,12 +1509,23 @@ impl Globals {
         if let Some(w) = why {
             return self.rec_abort(w);
         }
+        // (how much of the buffer, the pool and the string table the call
+        // used: unknown when it may have been cut short at the top, #2308)
+        let probe = crate::capacity::Probe::at(
+            self.st(S_REC_FIRST),
+            self.st(S_REC_POOL_PTR),
+            self.st(S_REC_STR_PTR),
+        );
+        let Some(need) = self.cap_need(&probe) else {
+            return self.rec_abort(Why::Room);
+        };
         self.intr_rec_on = false;
         self.set_st(S_REC_SLOT, 0);
         if self.st(S_REC_VERIFY) == 1 {
             crate::intrinsics_verify::normal_path_done(self, slot);
             return;
         }
+        self.intr_keep_room(slot, need);
         self.set_sf(slot, F_STATE, ST_VALID);
         STATS.with(|s| s.borrow_mut().committed += 1);
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
@@ -1530,7 +1579,68 @@ impl Globals {
                 return Err(Why::WordDeps);
             }
         }
+        if !self.intr_room_ok(slot) {
+            return Err(Why::Room);
+        }
         Ok(())
+    }
+
+    /// Keep in `slot` the room its recording took (#2308): `need` above
+    /// the buffer's, the pool's and the string table's pointers, and how
+    /// far above the call's start its normal path takes TeX's stacks, as
+    /// their overflow tests check them. The deepest group level it opens at
+    /// (`flashtex_intr_group`); `save_ptr` (§273), `input_ptr` (§321) and
+    /// `param_ptr` (§390), each bounded by the high-water mark the
+    /// statistics keep, less the pointer at the start: exact when the call
+    /// raised it, more than enough when it did not. A local assignment at
+    /// the call's own level saves the old value or not as the location's
+    /// level is there, which the guard does not hold: each operation may
+    /// take two more save-stack words on another path. A replay pushes no
+    /// input level or parameter, so without this a call recorded with room
+    /// to spare was replayed where its normal path stops with `TeX capacity
+    /// exceeded` (lane AUDIT-OVERFLOW; BOX-MEMO's #2265).
+    fn intr_keep_room(&mut self, slot: usize, need: crate::capacity::Need) {
+        self.set_sf(slot, F_NEED_BUF, need.buf);
+        self.set_sf(slot, F_NEED_POOL, need.pool);
+        self.set_sf(slot, F_NEED_STR, need.strings);
+        self.set_sf(slot, F_ROOM_LEVEL, self.st(S_REC_PEAK_LEVEL));
+        let ops = self.sf(slot, F_NOPS);
+        self.set_sf(
+            slot,
+            F_ROOM_SAVE,
+            (self.max_save_stack - self.st(S_REC_SAVE)).max(0) + 2 * ops,
+        );
+        // (from the body's own push, at `input_ptr` one below its level:
+        // the "conserve stack space" pops before it depend on the input
+        // stack, which the guard does not hold, so an offer puts this on
+        // top of `input_ptr` as it is before them, which is never less)
+        let pushed_at = match self.st(S_REC_BASE) {
+            0 => self.st(S_REC_INPUT),
+            b => b - 1,
+        };
+        self.set_sf(slot, F_ROOM_INPUT, (self.max_in_stack - pushed_at).max(0));
+        self.set_sf(
+            slot,
+            F_ROOM_PARAM,
+            (self.max_param_stack - self.st(S_REC_PARAM)).max(0),
+        );
+    }
+
+    /// Whether `slot`'s call, made now, passes every overflow test its
+    /// normal path makes (`new_save_level`, `check_full_save_stack`,
+    /// `push_input`, `macro_call`, and `crate::capacity`'s).
+    fn intr_room_ok(&self, slot: usize) -> bool {
+        use crate::generated::consts as k;
+        let level = self.sf(slot, F_ROOM_LEVEL);
+        (level < 0 || self.cur_level + level < k::max_quarterword)
+            && self.save_ptr + self.sf(slot, F_ROOM_SAVE) <= k::save_size - 7
+            && self.input_ptr + self.sf(slot, F_ROOM_INPUT) < k::stack_size
+            && self.param_ptr + self.sf(slot, F_ROOM_PARAM) <= k::param_size
+            && self.cap_room_ok(&crate::capacity::Need {
+                buf: self.sf(slot, F_NEED_BUF),
+                pool: self.sf(slot, F_NEED_POOL),
+                strings: self.sf(slot, F_NEED_STR),
+            })
     }
 
     /// `macro_call`, entered from `big_switch`'s `get_x_token` for a

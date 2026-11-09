@@ -496,3 +496,24 @@ fn calls_in_math_groups_compare_their_save_stack() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+#[test]
+fn a_replay_keeps_the_buffers_and_the_pools_overflows() {
+    // (lane AUDIT-OVERFLOW, #2308) a replay puts neither the call's
+    // `\csname` name in the buffer nor its `\meaning` in the pool: a call
+    // recorded with room to spare was replayed where its normal path stops
+    // with `TeX capacity exceeded` (on main: `[survived]`, exit 0)
+    let body = "\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 ";
+    for (i, (want, src)) in common::capacity_cases("measure", body, 20_000, 6183)
+        .into_iter()
+        .enumerate()
+    {
+        let tag = format!("capacity-cap{i}");
+        let d = scratch(&tag);
+        std::fs::write(d.join("t.tex"), &src).unwrap();
+        let off = run(&d, "off", "measure");
+        assert!(off.log.contains(want), "{tag}: {}", off.log);
+        let s = check(&tag, &src);
+        assert!(stat(&s, "hits") >= 2, "{tag}: {s}");
+    }
+}

@@ -465,6 +465,10 @@ struct Entry {
     /// are offered (a recording would refuse them). Its operations are
     /// empty.
     doomed: bool,
+    /// How far above `first`, `pool_ptr` and `str_ptr` the call goes: an
+    /// offer replays only where its normal path would not overflow the
+    /// buffer, the pool or the string table (`crate::capacity`, #2308).
+    cap: crate::capacity::Need,
     hash: u64,
     /// `bm_k2_hash` of K2.
     k2hash: u64,
@@ -569,6 +573,9 @@ struct ObjRef {
 
 struct Rec {
     cs: i32,
+    /// Where the call started in the buffer, the pool and the string
+    /// table, whose markers measure it (`crate::capacity`).
+    cap: crate::capacity::Probe,
     obj_refs: Vec<ObjRef>,
     new_objs: Vec<i32>,
     last_link: i32,
@@ -2533,6 +2540,8 @@ impl Globals {
                         let q = self.font_glue[*f as usize];
                         q > LO_MEM_STAT_MAX && self.bm_glue_fields(q) == *w
                     })
+                    && self.cap_room_ok(&e.cap)
+                    && self.sys_obj_ptr + e.new_objs as i32 <= k::sup_obj_tab_size
                     && self.bm_new_cs_placeable(&e.new_cs);
                 if rest_ok {
                     best = Some((e.last_used, i));
@@ -2661,6 +2670,7 @@ impl Globals {
         let start = self.bm_frame();
         let rec = Rec {
             cs,
+            cap: self.cap_probe(),
             obj_refs: vec![],
             new_objs: vec![],
             last_link: self.pdf_last_link,
@@ -2768,6 +2778,7 @@ impl Globals {
                 let bytes = 4 * (rec.k1.len() + rec.k2.len()) + 64;
                 let entry = Entry {
                     doomed: true,
+                    cap: Default::default(),
                     hash: key_hash(&rec.k1, &rec.ctx, &[], &[]),
                     k2hash,
                     k1: rec.k1,
@@ -3664,6 +3675,11 @@ impl Globals {
         }
         self.bm_rec_on = false;
         let mut rec = ST.with(|s| s.borrow_mut().rec.take()).unwrap();
+        // (how much of the buffer, the pool and the string table it used:
+        // unknown when it may have been cut short at the top, #2308)
+        if self.cap_need(&rec.cap).is_none() {
+            return self.bm_abort_taken(rec, "Capacity");
+        }
         for n in gboxes {
             if n < 256 {
                 rec.ops.push(Op::Def {
@@ -3875,8 +3891,11 @@ impl Globals {
                 v.retain(|p| !rec.created.contains(p));
                 v
             };
+            // (`bm_finish` checked it can tell)
+            let cap = self.cap_need(&rec.cap).unwrap_or_default();
             let entry = Entry {
                 doomed: false,
+                cap,
                 hash: key_hash(&rec.k1, &rec.ctx, &[], &[]),
                 k2hash,
                 k1: rec.k1,
