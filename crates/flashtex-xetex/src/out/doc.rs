@@ -191,6 +191,11 @@ pub struct Doc {
     pub version: (u32, u32),
     /// dvipdfmx's colour stack: (fill, stroke). It lasts across pages.
     pub colors: Vec<(Col, Col)>,
+    /// The page background (pdfdoc.c's static `bgcolor`): set by
+    /// `background`, `pdf:bgcolor`, `x:backgroundcolor`, kept for the
+    /// following pages, filled at the end of each page; `None` is white
+    /// (no fill).
+    pub bgcolor: Option<Col>,
     pub tracking: Option<Tracking>,
     /// `dvipdfmx:catch_phantom`'s mode.
     pub phantom: Phantom,

@@ -233,7 +233,7 @@ impl<M: Metrics> Builder<'_, M> {
         } else if let Some(r) = t.strip_prefix(b"background") {
             let mut p = Parser::new(r);
             match read_color(&mut p) {
-                Some(c) => self.background(c),
+                Some(c) => self.set_background(c),
                 None => self.doc.diag(format!("bad colour in `{}'", lossy(t))),
             }
         } else if let Some(r) = t.strip_prefix(b"dvipdfmx:") {
@@ -282,9 +282,21 @@ impl<M: Metrics> Builder<'_, M> {
         }
     }
 
-    /// `background SPEC`, `pdf:bgcolor SPEC`: the page's background, a
-    /// filled rectangle under everything else.
-    fn background(&mut self, c: Col) {
+    /// `background SPEC`, `pdf:bgcolor SPEC`, `x:backgroundcolor SPEC`
+    /// (pdf_doc_set_bgcolor): the background of this page, filled when it
+    /// ends, and of the pages after it until another; white is none
+    /// (pdf_color_is_white).
+    fn set_background(&mut self, c: Col) {
+        let white = match c.0.len() {
+            4 => c.0.iter().all(|&v| v == 0.0),
+            _ => c.0.iter().all(|&v| v == 1.0),
+        };
+        self.doc.bgcolor = (!white).then_some(c);
+    }
+
+    /// The page's background, a filled rectangle under everything else
+    /// (doc_fill_page_background, at the end of the page).
+    pub fn fill_background(&mut self, c: Col) {
         let page = self.streams.first_mut().expect("the page");
         let [x0, y0, x1, y1] = page.dl.pdf_box;
         page.dl.paths.push(Path {
@@ -338,7 +350,7 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"backgroundcolor" => {
                 if let Some(c) = read_color(&mut p) {
-                    self.background(c);
+                    self.set_background(c);
                 }
             }
             _ => self.doc.unknown_special(&format!("x:{}", lossy(&cmd))),
@@ -466,7 +478,7 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"bgcolor" => {
                 if let Some(c) = read_color(&mut p) {
-                    self.background(c);
+                    self.set_background(c);
                 }
             }
             b"image" => self.image_special(&mut p, true),

@@ -407,6 +407,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
             b.set_colors(Some(f), Some(s));
         }
         b.run(bytes)?;
+        // pdf_doc_end_page: the background in effect, under the page
+        if let Some(c) = b.doc.bgcolor.clone() {
+            b.fill_background(c);
+        }
         // An annotation still open at the end of the page breaks here and
         // continues on the next page.
         b.break_annot();
