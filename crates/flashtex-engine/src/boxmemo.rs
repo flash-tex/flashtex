@@ -4277,7 +4277,7 @@ impl Globals {
                     if matches!(v, Val::FreshList(_))
                         && *kind != 1
                         && *kind != 3
-                        && *p < k::glue_base
+                        && Self::bm_is_cs(*p)
                         && (k::call..=k::long_outer_call).contains(&t)
                     {
                         self.dg_def_replayed(e);

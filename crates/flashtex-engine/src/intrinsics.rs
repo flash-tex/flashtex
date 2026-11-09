@@ -1708,8 +1708,11 @@ impl Globals {
                     }
                     // a macro the body defined: its definition site, as
                     // the recorded run's `\def` noted it
+                    // (a control sequence: below `glue_base`, or above
+                    // `eqtb_size` with tex.ch's `hash_extra`)
                     if k & 0xff == K_FRESH
-                        && a < crate::generated::consts::glue_base
+                        && (a < crate::generated::consts::glue_base
+                            || a > crate::generated::consts::eqtb_size)
                         && (CALL..=LONG_OUTER_CALL).contains(&t)
                     {
                         self.dg_def_replayed(e);
