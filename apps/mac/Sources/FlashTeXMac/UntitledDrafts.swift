@@ -13,7 +13,10 @@ import ObjectiveC
 /// (`EngineV3.instanceOwner`, pid plus start time).
 ///
 /// The draft goes away when the buffer gets a file (Save As, an open), when
-/// it is clean or empty again, and when the user discards it at quit. A
+/// it is clean or empty again, when the user discards it at quit, and when
+/// the user closes its window: a closed window stays closed and its unsaved
+/// text is discarded (Commander ruling 2026-11-09, owner-delegated app
+/// decision; `ProjectWindows.closed`). A
 /// draft whose owner is no longer running is a crash's leftover: the next
 /// untitled document (a launch, a new window) takes the newest one as its
 /// text, unsaved, and says so — no file is ever written by a recovery.
@@ -86,6 +89,7 @@ final class UntitledDraftStore {
 extension ShellModel {
     private static var draftStoreKey = 0
     private static var draftIDKey = 0
+    private static var draftClosedKey = 0
 
     var untitledDrafts: UntitledDraftStore {
         if let existing = objc_getAssociatedObject(self, &Self.draftStoreKey) as? UntitledDraftStore { return existing }
@@ -105,6 +109,7 @@ extension ShellModel {
     /// Keeps (or drops) the untitled buffer's draft: called by the autosave
     /// pass when the buffer has no file.
     func keepUntitledDraft() {
+        guard !untitledDraftDiscarded else { return } // its window was closed
         guard documentURL == nil else { dropUntitledDraft(); return }
         let text = entryText
         guard project.isDirty(project.entryPath), !text.isEmpty else { dropUntitledDraft(); return }
@@ -115,6 +120,18 @@ extension ShellModel {
     /// The draft is no longer needed (the buffer has a file, or the user
     /// discarded it).
     func dropUntitledDraft() { untitledDrafts.remove(untitledDraftID) }
+
+    /// The user closed this model's window (`ProjectWindows.closed`, not a
+    /// quit): its untitled text is discarded, and no later autosave pass (a
+    /// timer that outlives the window) keeps it again. Before, the draft
+    /// stayed on disk; once this instance had quit it read as a crash's
+    /// leftover and the closed text came back in the next untitled window.
+    func discardUntitledDraftOnClose() {
+        objc_setAssociatedObject(self, &Self.draftClosedKey, true, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        dropUntitledDraft()
+    }
+
+    private var untitledDraftDiscarded: Bool { (objc_getAssociatedObject(self, &Self.draftClosedKey) as? Bool) ?? false }
 
     /// A crash's newest untitled draft becomes this untitled buffer's text,
     /// unsaved; the draft is now this model's (a second crash keeps it).

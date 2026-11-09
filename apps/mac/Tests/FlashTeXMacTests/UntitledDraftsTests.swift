@@ -82,4 +82,34 @@ final class UntitledDraftsTests: XCTestCase {
         XCTAssertTrue(second.recoverUntitledDraft())
         XCTAssertEqual(second.activeText, "older text\n", "the next window takes the next one")
     }
+
+    /// A window the user closed stays closed: its untitled text is
+    /// discarded, not recovered by the next launch's untitled window
+    /// (Commander ruling 2026-11-09). Before, closing kept the draft on disk,
+    /// so once this instance was gone it read as a crash's leftover. A late
+    /// autosave pass (a timer that outlives the window) keeps nothing either.
+    func testClosingAnUntitledWindowDiscardsItsDraft() throws {
+        let windows = ProjectWindows()
+        windows.makeModel = { [dir] _ in
+            let m = ShellModel(startup: .untitledDocument, launchHooks: false)
+            m.untitledDrafts.directory = dir!
+            return m
+        }
+        let id = windows.newWindow()
+        let model = try XCTUnwrap(windows.entries.first { $0.id == id }?.model)
+        model.updateActiveText(UntitledDocument.text + "Text I then closed.\n")
+        model.flushPendingAutosave()
+        XCTAssertNotNil(model.untitledDrafts.read(model.untitledDraftID), "kept while the window is open")
+
+        windows.closed(id)
+        XCTAssertNil(model.untitledDrafts.read(model.untitledDraftID), "discarded with the window")
+        model.updateActiveText(UntitledDocument.text + "A late edit.\n")
+        model.flushPendingAutosave()
+        XCTAssertNil(model.untitledDrafts.read(model.untitledDraftID), "a late pass keeps nothing")
+        // The next launch (this instance dead) has nothing to recover.
+        XCTAssertTrue(UntitledDraftStore(directory: dir).leftovers(isAlive: { _ in false }).isEmpty)
+        let next = ShellModel(startup: .untitledDocument)
+        next.untitledDrafts.directory = dir
+        XCTAssertFalse(next.recoverUntitledDraft(isAlive: { _ in false }))
+    }
 }
