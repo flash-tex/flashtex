@@ -64,6 +64,10 @@ In order; the first difference names the class:
 | `terminal` | stdout and stderr differ (after the same normalisation). kpathsea's `Not writing to`/`Not reading from` refusals are taken out first and compared as a list of their own (`kpse-msg`): the capture merges stderr into stdout, so where a refusal lands depends on when the engine last flushed stdout |
 | `timeout` | one engine exceeded `--timeout` |
 
+`equal-pt2` counts the seeds whose PDFs pass P-T2 but differ in bytes
+(the two engines' PDFs are usually byte-identical, so these are worth a
+look; P-T2 does not compare annotations, outlines or the catalog).
+
 Two outcomes are not differences and do not fail a run: `both-hang`
 (both engines exceeded `--timeout`) and `both-signal` (both died by the
 same signal, in practice SIGXFSZ when a runaway loop fills the 64 MiB

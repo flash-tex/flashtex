@@ -46,7 +46,7 @@ if SHELL_OFF not in lockstep.ENGINE_SHELL_FLAGS:
 
 FSIZE_LIMIT = 64 * 1024 * 1024
 # Classes that are not a difference between the engines.
-NEUTRAL = ("equal", "both-hang", "both-signal")
+NEUTRAL = ("equal", "equal-pt2", "both-hang", "both-signal")
 DIGITS = re.compile(r"\d+")
 DOC_MTIME = 1000000000  # 2001-09-09T01:46:40Z
 # kpathsea's mktex scripts off for both engines: a missing TFM or PK would
@@ -188,7 +188,7 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
         res.update(cls="terminal", sig=signature("terminal", x + " || " + y),
                    detail={"line": i + 1, "oracle": x, "candidate": y})
         return res
-    res["cls"] = "equal"
+    res["cls"] = "equal-pt2" if res.get("pdf_bytes_differ") else "equal"
     return res
 
 
