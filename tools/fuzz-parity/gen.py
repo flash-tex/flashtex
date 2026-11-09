@@ -754,7 +754,7 @@ class G:
             "{\\pdfprependkern=1 \\pdfappendkern=1 \\knbccode\\tenrm`a=%d \\knaccode\\tenrm`a=%d "
             "\\setbox5\\hbox{aba a}\\showbox5}" % (self.n(-500, 500), self.n(-500, 500)),
             "{\\pdftracingfonts=%d \\setbox5\\hbox{\\tenbf x}\\showbox5}" % self.n(0, 2),
-            "\\pdfmapfile{+nonexistentzz.map}", "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+            "\\pdfmapfile{%snonexistentzz.map}" % self.pick(["+", "", "=", "-"]), "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
             "\\pdfincludechars\\tenrm{abc}\\pdfomitcharset 1 ",
             "{\\pdffakespace\\pdfinterwordspaceon x y\\pdfinterwordspaceoff}",
             "\\message{\\pdfescapestring{(a)\\\\b}|\\pdfescapename{a b#/}|\\pdfescapehex{^^ff}}",

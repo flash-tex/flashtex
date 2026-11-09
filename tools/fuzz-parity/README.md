@@ -154,9 +154,9 @@ independent chunks, each balanced on its own:
   page boxes and sizes, missing images, forms, colour stacks, and
   `openout_any`/`openin_any` (absolute, `..` and dot-file names).
 
-A document never replaces the font map (`\pdfmapfile` without `+`):
-pdfTeX would then run kpathsea's `mktexpk` for every font, which writes
-into the TeX tree and is not something the two engines share.
+With the mktex scripts off, a document that replaces the font map
+(`\pdfmapfile{x.map}` without `+`) ends in pdfTeX's `Font cmr10 at 72 not
+found`, in both engines alike.
 
 Random numbers: every `\pdfuniformdeviate`/`\pdfnormaldeviate` the grammar
 emits follows a `\pdfsetrandomseed`, and the preamble sets one too (pdfTeX seeds from the clock, and a deviate in an argument or a `\write` can be expanded before the `\pdfsetrandomseed` beside it runs).
