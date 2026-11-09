@@ -1706,6 +1706,14 @@ impl Globals {
                     } else {
                         self.eq_define(a, t, e)
                     }
+                    // a macro the body defined: its definition site, as
+                    // the recorded run's `\def` noted it
+                    if k & 0xff == K_FRESH
+                        && a < crate::generated::consts::glue_base
+                        && (CALL..=LONG_OUTER_CALL).contains(&t)
+                    {
+                        self.dg_def_replayed(e);
+                    }
                 }
                 K_WORD => {
                     if global {

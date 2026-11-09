@@ -1221,6 +1221,32 @@ impl Globals {
         }
     }
 
+    /// A replay (BOX-MEMO's or a D9 intrinsic's) made token list `p` a
+    /// macro's meaning, as a `\def` in the replayed call's body did on the
+    /// normal path. There the `\def` was read from a token list (the
+    /// body), so its site is the innermost file level's line with no
+    /// column (`dg_here`); a replay runs where that body was used up, at
+    /// the same file level, which may be `cur_input` itself.
+    pub fn dg_def_replayed(&mut self, p: i32) {
+        if enabled() {
+            let is_file = |r: &crate::generated::types::in_state_record| {
+                r.state_field != 0 && r.name_field > 19
+            };
+            let rec = if is_file(&self.cur_input) {
+                Some(self.cur_input)
+            } else {
+                self.file_level(&DEF_LEVEL, is_file)
+            };
+            let here = rec.map(|r| {
+                let index = r.index_field;
+                let name = self.full_source_filename_stack[index as usize];
+                (self.dg_name_id(name), self.dg_level_line(index), -1)
+            });
+            with(|s| s.def_at = here);
+            self.dg_def(p);
+        }
+    }
+
     /// `\def` made token list `p` the macro's meaning.
     pub fn dg_def(&mut self, p: i32) {
         if enabled() {

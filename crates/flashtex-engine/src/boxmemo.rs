@@ -4272,6 +4272,16 @@ impl Globals {
                         2 => self.geq_define(*p, t, e),
                         _ => self.geq_word_define(*p, e),
                     }
+                    // a macro the call defined (`\def`, `\xdef`): its
+                    // definition site, as the normal path's `\def` noted it
+                    if matches!(v, Val::FreshList(_))
+                        && *kind != 1
+                        && *kind != 3
+                        && *p < k::glue_base
+                        && (k::call..=k::long_outer_call).contains(&t)
+                    {
+                        self.dg_def_replayed(e);
+                    }
                 }
                 Op::Sa { t, n, v, kind } => {
                     self.find_sa_element(*t, *n, true);
