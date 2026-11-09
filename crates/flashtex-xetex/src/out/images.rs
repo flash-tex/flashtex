@@ -80,6 +80,18 @@ impl Images {
         self.res.get(id.checked_sub(1)? as usize)
     }
 
+    /// Whether every image's key is still its file's: a document carried
+    /// over from another run (a converged run's, `crate::conv`) whose image
+    /// file changed since (the same XDV, a picture replaced in place by one
+    /// of the same size) is not this run's (#2444).
+    pub fn fresh(&self) -> bool {
+        self.by.iter().all(|((path, page, pagebox), &id)| {
+            let len = std::fs::metadata(path).map(|m| m.len());
+            matches!((self.get(id), len),
+                (Some(i), Ok(len)) if i.key == image_key(path, len, *page, *pagebox))
+        })
+    }
+
     /// The image of file `path` (found already), PDF page `page` (0: the
     /// first) and box `pagebox` (0: crop).
     pub fn load(&mut self, path: &str, page: i32, pagebox: i32) -> Result<u32, String> {
