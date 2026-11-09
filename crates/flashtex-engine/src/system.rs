@@ -3572,14 +3572,20 @@ impl Globals {
         TEX_INPUT_TYPE.store(input, Ordering::SeqCst);
     }
 
+    /// kpathsea's `kpse_in_name_ok`; a refusal names `argv[0]` as given.
     pub fn kpse_in_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok(&n, false))
+        let inv = invocation_name();
+        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok_as(&n, false, &inv))
     }
 
+    /// kpathsea's `kpse_out_name_ok`: `Not writing to NAME (openout_any =
+    /// p; no extended check).` on stderr after `argv[0]` as given, as
+    /// pdfTeX's own kpathsea says it (#2274).
     pub fn kpse_out_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        with_resolver(|r| r.name_ok(&n, true))
+        let inv = invocation_name();
+        with_resolver(|r| r.name_ok_as(&n, true, &inv))
     }
 
     /// texmfmp.c's `runsystem` on `str_pool[s..s+l-1]`.
