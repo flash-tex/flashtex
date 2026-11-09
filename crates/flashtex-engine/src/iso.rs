@@ -2764,10 +2764,27 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             let (a, b) = (self.o.i32_at(l.cur_mark, k), self.n.i32_at(l.cur_mark, k));
             self.ptr(K::Tok, a, b);
         }
-        // disc_ptr[copy_code..vsplit_code]: the Rust array may start at 0
-        for k in 0..4 {
-            let (a, b) = (self.o.i32_at(l.disc_ptr, k), self.n.i32_at(l.disc_ptr, k));
-            self.ptr(K::List, a, b);
+        // disc_ptr[copy_code..vsplit_code], at Rust indices 0..3 (code - 1;
+        // the array has three elements, generated/globals.rs). etex.ch
+        // names them tail_page_disc, page_disc and split_disc. The two
+        // discard lists are owned; tail_page_disc is the last node of
+        // page_disc's list, a pointer into it. The page builder reads it
+        // only when page_disc is not null (it appends there, e-TeX's
+        // "Recycle node p"), and nothing resets it when the list goes:
+        // `fire_up` (and the end of an output routine) flush page_disc,
+        // and \pagediscards moves it, leaving tail_page_disc at a freed
+        // node or at a node of another list. So it is dead while
+        // page_disc is null (#2433: walked as an owned list it read a
+        // freed node, whose free-list links two correct paths leave
+        // differently, a false `box dimension differs` / `synctex tag
+        // differs`).
+        let disc = |s: &Self, k: usize| (s.o.i32_at(l.disc_ptr, k), s.n.i32_at(l.disc_ptr, k));
+        let (page_disc, split_disc) = (disc(self, 1), disc(self, 2));
+        self.ptr(K::List, page_disc.0, page_disc.1);
+        self.ptr(K::List, split_disc.0, split_disc.1);
+        if page_disc != (NULL, NULL) {
+            let (a, b) = disc(self, 0);
+            self.later("tail_page_disc", a, b);
         }
         // sa_root[int_val..mark_val]
         for k in 0..=MARK_VAL as usize {

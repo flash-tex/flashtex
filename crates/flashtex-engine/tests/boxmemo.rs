@@ -263,6 +263,33 @@ fn a_tail_that_reads_past_the_call_never_replays() {
     assert_eq!(stat(&s, "hits"), 0, "{s}");
 }
 
+#[test]
+fn the_page_discards_tail_is_dead_once_the_list_is_flushed() {
+    // (#2433, lane FUZZ-ALIGN) the second page keeps its top \parskip in
+    // e-TeX's page_disc (\savingvdiscards=1); the third page break flushes
+    // the list, leaving tail_page_disc at a freed node. The full verifier
+    // walked it as a list and compared the free list's links there, which
+    // the normal path's call and the replay leave differently
+    let s = check(
+        "page-disc-tail",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\&=4 \\scrollmode\n\
+         \\hsize=100pt \\vsize=100pt \\hbadness=10000 \\vbadness=10000 \\hfuzz=16000pt \\vfuzz=16000pt\n\
+         \\count254=1000 \\dimen254=500pt \\skip254=12pt plus 4pt minus 4pt\n\
+         \\def\\out{\\shipout\\vbox{\\box255 \\ifvoid254\\else\\unvbox254\\fi}}\n\
+         \\output={\\out}\n\
+         \\def\\measure{\\begingroup\\setbox0\\vbox to 30pt{\\halign to 100pt{##\\hfil&\\tabskip=0pt \\hfil##\\hfil\\crcr }}\
+         \\global\\dimen1=\\wd0 \\endgroup}%\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         10pt{\\hrule\\par} \\savingvdiscards=1 \\vfill\\penalty-20000\n\
+         x{\\penalty100 \\vss} \\savingvdiscards=0\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         \\penalty-20000\\deadcycles=0 \\output={\\out}\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         \\end\n",
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
