@@ -845,6 +845,48 @@ struct Ahead {
     history_gen: u64,
     at_to: Vec<(u32, ChunkPtr)>,
     latest: Vec<u32>,
+    /// `FLASHTEX_VERIFY_PREPARED`: a hash of each of `latest`'s state at
+    /// `to` (its latest), as the move back checked it (`chunk_hash`): the
+    /// move ahead copies those chunks in from the reattach's redo, which no
+    /// check from `to` on reads (`expect_restore`: the logs from `to` on do
+    /// not hold them).
+    latest_hash: Option<Vec<u64>>,
+}
+
+/// A hash of a chunk's words (`Ahead::latest_hash`).
+fn chunk_hash(p: *const u64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    // SAFETY: a whole chunk, live or slab.
+    unsafe { std::slice::from_raw_parts(p, CHUNK_WORDS) }.hash(&mut h);
+    h.finish()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: `FLASHTEX_VERIFY_PREPARED` for the lazy moves on this thread
+    /// only (`verify_moves`).
+    static VERIFY_MOVES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `FLASHTEX_VERIFY_PREPARED`, for the lazy moves (`move_back`,
+/// `move_ahead`).
+fn verify_moves() -> bool {
+    #[cfg(test)]
+    if VERIFY_MOVES.with(|v| v.get()) {
+        return true;
+    }
+    std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some()
+}
+
+/// A lazy move's verification failed (`FLASHTEX_VERIFY_PREPARED`): loud,
+/// so that a sweep fails (a test's panic, so that it can expect one).
+fn move_unverified(e: String) -> ! {
+    if cfg!(test) {
+        panic!("FLASHTEX_VERIFY_PREPARED: a lazy move: {e}");
+    }
+    eprintln!("FLASHTEX_VERIFY_PREPARED: a lazy move: {e}");
+    std::process::abort()
 }
 
 /// The largest buffer `Core::spare` keeps.
@@ -1737,9 +1779,7 @@ impl Core {
     fn move_back(&mut self, k: usize, kt: usize) -> Branch {
         let t0 = std::time::Instant::now();
         let Lazy { target, redo, .. } = self.lazy.take().expect("a lazy reattach");
-        let verify = std::env::var_os("FLASHTEX_VERIFY_PREPARED")
-            .is_some()
-            .then(|| self.expect_restore(k, &redo));
+        let verify = verify_moves().then(|| self.expect_restore(k, &redo));
         self.drop_part();
         self.set_prepared(None);
         self.drop_ahead();
@@ -1768,6 +1808,11 @@ impl Core {
         self.last_tag += 1;
         let tag = self.last_tag;
         let moved = at_to.len() + latest.len();
+        // (their redo is their latest state: `verify_restore` below checks it)
+        let latest_hash = verify.is_some().then(|| {
+            let of: std::collections::HashMap<u32, ChunkPtr> = redo.iter().copied().collect();
+            latest.iter().map(|c| chunk_hash(of[c])).collect()
+        });
         self.ahead = Some(Ahead {
             from: id,
             to: target,
@@ -1776,6 +1821,7 @@ impl Core {
             history_gen: self.history_gen,
             at_to,
             latest,
+            latest_hash,
         });
         let old_ids = self.ids.split_off(k);
         self.ids.push(old_ids[0]);
@@ -1809,9 +1855,7 @@ impl Core {
         let t0 = std::time::Instant::now();
         let Lazy { target, redo, .. } = self.lazy.take().expect("a lazy reattach");
         let a = self.ahead.take().expect("a move back");
-        let verify = std::env::var_os("FLASHTEX_VERIFY_PREPARED")
-            .is_some()
-            .then(|| self.expect_restore(k, &redo));
+        let verify = verify_moves().then(|| self.expect_restore(k, &redo));
         self.drop_part();
         self.set_prepared(None);
         let mut gone = vec![0u64; self.nchunks.div_ceil(64)];
@@ -1830,6 +1874,13 @@ impl Core {
         debug_assert_eq!(back.len(), a.latest.len());
         self.copy_in(&a.at_to);
         self.copy_in(&back);
+        if verify.is_some() {
+            // the chunks the logs between the two targets hold and the
+            // logs from `k` on do not (`back`): their state at `k` is their
+            // latest, as the move back found it (`verify_restore` reads only
+            // the chunks the logs from `k` on hold)
+            self.verify_back(&a, &back);
+        }
         let moved = a.at_to.len() + back.len();
         for (_, p) in a.at_to.into_iter().chain(back) {
             self.slab.give(p);
@@ -1857,6 +1908,33 @@ impl Core {
             self.verify_restore(&b, want);
         }
         b
+    }
+
+    /// `FLASHTEX_VERIFY_PREPARED`, after a move ahead copied in `back` (the
+    /// reattach's redo of `a.latest`): every one of `a.latest` was copied
+    /// in, and each holds the state the move back found for it.
+    fn verify_back(&self, a: &Ahead, back: &[(u32, ChunkPtr)]) {
+        let Some(want) = &a.latest_hash else {
+            move_unverified("the move back kept no hashes of the latest chunks".into());
+        };
+        let mut got: Vec<u32> = back.iter().map(|r| r.0).collect();
+        got.sort_unstable();
+        let mut latest = a.latest.clone();
+        latest.sort_unstable();
+        if got != latest {
+            move_unverified(format!(
+                "a move ahead copied in {} of the {} chunks only the logs between the targets hold",
+                got.len(),
+                latest.len()
+            ));
+        }
+        for (&c, &h) in a.latest.iter().zip(want) {
+            if chunk_hash(self.chunk_ptr(c as usize)) != h {
+                move_unverified(format!(
+                    "chunk {c}, copied in by a move ahead, differs from its latest state"
+                ));
+            }
+        }
     }
 
     /// Give back a kept `Ahead`, if any.
@@ -1896,10 +1974,7 @@ impl Core {
     /// `FLASHTEX_VERIFY_PREPARED`: the move left what `expect_restore` said
     /// (loud, so that a sweep fails).
     fn verify_restore(&self, b: &Branch, want: Expected) {
-        let fail = |e: String| -> ! {
-            eprintln!("FLASHTEX_VERIFY_PREPARED: a lazy move: {e}");
-            std::process::abort()
-        };
+        let fail = move_unverified;
         let Expected { cs, at, last } = want;
         let mut got: Vec<(u32, ChunkPtr)> = b.redo.clone();
         got.sort_unstable_by_key(|r| r.0);
@@ -5202,6 +5277,86 @@ mod tests {
             a.restore_discard(id).unwrap();
             assert!(arr[..] == copies[i][..], "restore {i} after the moves");
         }
+    }
+
+    /// `FLASHTEX_VERIFY_PREPARED` reads the chunks a move ahead copies in
+    /// from the reattach's redo (`Ahead::latest`: written between the two
+    /// targets, never after the later one), which the logs from the later
+    /// target on do not hold, so `expect_restore` never read them (#2042's
+    /// review). A move ahead is verified clean (`clean`), or with one word
+    /// of such a chunk's redo changed after the move back: then the state
+    /// at the target is wrong, and the verification must say so.
+    fn move_ahead_verified(corrupt: bool) -> bool {
+        VERIFY_MOVES.with(|v| v.set(true));
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..8 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 3000);
+        }
+        let new_run = |a: &mut Arena, arr: &mut Arr<u64>, s: u64| {
+            scribble(arr, 900 + s, 4000);
+            a.checkpoint();
+            scribble(arr, 950 + s, 100);
+        };
+        let (p0, p2) = (2, 6);
+        let br = a.restore_branch(ids[p2]).unwrap();
+        new_run(&mut a, &mut arr, 0);
+        a.reattach_lazy(br).unwrap();
+        let br = a.restore_branch(ids[p0]).unwrap();
+        assert!(arr[..] == copies[p0][..]);
+        new_run(&mut a, &mut arr, 20);
+        a.reattach_lazy(br).unwrap();
+        assert!(a.lazy_moves_to(ids[p2]));
+        let c = a.core_lazy();
+        let latest = c.ahead.as_ref().unwrap().latest.clone();
+        assert!(!latest.is_empty(), "chunks only the logs between hold");
+        if corrupt {
+            let p = c
+                .lazy
+                .as_ref()
+                .unwrap()
+                .redo
+                .iter()
+                .find(|r| r.0 == latest[0])
+                .unwrap()
+                .1;
+            // SAFETY: a slab chunk of the reattach's redo.
+            unsafe { *p.add(3) ^= 0x5a5a };
+        }
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            a.restore_branch(ids[p2]).unwrap()
+        }));
+        VERIFY_MOVES.with(|v| v.set(false));
+        match r {
+            Ok(_) => {
+                assert_eq!(
+                    arr[..] == copies[p2][..],
+                    !corrupt,
+                    "a changed redo leaves the wrong state"
+                );
+                true
+            }
+            Err(e) => {
+                let m = e.downcast_ref::<String>().cloned().unwrap_or_default();
+                assert!(m.contains("copied in by a move ahead"), "{m}");
+                // (the arena is in no known state after the panic: leaked)
+                std::mem::forget(a);
+                false
+            }
+        }
+    }
+
+    #[test]
+    fn verify_reads_the_chunks_a_move_ahead_copies_in() {
+        assert!(move_ahead_verified(false), "a clean move ahead verifies");
+        assert!(
+            !move_ahead_verified(true),
+            "a changed redo of a chunk the move ahead copies in fails the verification"
+        );
     }
 
     #[test]
