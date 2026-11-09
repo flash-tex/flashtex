@@ -1117,6 +1117,18 @@ impl<'a> Writer<'a> {
             self.stream(ff, sub.as_bytes(), program, true);
             Some((format!(" /{file_key} {ff} 0 R"), *subset))
         };
+        // a CFF font is named by its CFF's Name INDEX (cidtype0.c
+        // `cff_get_name`), not the `name` table: the faces of a collection
+        // may share one CFF
+        let cff_name = if cff {
+            font.cff_table()
+                .and_then(|t| flashtex_pdf::cff::CffFont::parse(t).ok())
+                .map(|c| c.name())
+                .filter(|n| !n.is_empty())
+        } else {
+            None
+        };
+        let ps_name = cff_name.as_deref().unwrap_or(ps_name);
         // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
         let name = if ps_name.is_empty() { "Font" } else { ps_name };
         let base = match &file {
@@ -2468,13 +2480,21 @@ mod tests {
         gids: &[u16],
         cache: Option<std::sync::Arc<super::super::fonts::FontCache>>,
     ) -> Vec<u8> {
+        face_glyphs_pdf(path, 0, gids, cache)
+    }
+    fn face_glyphs_pdf(
+        path: &str,
+        index: u32,
+        gids: &[u16],
+        cache: Option<std::sync::Arc<super::super::fonts::FontCache>>,
+    ) -> Vec<u8> {
         let mut doc = Doc::new();
         doc.fonts.cache = cache;
         doc.fonts.define(
             0,
             FontDef::Native(NativeDef {
                 path: path.as_bytes().to_vec(),
-                index: 0,
+                index,
                 size: 10 << 16,
                 flags: 0,
                 rgba: None,
@@ -2548,6 +2568,30 @@ mod tests {
     /// A CID-keyed CFF font (CJK): the content stream draws its glyphs by
     /// their CIDs (the charset), the CIDFont program is the font's CFF, and
     /// `/W` is keyed by CID. TeX Live's HaranoAji Mincho; skipped without it.
+    /// A CFF font is named by its CFF's Name INDEX, as xdvipdfmx names it:
+    /// face 1 of macOS's Hiragino Sans GB (`name` table:
+    /// `.HiraginoSansGBInterface-W3`) shares face 0's CFF, and TeX Live 2026
+    /// xetex + xdvipdfmx names it `HiraginoSansGB-W3` (measured). Skipped
+    /// without the font.
+    #[test]
+    fn cff_fonts_are_named_by_their_cff() {
+        let path = "/System/Library/Fonts/Hiragino Sans GB.ttc";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("skipped: no {path}");
+            return;
+        }
+        let bytes = face_glyphs_pdf(path, 1, &[34], None);
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let page = pdf.pages().unwrap()[0];
+        let f = *pdf.page_fonts(page).values().next().unwrap();
+        let d = pdf
+            .resolve(&f.get("DescendantFonts").and_then(Obj::as_array).unwrap()[0])
+            .as_dict()
+            .unwrap();
+        let base = d.get("BaseFont").and_then(Obj::as_name).unwrap();
+        assert!(base.ends_with("+HiraginoSansGB-W3"), "{base}");
+    }
+
     #[test]
     fn type1_widths_and_flags_are_xdvipdfmxs() {
         // measured (TeX Live 2026 xetex + xdvipdfmx 20260317, `\font\a=cmr10`
