@@ -110,6 +110,9 @@ struct Writer<'a> {
     names_obj: Option<u32>,
     /// The glyphs (native fonts) and codes (TFM fonts) each font draws.
     used: BTreeMap<u16, BTreeSet<u16>>,
+    /// By `.enc` file: the `/Encoding` entry and ToUnicode object its Type 1
+    /// fonts share ([`Writer::shared_encoding`]).
+    encodings: BTreeMap<Vec<u8>, (String, Option<u32>)>,
     page_group: Vec<bool>,
     /// For a native font with CID-keyed CFF outlines: each glyph id's CID
     /// (the font's charset), which the content stream writes as the code.
@@ -152,6 +155,7 @@ impl<'a> Writer<'a> {
             named_queue: Vec::new(),
             names_obj: None,
             used: BTreeMap::new(),
+            encodings: BTreeMap::new(),
             page_group: Vec::new(),
             cids: BTreeMap::new(),
             agl: None,
@@ -1049,8 +1053,11 @@ impl<'a> Writer<'a> {
                 self.native_font(num, &r, &data, *index, *cff, ps_name, &used)
             }
             ResKind::Type1 {
-                ps_name, encoding, ..
-            } => self.type1_font(num, &r, ps_name, encoding, &used),
+                ps_name,
+                encoding,
+                enc,
+                ..
+            } => self.type1_font(num, &r, ps_name, encoding, enc.as_deref(), &used),
             ResKind::Missing => {
                 // nothing can draw it; Helvetica stands in so the PDF is valid
                 self.object(num, b"<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>");
@@ -1228,6 +1235,7 @@ impl<'a> Writer<'a> {
         r: &FontRes,
         ps_name: &str,
         encoding: &[Vec<u8>],
+        enc: Option<&(Vec<u8>, Vec<u8>)>,
         used: &BTreeSet<u16>,
     ) -> Result<(), String> {
         let t1 = flashtex_pdf::type1::Type1Font::parse_pfb(&r.program)
@@ -1278,51 +1286,101 @@ impl<'a> Writer<'a> {
             let _ = write!(wa, " {}", n(w, 3));
         }
         wa.push_str(" ]");
-        let mut diffs = String::from("[");
-        let mut prev: Option<u16> = None;
-        for &c in used {
-            let name = encoding
-                .get(c as usize)
-                .map(|n| String::from_utf8_lossy(n).into_owned())
-                .unwrap_or_else(|| ".notdef".into());
-            if prev.is_none_or(|p| p + 1 != c) {
-                let _ = write!(diffs, " {c}");
+        // the encoding and ToUnicode: an `.enc` file's, shared by all its
+        // fonts (`pdf_encoding_complete`, `pdf_close_fonts`); for the
+        // program's built-in encoding no `/Encoding` and a ToUnicode of
+        // the font's own (type1.c's `pdf_create_ToUnicode_CMap(fullname, ..)`)
+        let (enc_entry, tu) = match enc {
+            Some((ident, enc_name)) => self.shared_encoding(ident, enc_name, encoding),
+            None => {
+                let name = format!("{base}-UTF16");
+                (
+                    String::new(),
+                    self.type1_to_unicode(name.as_bytes(), encoding, used),
+                )
             }
-            let mut nb = Vec::new();
-            write_name(name.as_bytes(), &mut nb);
-            diffs.push(' ');
-            diffs.push_str(&String::from_utf8_lossy(&nb));
-            prev = Some(c);
+        };
+        let tu = tu
+            .map(|t| format!(" /ToUnicode {t} 0 R"))
+            .unwrap_or_default();
+        let d = format!(
+            "<</Type /Font /Subtype /Type1 /BaseFont /{base} /FirstChar {first} /LastChar {last} /Widths {wa}{enc_entry} /FontDescriptor {fd} 0 R{tu}>>"
+        );
+        self.object(num, d.as_bytes());
+        Ok(())
+    }
+
+    /// An `.enc` file's encoding as the fonts using it share it (written at
+    /// its first font): the `/Encoding` entry (`create_encoding_resource`:
+    /// `/BaseEncoding /WinAnsiEncoding` when `is_similar_charset`, and
+    /// `make_encoding_differences` for the codes any of its fonts uses) and
+    /// the ToUnicode CMap `enc_name-UTF16` of those codes.
+    fn shared_encoding(
+        &mut self,
+        ident: &[u8],
+        enc_name: &[u8],
+        encoding: &[Vec<u8>],
+    ) -> (String, Option<u32>) {
+        if let Some(e) = self.encodings.get(ident) {
+            return e.clone();
         }
-        diffs.push_str(" ]");
-        // ToUnicode by the encoding's glyph names, as xdvipdfmx writes it
-        // (pdf_create_ToUnicode_CMap): none if a used name has no text
-        let names: BTreeMap<u16, Vec<u8>> = used
+        let mut union = BTreeSet::new();
+        for (id, u) in &self.used {
+            if let Some(ResKind::Type1 { enc: Some(e), .. }) =
+                self.doc.fonts.resource(*id).map(|r| &r.kind)
+            {
+                if e.0 == ident {
+                    union.extend(u.iter().copied());
+                }
+            }
+        }
+        let (base, diffs) = encoding_differences(encoding, &union);
+        let entry = if !diffs.is_empty() {
+            let e = self.alloc();
+            let d = format!(
+                "<<{} /Differences [{diffs} ]>>",
+                if base {
+                    " /BaseEncoding /WinAnsiEncoding"
+                } else {
+                    ""
+                }
+            );
+            self.object(e, d.as_bytes());
+            format!(" /Encoding {e} 0 R")
+        } else if base {
+            " /Encoding /WinAnsiEncoding".to_string()
+        } else {
+            String::new()
+        };
+        let mut name = enc_name.to_vec();
+        name.extend_from_slice(b"-UTF16");
+        let tu = self.type1_to_unicode(&name, encoding, &union);
+        self.encodings.insert(ident.to_vec(), (entry.clone(), tu));
+        (entry, tu)
+    }
+
+    /// `pdf_create_ToUnicode_CMap`: the ToUnicode stream of these codes'
+    /// glyph names, written; none if a name has no text or none has any.
+    fn type1_to_unicode(
+        &mut self,
+        name: &[u8],
+        encoding: &[Vec<u8>],
+        codes: &BTreeSet<u16>,
+    ) -> Option<u32> {
+        let names: BTreeMap<u16, Vec<u8>> = codes
             .iter()
             .filter_map(|&c| {
                 encoding
                     .get(c as usize)
-                    .filter(|n| !n.is_empty())
+                    .filter(|n| !n.is_empty() && n.as_slice() != b".notdef")
                     .map(|n| (c, n.clone()))
             })
             .collect();
-        let cmap = super::tounicode::encoding_to_unicode(&names, &self.agl()).and_then(|map| {
-            let name = format!("{base}-UTF16");
-            super::tounicode::cmap_stream(name.as_bytes(), &map, false)
-        });
-        let tu = match cmap {
-            Some(cmap) => {
-                let tu = self.alloc();
-                self.stream(tu, b"", cmap.as_bytes(), true);
-                format!(" /ToUnicode {tu} 0 R")
-            }
-            None => String::new(),
-        };
-        let d = format!(
-            "<</Type /Font /Subtype /Type1 /BaseFont /{base} /FirstChar {first} /LastChar {last} /Widths {wa} /Encoding <</Type /Encoding /Differences {diffs}>> /FontDescriptor {fd} 0 R{tu}>>"
-        );
-        self.object(num, d.as_bytes());
-        Ok(())
+        let map = super::tounicode::encoding_to_unicode(&names, &self.agl())?;
+        let cmap = super::tounicode::cmap_stream(name, &map, false)?;
+        let tu = self.alloc();
+        self.stream(tu, b"", cmap.as_bytes(), true);
+        Some(tu)
     }
 
     // ---- the document --------------------------------------------------------
@@ -1913,6 +1971,302 @@ fn push_hex_tj(c: &mut Vec<u8>, code: u32, width: usize) {
     c.extend_from_slice(b">Tj\n");
 }
 
+/// An `.enc` encoding's base and `Differences` entries for the codes its
+/// fonts use: `is_similar_charset` against WinAnsi (64 codes alike, a
+/// `.notdef` counting as alike), then `make_encoding_differences`
+/// (`pdfencoding.c`): the used codes whose glyph differs from the base's,
+/// a run's first code before its names; `.notdef` is no glyph.
+fn encoding_differences(encoding: &[Vec<u8>], used: &BTreeSet<u16>) -> (bool, String) {
+    let glyph = |c: usize| {
+        encoding
+            .get(c)
+            .filter(|n| !n.is_empty() && n.as_slice() != b".notdef")
+    };
+    let same = (0..256)
+        .filter(|&c| glyph(c).is_none_or(|n| n.as_slice() == WIN_ANSI[c].as_bytes()))
+        .count();
+    let base = same >= 64;
+    let mut diffs = String::new();
+    let mut skipping = true;
+    for c in 0..256usize {
+        match glyph(c).filter(|_| used.contains(&(c as u16))) {
+            Some(n) if !(base && n.as_slice() == WIN_ANSI[c].as_bytes()) => {
+                if skipping {
+                    let _ = write!(diffs, " {c}");
+                }
+                let mut nb = Vec::new();
+                write_name(n, &mut nb);
+                diffs.push(' ');
+                diffs.push_str(&String::from_utf8_lossy(&nb));
+                skipping = false;
+            }
+            _ => skipping = true,
+        }
+    }
+    (base, diffs)
+}
+
+/// `WinAnsiEncoding[]` (`pdfencoding.c`): the base xdvipdfmx gives an
+/// `.enc` encoding that agrees with it in 64 codes (`is_similar_charset`).
+const WIN_ANSI: [&str; 256] = [
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    ".notdef",
+    "space",
+    "exclam",
+    "quotedbl",
+    "numbersign",
+    "dollar",
+    "percent",
+    "ampersand",
+    "quotesingle",
+    "parenleft",
+    "parenright",
+    "asterisk",
+    "plus",
+    "comma",
+    "hyphen",
+    "period",
+    "slash",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "colon",
+    "semicolon",
+    "less",
+    "equal",
+    "greater",
+    "question",
+    "at",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+    "bracketleft",
+    "backslash",
+    "bracketright",
+    "asciicircum",
+    "underscore",
+    "grave",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+    "braceleft",
+    "bar",
+    "braceright",
+    "asciitilde",
+    "bullet",
+    "Euro",
+    "bullet",
+    "quotesinglbase",
+    "florin",
+    "quotedblbase",
+    "ellipsis",
+    "dagger",
+    "daggerdbl",
+    "circumflex",
+    "perthousand",
+    "Scaron",
+    "guilsinglleft",
+    "OE",
+    "bullet",
+    "Zcaron",
+    "bullet",
+    "bullet",
+    "quoteleft",
+    "quoteright",
+    "quotedblleft",
+    "quotedblright",
+    "bullet",
+    "endash",
+    "emdash",
+    "tilde",
+    "trademark",
+    "scaron",
+    "guilsinglright",
+    "oe",
+    "bullet",
+    "zcaron",
+    "Ydieresis",
+    "space",
+    "exclamdown",
+    "cent",
+    "sterling",
+    "currency",
+    "yen",
+    "brokenbar",
+    "section",
+    "dieresis",
+    "copyright",
+    "ordfeminine",
+    "guillemotleft",
+    "logicalnot",
+    "hyphen",
+    "registered",
+    "macron",
+    "degree",
+    "plusminus",
+    "twosuperior",
+    "threesuperior",
+    "acute",
+    "mu",
+    "paragraph",
+    "periodcentered",
+    "cedilla",
+    "onesuperior",
+    "ordmasculine",
+    "guillemotright",
+    "onequarter",
+    "onehalf",
+    "threequarters",
+    "questiondown",
+    "Agrave",
+    "Aacute",
+    "Acircumflex",
+    "Atilde",
+    "Adieresis",
+    "Aring",
+    "AE",
+    "Ccedilla",
+    "Egrave",
+    "Eacute",
+    "Ecircumflex",
+    "Edieresis",
+    "Igrave",
+    "Iacute",
+    "Icircumflex",
+    "Idieresis",
+    "Eth",
+    "Ntilde",
+    "Ograve",
+    "Oacute",
+    "Ocircumflex",
+    "Otilde",
+    "Odieresis",
+    "multiply",
+    "Oslash",
+    "Ugrave",
+    "Uacute",
+    "Ucircumflex",
+    "Udieresis",
+    "Yacute",
+    "Thorn",
+    "germandbls",
+    "agrave",
+    "aacute",
+    "acircumflex",
+    "atilde",
+    "adieresis",
+    "aring",
+    "ae",
+    "ccedilla",
+    "egrave",
+    "eacute",
+    "ecircumflex",
+    "edieresis",
+    "igrave",
+    "iacute",
+    "icircumflex",
+    "idieresis",
+    "eth",
+    "ntilde",
+    "ograve",
+    "oacute",
+    "ocircumflex",
+    "otilde",
+    "odieresis",
+    "divide",
+    "oslash",
+    "ugrave",
+    "uacute",
+    "ucircumflex",
+    "udieresis",
+    "yacute",
+    "thorn",
+    "ydieresis",
+];
+
 /// Six capital letters naming a subset, from the font and its glyphs.
 fn subset_tag(name: &str, used: &BTreeSet<u16>) -> String {
     let mut h = Sha256::new();
@@ -2269,6 +2623,41 @@ mod tests {
     use super::*;
     use flashtex_display_list::page::{Page, StreamKind};
     use flashtex_pdf::reader::{Obj, PdfFile};
+
+    /// xdvipdfmx 20260317's `/Encoding` of `lm-ec.enc` (TeX Live 2026
+    /// `xetex`) when ec-lmr10 draws `abc xyz` and ec-lmbx10 `abcdk` and
+    /// codes 128..139: one WinAnsi-based encoding for both fonts,
+    /// Differences only for the union's codes WinAnsi has otherwise.
+    #[test]
+    fn enc_file_encoding_differences() {
+        let mut ec: Vec<Vec<u8>> = WIN_ANSI.iter().map(|n| n.as_bytes().to_vec()).collect();
+        let names = [
+            "Abreve", "Aogonek", "Cacute", "Ccaron", "Dcaron", "Ecaron", "Eogonek", "Gbreve",
+            "Lacute", "Lcaron", "Lslash", "Nacute",
+        ];
+        for (i, n) in names.iter().enumerate() {
+            ec[128 + i] = n.as_bytes().to_vec();
+        }
+        ec[11] = b"ff".to_vec(); // unused: not written
+        let used: BTreeSet<u16> = b"abcdkxyz"
+            .iter()
+            .map(|&c| c as u16)
+            .chain(128..140)
+            .collect();
+        assert_eq!(
+            encoding_differences(&ec, &used),
+            (
+                true,
+                " 128 /Abreve /Aogonek /Cacute /Ccaron /Dcaron /Ecaron /Eogonek /Gbreve /Lacute /Lcaron /Lslash /Nacute".to_string()
+            )
+        );
+        // fewer than 64 codes like WinAnsi: no base, every used glyph
+        let other: Vec<Vec<u8>> = (0..256).map(|c| format!("g{c}").into_bytes()).collect();
+        assert_eq!(
+            encoding_differences(&other, &[3u16, 4, 9].into_iter().collect()),
+            (false, " 3 /g3 /g4 9 /g9".to_string())
+        );
+    }
 
     /// A page drawing glyph `gid` of `path` (face 0) at 10 pt, written.
     fn one_glyph_pdf(path: &str, gid: u16) -> Vec<u8> {

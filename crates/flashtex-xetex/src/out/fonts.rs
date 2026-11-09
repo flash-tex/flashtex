@@ -18,7 +18,7 @@
 //! flagged INCOMPLETE.
 
 use super::agl::Agl;
-use super::fontmap::{parse_enc, FontMap, MapIndex};
+use super::fontmap::{enc_name, parse_enc, FontMap, MapIndex};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::sha256::{hex, sha256, Sha256};
 use flashtex_engine::resolver::Format;
@@ -292,6 +292,11 @@ pub enum ResKind {
         path: String,
         ps_name: String,
         encoding: Arc<Vec<Vec<u8>>>,
+        /// For an encoding from a `.enc` file: the file as the map names
+        /// it and the encoding's own `/Name` (xdvipdfmx's `ident` and
+        /// `enc_name`; the fonts of one file share an encoding). `None`:
+        /// the program's built-in encoding.
+        enc: Option<Arc<(Vec<u8>, Vec<u8>)>>,
         slant: i32,
         extend: i32,
         tfm: Vec<u8>,
@@ -554,20 +559,26 @@ impl Fonts {
         let Some((program, sha)) = self.read_program(&path) else {
             return self.missing(&tfm, format!("TFM font {tfm}: cannot read {path}"));
         };
-        let names: Vec<Vec<u8>> = match &e.enc_file {
-            Some(enc) => {
-                let enc = String::from_utf8_lossy(enc).into_owned();
-                match flashtex_engine::system::find_file(&enc, Format::Enc)
-                    .and_then(|p| std::fs::read(p).ok())
-                    .and_then(|d| parse_enc(&d))
-                {
-                    Some(n) => n,
+        let (names, enc): (Vec<Vec<u8>>, _) = match &e.enc_file {
+            Some(file) => {
+                let enc = String::from_utf8_lossy(file).into_owned();
+                let data = flashtex_engine::system::find_file(&enc, Format::Enc)
+                    .and_then(|p| std::fs::read(p).ok());
+                match data.as_deref().and_then(parse_enc) {
+                    Some(n) => {
+                        // (no `/Name`: a NULL xdvipdfmx would crash on; the file's)
+                        let name = data
+                            .as_deref()
+                            .and_then(enc_name)
+                            .unwrap_or_else(|| file.clone());
+                        (n, Some(Arc::new((file.clone(), name))))
+                    }
                     None => {
                         return self.missing(&tfm, format!("TFM font {tfm}: cannot read {enc}"))
                     }
                 }
             }
-            None => builtin_encoding(&program),
+            None => (builtin_encoding(&program), None),
         };
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
@@ -624,6 +635,7 @@ impl Fonts {
                 path,
                 ps_name,
                 encoding: Arc::new(names),
+                enc,
                 slant: e.slant,
                 extend: e.extend,
                 tfm: t.name.clone(),
