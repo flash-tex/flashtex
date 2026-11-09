@@ -44,9 +44,36 @@ class Decide(unittest.TestCase):
         self.assertEqual(d.kind, lander.STOP)
         self.assertIn("moved", d.reason)
 
-    def test_red_ci_required_stops(self):
+    def test_red_ci_required_holds(self):
+        # Held, not stopped: a rerun on the same head can still turn it green.
         for c in ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE"):
-            self.assertEqual(self.d(lander.Row(1, PIN), snap(checks=ci(c))).kind, lander.STOP, c)
+            d = self.d(lander.Row(1, PIN), snap(checks=ci(c)))
+            self.assertEqual(d.kind, lander.WAIT, c)
+            self.assertIn("red", d.reason)
+        d = self.d(lander.Row(1, PIN), snap(checks=ci("SUCCESS") + ci("FAILURE")))
+        self.assertEqual(d.kind, lander.WAIT)
+
+    def test_draft_and_conflicting_hold(self):
+        self.assertEqual(self.d(lander.Row(1, PIN), snap(draft=True)).kind, lander.WAIT)
+        self.assertEqual(self.d(lander.Row(1, PIN), snap(mergeable="CONFLICTING")).kind,
+                         lander.WAIT)
+        self.assertEqual(self.d(lander.Row(1, PIN), snap(mergeable="UNKNOWN")).kind,
+                         lander.ENABLE)
+
+    def test_ruling_23_reviewer_comment_after_start_stops(self):
+        start = NOW - dt.timedelta(hours=1)
+        after = (NOW - dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+        before = (NOW - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+        row = lander.Row(1, PIN)
+        for body in ("MERGE-AFTER-FIXES: two nits", "**CORRECTION**: wrong base", "correction: x"):
+            s = snap(comments=[{"login": "d-q222", "body": body, "created_at": after}])
+            self.assertEqual(lander.decide(row, s, {1: s}, ME, NOW, start).kind, lander.STOP, body)
+        # Posted before the lander started, by someone else, or not a prefix: no stop.
+        for c in ({"login": "d-q222", "body": "CORRECTION: old", "created_at": before},
+                  {"login": "someone", "body": "CORRECTION: x", "created_at": after},
+                  {"login": "d-q222", "body": "daniel-parent: no CORRECTION", "created_at": after}):
+            s = snap(comments=[c])
+            self.assertEqual(lander.decide(row, s, {1: s}, ME, NOW, start).kind, lander.ENABLE, c)
 
     def test_cancelled_or_pending_ci_waits(self):
         self.assertEqual(self.d(lander.Row(1, PIN), snap(checks=ci("CANCELLED"))).kind, lander.WAIT)

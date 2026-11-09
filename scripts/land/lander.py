@@ -24,9 +24,13 @@ which can observe but cannot enable auto-merge (that is GraphQL-only), so an
 enable found during REST fallback waits for the next GraphQL cycle.
 
 Rate limits and errors are always "retry later", never a decision. A PR is
-stopped (and only that PR) on: a head that moved off the pin, a red
-`CI required`, or a comment starting with "STOP-LANDER" by the Commander login.
-`after:<N>` enables a PR only once #N has merged. Enabling uses GraphQL
+stopped (and only that PR) on: a head that moved off the pin, a comment
+starting with "STOP-LANDER" by the Commander login, or (Ruling 23) a comment by
+daniel-parent's login starting with MERGE-AFTER-FIXES or CORRECTION posted after
+the lander started. A red `CI required`, a draft, a conflict with main or a red
+sweep holds the PR without stopping it, so a rerun on the same head still lands.
+The TSV is re-read when it changes; a stop is per (PR, pin), so re-pinning a
+row puts the PR back under watch. `after:<N>` enables a PR only once #N has merged. Enabling uses GraphQL
 enablePullRequestAutoMerge with expectedHeadOid = the pin, so GitHub itself
 refuses if the head moved in between. The lander never posts comments.
 """
@@ -47,6 +51,11 @@ REPO_OWNER = "flash-tex"
 REPO_NAME = "flashtex"
 REQUIRED_CHECK = "CI required"
 STOP_PREFIX = "STOP-LANDER"
+# Ruling 23: a comment by daniel-parent's login that starts with one of these,
+# posted after this lander started, also stops that PR.
+REVIEWER_LOGIN = "d-q222"
+REVIEWER_PREFIXES = ("MERGE-AFTER-FIXES", "CORRECTION")
+CHUNK = 40  # PRs per GraphQL query (keeps each response small)
 DEFAULT_DIR = os.path.expanduser("~/.cache/flashtex-agents/lander")
 RED = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED"}
 # CANCELLED / SKIPPED / STALE / NEUTRAL are "not run": wait (a cancelled
@@ -113,8 +122,23 @@ def parse_tsv(text: str) -> list[Row]:
 # A missing snapshot (None) means "no data this cycle".
 
 
+def _reviewer_stop(c: dict, started: dt.datetime | None) -> bool:
+    if c.get("login") != REVIEWER_LOGIN or started is None:
+        return False
+    at = c.get("created_at")
+    if not at:
+        return False
+    try:
+        when = dt.datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    body = c.get("body", "").lstrip().lstrip("*#_> ").upper()
+    return when > started and body.startswith(REVIEWER_PREFIXES)
+
+
 def decide(row: Row, snap: dict | None, snaps: dict[int, dict | None],
-           commander: str, now: dt.datetime) -> Decision:
+           commander: str, now: dt.datetime,
+           started: dt.datetime | None = None) -> Decision:
     """Pure decision for one PR. Errors/unknowns are always WAIT."""
     if snap is None:
         return Decision(WAIT, "no data this cycle (error or rate limit); retry later")
@@ -123,17 +147,26 @@ def decide(row: Row, snap: dict | None, snaps: dict[int, dict | None],
     for c in snap.get("comments", []):
         if c.get("login") == commander and c.get("body", "").lstrip().startswith(STOP_PREFIX):
             return Decision(STOP, f"{STOP_PREFIX} comment by {commander}")
+        if _reviewer_stop(c, started):
+            return Decision(STOP, f"{REVIEWER_LOGIN} posted {c['body'].strip()[:40]!r} "
+                            "after the lander started (Ruling 23)")
     head = snap.get("head")
     if head and head != row.sha:
-        return Decision(STOP, f"head moved to {head} (pinned {row.sha})")
-    ci = [c for c in snap.get("checks", []) if c.get("name") == REQUIRED_CHECK]
-    red = [c for c in ci if (c.get("conclusion") or "").upper() in RED]
-    if red:
-        return Decision(STOP, f"{REQUIRED_CHECK} red: {red[0]['conclusion']}")
+        return Decision(STOP, f"head moved to {head} (pinned {row.sha}); re-pin in the TSV")
     if snap.get("auto_merge") or snap.get("in_queue"):
         return Decision(DONE, "auto-merge already on / in merge queue")
     if snap.get("state") != "OPEN":
         return Decision(WAIT, f"PR state {snap.get('state')}; nothing to enable")
+    if snap.get("draft"):
+        return Decision(WAIT, "draft; holding")
+    ci = [c for c in snap.get("checks", []) if c.get("name") == REQUIRED_CHECK]
+    red = [c for c in ci if (c.get("conclusion") or "").upper() in RED]
+    if red:
+        # Held, not stopped: a rerun of a flaky job turns the same head green,
+        # and the lander then enables without a restart.
+        return Decision(WAIT, f"{REQUIRED_CHECK} red ({red[0]['conclusion']}); holding")
+    if snap.get("mergeable") == "CONFLICTING":
+        return Decision(WAIT, "conflicts with main; holding")
     if row.deadline and now >= row.deadline:
         return Decision(EXPIRED, f"deadline {row.deadline.isoformat()} passed")
     if row.after is not None:
@@ -171,7 +204,7 @@ class Retry(Exception):
     """Any GitHub failure: retry later, never a decision."""
 
 
-def gh(args: list[str], timeout: int = 120) -> Any:
+def gh(args: list[str], timeout: int = 60) -> Any:
     try:
         p = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -185,10 +218,10 @@ def gh(args: list[str], timeout: int = 120) -> Any:
 
 
 PR_FIELDS = """
-  id number state merged headRefOid baseRefName isInMergeQueue
+  id number state merged isDraft mergeable headRefOid baseRefName isInMergeQueue
   mergeQueueEntry { state }
   autoMergeRequest { enabledAt }
-  comments(last: 50) { nodes { author { login } body } }
+  comments(last: 50) { nodes { author { login } body createdAt } }
   commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) {
     nodes { __typename
       ... on CheckRun { name status conclusion
@@ -228,22 +261,34 @@ def snap_from_graphql(node: dict | None) -> dict | None:
         "state": node.get("state"),
         "head": node.get("headRefOid"),
         "base": node.get("baseRefName"),
+        "draft": bool(node.get("isDraft")),
+        "mergeable": node.get("mergeable"),
         "auto_merge": node.get("autoMergeRequest") is not None,
         "in_queue": bool(node.get("isInMergeQueue") or node.get("mergeQueueEntry")),
         "checks": checks,
-        "comments": [{"login": (c.get("author") or {}).get("login", ""), "body": c.get("body", "")}
+        "comments": [{"login": (c.get("author") or {}).get("login", ""), "body": c.get("body", ""),
+                      "created_at": c.get("createdAt")}
                      for c in (node.get("comments") or {}).get("nodes") or []],
     }
 
 
 def fetch_graphql(prs: list[int]) -> tuple[dict[int, dict | None], dict]:
-    data = gh(["api", "graphql", "-f", f"query={build_query(prs)}"])
-    if not isinstance(data, dict) or "data" not in data or data["data"] is None:
-        raise Retry(f"graphql: no data ({str(data)[:300]})")
-    repo = data["data"].get("repository") or {}
-    # Per-PR errors (e.g. a deleted PR) leave that alias null: "no data", not fatal.
-    return ({n: snap_from_graphql(repo.get(f"p{n}")) for n in prs},
-            data["data"].get("rateLimit") or {})
+    if os.environ.get("LANDER_FORCE_REST"):
+        raise Retry("LANDER_FORCE_REST set (test of the REST fallback)")
+    out: dict[int, dict | None] = {}
+    rate: dict = {"cost": 0}
+    for i in range(0, len(prs), CHUNK):
+        part = prs[i:i + CHUNK]
+        data = gh(["api", "graphql", "-f", f"query={build_query(part)}"])
+        if not isinstance(data, dict) or "data" not in data or data["data"] is None:
+            raise Retry(f"graphql: no data ({str(data)[:300]})")
+        repo = data["data"].get("repository") or {}
+        # Per-PR errors (e.g. a deleted PR) leave that alias null: "no data", not fatal.
+        out.update({n: snap_from_graphql(repo.get(f"p{n}")) for n in part})
+        rl = data["data"].get("rateLimit") or {}
+        rate = {"cost": rate["cost"] + (rl.get("cost") or 0),
+                "remaining": rl.get("remaining"), "resetAt": rl.get("resetAt")}
+    return out, rate
 
 
 def fetch_rest(prs: list[int], log) -> dict[int, dict | None]:
@@ -263,12 +308,16 @@ def fetch_rest(prs: list[int], log) -> dict[int, dict | None]:
                 "state": "MERGED" if pr.get("merged") else (pr.get("state") or "").upper(),
                 "head": sha,
                 "base": pr["base"]["ref"],
+                "draft": bool(pr.get("draft")),
+                "mergeable": {True: "MERGEABLE", False: "CONFLICTING"}.get(pr.get("mergeable"),
+                                                                           "UNKNOWN"),
                 "auto_merge": pr.get("auto_merge") is not None,
                 "in_queue": None,  # not exposed over REST
                 "checks": [{"name": r.get("name", ""), "status": (r.get("status") or "").upper(),
                             "conclusion": (r.get("conclusion") or "").upper() or None,
                             "workflow": ""} for r in (runs or {}).get("check_runs", [])],
-                "comments": [{"login": (c.get("user") or {}).get("login", ""), "body": c.get("body", "")}
+                "comments": [{"login": (c.get("user") or {}).get("login", ""), "body": c.get("body", ""),
+                              "created_at": c.get("created_at")}
                              for c in com or []],
             }
         except (Retry, KeyError, TypeError) as e:
@@ -278,7 +327,7 @@ def fetch_rest(prs: list[int], log) -> dict[int, dict | None]:
 
 
 ENABLE_MUTATION = """mutation($id: ID!, $sha: GitObjectID!) {
-  enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH,
+  enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE,
                                      expectedHeadOid: $sha}) {
     pullRequest { number autoMergeRequest { enabledAt } } } }"""
 
@@ -310,22 +359,33 @@ def run(args) -> int:
             f.write(f"{os.getpid()}\n")
 
     rows = parse_tsv(open(args.tsv).read())
+    tsv_mtime = os.stat(args.tsv).st_mtime
     commander = args.commander or _login()
+    started = dt.datetime.now(dt.timezone.utc)
     log(f"start pid {os.getpid()} rows={len(rows)} dry_run={args.dry_run} "
         f"commander={commander} interval={args.interval}s tsv={args.tsv}")
-    final: dict[int, Decision] = {}
+    # Final decisions are per (PR, pin): re-pinning a row in the TSV (which is
+    # re-read whenever it changes) puts that PR back under watch.
+    final: dict[tuple[int, str], Decision] = {}
     last_reason: dict[int, str] = {}
     stopping = []
     signal.signal(signal.SIGTERM, lambda *_: stopping.append(1))
     while True:
-        live = [r for r in rows if r.pr not in final]
-        if not live:
+        try:
+            m = os.stat(args.tsv).st_mtime
+            if m != tsv_mtime:
+                rows, tsv_mtime = parse_tsv(open(args.tsv).read()), m
+                log(f"TSV changed; reloaded {len(rows)} rows")
+        except (OSError, ValueError) as e:
+            log(f"TSV reload failed ({e}); keeping the previous rows")
+        live = [r for r in rows if (r.pr, r.sha) not in final]
+        if not live and not args.keep_running:
             log("every PR is done, stopped or expired; exiting")
             break
         watch = sorted({r.pr for r in live} | {r.after for r in live if r.after})
         source = "graphql"
         try:
-            snaps, rate = fetch_graphql(watch)
+            snaps, rate = fetch_graphql(watch) if watch else ({}, {})
             log(f"cycle graphql prs={len(watch)} cost={rate.get('cost')} "
                 f"remaining={rate.get('remaining')} reset={rate.get('resetAt')}")
         except Retry as e:
@@ -335,7 +395,7 @@ def run(args) -> int:
         now = dt.datetime.now(dt.timezone.utc)
         state = {}
         for r in live:
-            d = decide(r, snaps.get(r.pr), snaps, commander, now)
+            d = decide(r, snaps.get(r.pr), snaps, commander, now, started)
             if d.kind == ENABLE:
                 snap = snaps[r.pr] or {}
                 if args.dry_run:
@@ -349,14 +409,16 @@ def run(args) -> int:
                     except Retry as e:
                         d = Decision(WAIT, f"enable failed, retry later: {e}")
             if d.kind in TERMINAL:
-                final[r.pr] = d
+                final[(r.pr, r.sha)] = d
                 log(f"#{r.pr} {d.kind.upper()}: {d.reason}")
             elif last_reason.get(r.pr) != d.reason:
                 log(f"#{r.pr} wait: {d.reason}")
             last_reason[r.pr] = d.reason
             state[r.pr] = dataclasses.asdict(d)
-        for pr, d in final.items():
-            state[pr] = dataclasses.asdict(d)
+        pinned = {(r.pr, r.sha) for r in rows}
+        for (pr, sha), d in final.items():
+            if (pr, sha) in pinned:
+                state[pr] = dataclasses.asdict(d)
         tmp = os.path.join(args.dir, "state.json.tmp")
         with open(tmp, "w") as f:
             json.dump({"at": now.isoformat(), "source": source,
@@ -415,6 +477,8 @@ def start(args) -> int:
            os.path.abspath(args.tsv), "--dir", args.dir, "--interval", str(args.interval)]
     if args.dry_run:
         cmd.append("--dry-run")
+    if args.keep_running:
+        cmd.append("--keep-running")
     if args.commander:
         cmd += ["--commander", args.commander]
     out = open(os.path.join(args.dir, "lander.out"), "a")
@@ -448,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument("--tsv", required=True)
             sp.add_argument("--dry-run", action="store_true", help="never mutate")
             sp.add_argument("--interval", type=int, default=300)
+            sp.add_argument("--keep-running", action="store_true",
+                            help="stay up when every row is final (to pick up TSV edits)")
             sp.add_argument("--commander", help="login whose STOP-LANDER comments count "
                             "(default: the authenticated gh user)")
         if name == "run":
