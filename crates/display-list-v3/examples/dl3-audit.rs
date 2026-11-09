@@ -49,7 +49,7 @@ fn start_host(exe: &str, args: &[String], sock: &Path, log: &Path) -> Host {
         .unwrap();
     let t = Instant::now();
     loop {
-        if sock.exists() && std::os::unix::net::UnixStream::connect(sock).is_ok() {
+        if sock.exists() && flashtex_display_list::transport::Stream::connect(sock).is_ok() {
             break;
         }
         assert!(
