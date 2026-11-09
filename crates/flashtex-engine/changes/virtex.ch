@@ -7,7 +7,10 @@
 % named after the program (`-fmt', else the program name). Re-specified
 % here, with the switches in system.rs (set by the driver, src/main.rs):
 %
-%   * |ini_version|: INITEX, or a production run;
+%   * |ini_version|: INITEX, or a production run. tex.ch's |Init|...|Tini|
+%     code runs only in INITEX: a production run's \patterns is the error
+%     `Patterns can be loaded only by INITEX' and its \dump prints
+%     `(\dump is performed only by INITEX)' (tex.ch [49.1252], [51.1335]);
 %   * |etex_p|: `-etex', extended mode without a `*' (pdftex.ch);
 %   * the default format, |dump_name| with `.fmt', which a production run
 %     loads when the first line does not start with `&', and which its
@@ -65,10 +68,32 @@ pack_default_format_name; {|dump_name| with \.{.fmt} (system.rs)}
   wterm_ln ('''!');
 @z
 
+@x pdftex.web l.32263 - tex.ch [49.1252]: only INITEX loads patterns (|Init|)
+    begin @!init new_patterns; goto done;@;@+tini@/
+@y
+    begin @!init if ini_version then
+      begin new_patterns; goto done;
+      end;@+tini@/ {tex.ch's |Init|\dots|Tini|}
+@z
+
 @x pdftex.web l.32774 - tex.ch [50.1301]: INITEX is a run-time switch
 format_ident:=" (INITEX)";
 @y
 if ini_version then format_ident:=" (INITEX)";
+@z
+
+@x pdftex.web l.33552 - tex.ch [51.1335]: only INITEX dumps (|Init|)
+  begin @!init for c:=top_mark_code to split_bot_mark_code do
+@y
+  begin @!init if ini_version then begin {tex.ch's |Init|}
+  for c:=top_mark_code to split_bot_mark_code do
+@z
+
+@x pdftex.web l.33558 - tex.ch [51.1335]: only INITEX dumps (|Tini|)
+  store_fmt_file; return;@+tini@/
+@y
+  store_fmt_file; return;
+  end;@+tini@/ {tex.ch's |Tini|}
 @z
 
 @x pdftex.web l.37174 - pdftex.ch: `-etex' enters extended mode without `*'
