@@ -60,7 +60,7 @@ use crate::system::ReadLog;
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::kind;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -365,11 +365,33 @@ fn rel_to(root: &Path, out: &Path, path: &str) -> Option<String> {
 /// writing its name into the `.aux` (#2057's survey; this runs after every
 /// compile, before the tools' policy is looked at). Unconfined, nothing
 /// changes: bibtex itself (`openin_any = a`) reads such names.
+///
+/// A file is read once however it is spelled (`a.aux`, `./a.aux`, a link
+/// to it: repeats are found by canonical path), and the chain reads at
+/// most [`MAX_INPUT`] bytes in all: otherwise one `.aux` that `\@input`s
+/// itself under many spellings would make the host hold a full copy per
+/// spelling (REVIEW-SEC on #2324).
 fn aux_chain(
     out: &Path,
     rel: &str,
     relevant: &mut Vec<u8>,
     files: &mut Vec<(String, Vec<u8>)>,
+    bib: &mut Vec<String>,
+    bst: &mut Option<String>,
+    depth: usize,
+) {
+    let mut seen = vec![];
+    aux_chain_in(out, rel, relevant, files, &mut seen, bib, bst, depth);
+}
+
+/// [`aux_chain`], with `seen`: the canonical paths of `files`.
+#[allow(clippy::too_many_arguments)]
+fn aux_chain_in(
+    out: &Path,
+    rel: &str,
+    relevant: &mut Vec<u8>,
+    files: &mut Vec<(String, Vec<u8>)>,
+    seen: &mut Vec<PathBuf>,
     bib: &mut Vec<String>,
     bst: &mut Option<String>,
     depth: usize,
@@ -381,10 +403,23 @@ fn aux_chain(
     if !crate::system::tool_read_ok(rel, &path, false, Some(out)) {
         return;
     }
+    let Ok(real) = std::fs::canonicalize(&path) else {
+        return;
+    };
+    let total: u64 = files.iter().map(|(_, d)| d.len() as u64).sum();
+    if seen.contains(&real)
+        || !std::fs::metadata(&real).is_ok_and(|m| total + m.len() <= MAX_INPUT)
+    {
+        return;
+    }
     let Some(d) = read(&path) else {
         return;
     };
+    if total + d.len() as u64 > MAX_INPUT {
+        return;
+    }
     // (listed before the files it inputs: a cycle stops here)
+    seen.push(real);
     files.push((rel.to_string(), d.clone()));
     for line in d.split(|&c| c == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
@@ -411,9 +446,36 @@ fn aux_chain(
         } else if let Some(a) = arg(b"\\@input{") {
             relevant.extend_from_slice(line);
             relevant.push(b'\n');
-            aux_chain(out, &a, relevant, files, bib, bst, depth + 1);
+            aux_chain_in(out, &a, relevant, files, seen, bib, bst, depth + 1);
         }
     }
+}
+
+/// Copy a rule's files (`Rule::files`, named as the `.aux` named them)
+/// into the tool's scratch directory; the last write error, if any.
+///
+/// A name that is absolute or has a `..` component would place the write
+/// outside `scratch` (a write `openout_any = p` refuses): it is never
+/// copied, confined or not, so the tool sees it as missing (REVIEW-SEC on
+/// #2324).
+fn copy_to_scratch(scratch: &Path, files: &[(String, Vec<u8>)]) -> Option<String> {
+    let mut problem = None;
+    for (rel, d) in files {
+        if !Path::new(rel)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            continue;
+        }
+        let p = scratch.join(rel);
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&p, d) {
+            problem = Some(format!("{}: {e}", p.display()));
+        }
+    }
+    problem
 }
 
 /// The data sources a `.bcf` names (`parse_bcf`).
@@ -815,16 +877,7 @@ impl Job {
         let scratch =
             std::env::temp_dir().join(format!("flashtex-tools-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
-        let mut problem = None;
-        for (rel, d) in &r.files {
-            let p = scratch.join(rel);
-            if let Some(parent) = p.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Err(e) = std::fs::write(&p, d) {
-                problem = Some(format!("{}: {e}", p.display()));
-            }
-        }
+        let problem = copy_to_scratch(&scratch, &r.files);
         let (result, terminal) = match prog {
             Runner::Program(prog) => self.run_program(r, prog, &scratch, problem),
             Runner::InProcess => self.run_in_process(r, &scratch, problem),
@@ -1402,6 +1455,70 @@ mod tests {
         let names: Vec<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(names, vec!["main.aux", "ch/one.aux"]);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// REVIEW-SEC on #2324: a `.aux` that `\@input`s itself under many
+    /// spellings is read once (repeats by canonical path, not spelling),
+    /// and a chain holds at most `MAX_INPUT` bytes in all. Scratch files
+    /// only.
+    #[test]
+    fn aux_chain_reads_each_file_once_and_caps_its_bytes() {
+        let d = std::env::temp_dir().join(format!("ext-aux-once-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("ch")).unwrap();
+        std::fs::write(
+            d.join("main.aux"),
+            "\\@input{main.aux}\n\\@input{./main.aux}\n\\@input{.//main.aux}\n\
+             \\@input{ch/../main.aux}\n\\@input{self.aux}\n\\@input{ch/one.aux}\n\
+             \\@input{./ch/one.aux}\n\\@input{big1.aux}\n\\@input{big2.aux}\n\
+             \\bibdata{refs}\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(d.join("main.aux"), d.join("self.aux")).unwrap();
+        std::fs::write(d.join("ch/one.aux"), "\\citation{b}\n").unwrap();
+        // two files of 40 MiB each (sparse): the second would pass the cap
+        for n in ["big1.aux", "big2.aux"] {
+            std::fs::File::create(d.join(n))
+                .unwrap()
+                .set_len(40 << 20)
+                .unwrap();
+        }
+        let (mut rel, mut files, mut bib, mut bst) = (vec![], vec![], vec![], None);
+        aux_chain(&d, "main.aux", &mut rel, &mut files, &mut bib, &mut bst, 0);
+        let _ = std::fs::remove_dir_all(&d);
+        let names: Vec<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
+        assert_eq!(names, vec!["main.aux", "ch/one.aux", "big1.aux"]);
+        let total: usize = files.iter().map(|(_, d)| d.len()).sum();
+        assert!(total as u64 <= MAX_INPUT, "{total}");
+        assert_eq!(bib, vec!["refs"]);
+    }
+
+    /// REVIEW-SEC on #2324: an absolute or `..` name from the `.aux` is
+    /// never copied into the tool's scratch directory, so the copy cannot
+    /// write outside it. Scratch files only.
+    #[test]
+    fn copy_to_scratch_writes_nothing_outside_scratch() {
+        let base = std::env::temp_dir().join(format!("ext-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let scratch = base.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let abs = base.join("abs-SENTINEL.aux");
+        let files = vec![
+            ("main.aux".to_string(), b"m".to_vec()),
+            ("./ch/one.aux".to_string(), b"o".to_vec()),
+            ("../dots-SENTINEL.aux".to_string(), b"x".to_vec()),
+            ("ch/../../dots2-SENTINEL.aux".to_string(), b"x".to_vec()),
+            (abs.to_string_lossy().into_owned(), b"x".to_vec()),
+        ];
+        assert_eq!(copy_to_scratch(&scratch, &files), None);
+        let made = |p: &Path| p.exists();
+        assert!(made(&scratch.join("main.aux")));
+        assert!(made(&scratch.join("ch/one.aux")));
+        assert!(!made(&base.join("dots-SENTINEL.aux")));
+        assert!(!made(&base.join("dots2-SENTINEL.aux")));
+        assert!(!made(&abs));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
