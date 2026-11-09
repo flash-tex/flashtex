@@ -2843,6 +2843,12 @@ impl Arena {
 
     /// Drop the newest checkpoint, which `retain` keeps, as if it had never
     /// been taken (the XeTeX intrinsics verifier's checkpoint).
+    ///
+    /// Precondition: the caller owns that checkpoint outright. Never drop
+    /// a page checkpoint, a restart point, S₀, or the base of a detached
+    /// branch (`restore_branch`) that other code still holds: its id would
+    /// name a state that is gone. (`flashtex_xetex`'s `drop_checkpoint`
+    /// asserts that the id is the verifier's own.)
     pub fn drop_newest(&mut self) {
         self.core_mut().drop_newest()
     }

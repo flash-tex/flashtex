@@ -706,11 +706,17 @@ impl Globals {
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
                 m = self.cur_chr;
+                if self.intr_rec_on {
+                    self.flashtex_intr_internal();
+                }
                 match self.cur_cmd {
                     def_code => {
                         // §448
                         {
                             self.scan_usv_num();
+                            if self.intr_rec_on {
+                                self.flashtex_intr_read((m).wrapping_add(self.cur_val));
+                            }
                             if (m == math_code_base) {
                                 {
                                     self.cur_val1 = self.eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
@@ -2346,6 +2352,9 @@ impl Globals {
         let mut v: scaled = 0; // §485
         let mut save_cur_val: i32 = 0; // §485
         'l_L89_f: {
+            if self.intr_rec_on {
+                self.flashtex_intr_abort(1i32);
+            }
             f = 0i32;
             self.arith_error = false;
             self.cur_order = normal;
@@ -2453,7 +2462,7 @@ impl Globals {
                                                 q = p;
                                                 p = self.mem[crate::ix::U((p) as usize)].hh().rh();
                                                 {
-                                                    if self.intr_verify_on {
+                                                    if self.intr_churn {
                                                         self.flashtex_intr_cell(q, 1i32);
                                                     }
                                                     { let __v307 = self.avail; self.mem[crate::ix::U((q) as usize)].set_hh_rh(__v307); }
@@ -3554,7 +3563,7 @@ impl Globals {
         }
         q = self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
         {
-            if self.intr_verify_on {
+            if self.intr_churn {
                 self.flashtex_intr_cell(self.def_ref, 1i32);
             }
             { let __ix336 = self.def_ref; let __v337 = self.avail; self.mem[crate::ix::U((__ix336) as usize)].set_hh_rh(__v337); }
@@ -3755,7 +3764,7 @@ impl Globals {
                                 self.mem[crate::ix::U((q) as usize)].set_hh_rh((268435455i32).wrapping_neg());
                                 self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                                 self.dl_new_node(q);
-                                if self.intr_verify_on {
+                                if self.intr_churn {
                                     self.flashtex_intr_cell(q, 1i32);
                                 }
                             }
@@ -3862,7 +3871,7 @@ impl Globals {
                                                         self.mem[crate::ix::U((q) as usize)].set_hh_rh((268435455i32).wrapping_neg());
                                                         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                                                         self.dl_new_node(q);
-                                                        if self.intr_verify_on {
+                                                        if self.intr_churn {
                                                             self.flashtex_intr_cell(q, 1i32);
                                                         }
                                                     }
@@ -3988,7 +3997,7 @@ impl Globals {
                     self.scanner_status = save_scanner_status;
                     self.begin_token_list(self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh(), inserted);
                     {
-                        if self.intr_verify_on {
+                        if self.intr_churn {
                             self.flashtex_intr_cell(self.def_ref, 1i32);
                         }
                         { let __ix352 = self.def_ref; let __v353 = self.avail; self.mem[crate::ix::U((__ix352) as usize)].set_hh_rh(__v353); }
@@ -4551,7 +4560,9 @@ impl Globals {
                             while true {
                                 {
                                     'l_continue_b: loop {
+                                        self.intr_weak = true;
                                         self.get_token();
+                                        self.intr_weak = false;
                                         if (self.cur_tok < right_brace_limit) {
                                             break 'l_done1_f;
                                         }
@@ -4716,7 +4727,11 @@ impl Globals {
                         }
                     } else {
                         // §512
-                        self.get_token();
+                        {
+                            self.intr_weak = true;
+                            self.get_token();
+                            self.intr_weak = false;
+                        }
                     }
                     if (self.cur_tok < right_brace_limit) {
                         if (self.cur_cmd < right_brace) {
@@ -5379,6 +5394,9 @@ impl Globals {
                             }
                             // §1578
                             self.flush_list(n);
+                            if self.intr_rec_on {
+                                self.flashtex_intr_lookup(self.cur_cs);
+                            }
                             b = (self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0() != undefined_cs);
                             self.is_in_csname = e;
                         }
@@ -5432,6 +5450,9 @@ impl Globals {
                                         if (self.cur_chr == fi_code) {
                                             // §531
                                             {
+                                                if self.intr_rec_on {
+                                                    self.flashtex_intr_pop_cond();
+                                                }
                                                 if (self.if_stack[crate::ix::U((self.in_open) as usize)] == self.cond_ptr) {
                                                     self.if_warning();
                                                 }
@@ -5521,6 +5542,9 @@ impl Globals {
                             if (self.cur_chr == fi_code) {
                                 // §531
                                 {
+                                    if self.intr_rec_on {
+                                        self.flashtex_intr_pop_cond();
+                                    }
                                     if (self.if_stack[crate::ix::U((self.in_open) as usize)] == self.cond_ptr) {
                                         self.if_warning();
                                     }
@@ -5540,6 +5564,9 @@ impl Globals {
             if (self.cur_chr == fi_code) {
                 // §531
                 {
+                    if self.intr_rec_on {
+                        self.flashtex_intr_pop_cond();
+                    }
                     if (self.if_stack[crate::ix::U((self.in_open) as usize)] == self.cond_ptr) {
                         self.if_warning();
                     }
