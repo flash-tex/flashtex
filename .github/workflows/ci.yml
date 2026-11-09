@@ -13,11 +13,12 @@
 #   pr (pull_request, and push to any branch but main)       for reviewers
 #     build, the crates the branch touches (fmt/clippy/tests), the licence
 #     boundary, the bundled inventory and the generated-table gates; trip,
-#     etrip, pdfTeX's regression tests (Linux); the NEW engine's parity
+#     etrip, pdfTeX's regression tests (Linux); the engine's parity
 #     (GitHub-hosted, sharded) when the branch touches the engine or its
 #     harnesses (`engine` below). Hosted macOS jobs only when the branch
 #     touches apps/ (`apple` below): the Mac app and the iPad companion, and
-#     the OLD engine's parity fixtures when it also touches their paths.
+#     the engine's parity fixtures on macOS (against baseline-fixtures.json)
+#     when it also touches their paths (`parity_fixtures` below).
 #
 #   gate (merge_group; manual with gate_only)       target <= 12 min engine,
 #                                                    <= 5 min otherwise
@@ -25,23 +26,26 @@
 #     check` here), quick, trip, etrip, pdfTeX regression, and the new
 #     engine's parity when the GROUP touches engine-affecting paths, in five
 #     shards (lockstep; the P-T1/P-T2 fixtures in two; the engine's tests in
-#     two). All GitHub-hosted Linux, so nothing in the gate queues for the PC.
+#     two). GitHub-hosted Linux, or (since 2026-11-01) the same legs on the
+#     NixOS PC with a hosted fallback when the queue has no fork PR (gate-pc).
 #     Nothing else: no Mac, no iPad, no full workspace. Parity stays gated
 #     before merge (parity > speed).
 #
 #   post (push to main; manual without gate_only; and nightly.yml)
 #     the Mac app, the iPad companion, the Rust workspace on Linux and macOS,
 #     flashtex-xetex, the macOS legs of trip, etrip and pdfTeX's regression
-#     tests, the parity fixtures on macOS, and the new engine's parity (GitHub-hosted, which also keeps the caches
+#     tests, the parity fixtures on macOS, and the engine's parity (GitHub-hosted, which also keeps the caches
 #     warm for pull requests). Fixed forward: a failure opens or updates the
 #     `main-red` issue, naming the pull requests the push merged
 #     (scripts/ci/main-red.sh). Policy: the PR's owner fixes forward within
 #     2 hours, or the Commander reverts.
 #
-# WHERE. Every job of the gate is GitHub-hosted (the repository is public:
+# WHERE. (The gate's Linux legs may run on the PC since 2026-11-01: see gate-pc.)
+# Every job of the gate was GitHub-hosted (the repository is public:
 # free). The three NixOS runners on the owner's PC (label flashtex-linux)
 # keep nightly.yml's suites (T2, soundness, T4, the scoreboard); in this file
-# they run engine parity only on a full manual run (`engine_nixos` in plan)
+# they run engine parity on the push to main (since 2026-11-08, with gate-pc's
+# hosted fallback) and on a full manual run (`engine_nixos` in plan)
 # -- never a pull request or a branch push (DESIGN §9.3). Until 2026-10-05
 # they ran the gate's parity, the workspace build and the Rust workspace,
 # and up to 8 merge groups queued for them (up to 50 minutes). The PC and
@@ -74,6 +78,14 @@ on:
         description: run only the merge-queue gate (what a merge_group run runs, with engine parity), to measure it
         type: boolean
         default: false
+      gate_runner:
+        description: "with gate_only: where the gate's Linux legs run (auto = hosted on a manual run; the merge queue picks the PC itself)"
+        type: choice
+        options: [auto, pc, hosted]
+        default: auto
+      gate_pc_wait:
+        description: "with gate_runner=pc: minutes before an unpicked PC job sends the gate to hosted runners"
+        default: "5"
 
 concurrency:
   # On main and in the merge queue, every run gets a group of its own
@@ -133,8 +145,9 @@ jobs:
       # 'true' when this run must run the new engine's parity gates.
       engine: ${{ steps.p.outputs.engine }}
       # Where they run: GitHub-hosted Ubuntu (engine_hosted) on every event;
-      # the NixOS PC (engine_nixos) only on a full manual run, and both when
-      # that run asks (input engine_parity_hosted).
+      # the NixOS PC (engine_nixos) in a merge group on gate_route=pc, on the
+      # push to main and on a full manual run (gate-pc falls back to hosted
+      # shards), and both when a manual run asks (input engine_parity_hosted).
       engine_nixos: ${{ steps.p.outputs.engine_nixos }}
       engine_hosted: ${{ steps.p.outputs.engine_hosted }}
       # 'true' when this run must run the parity fixtures on macOS (a macOS
@@ -150,12 +163,24 @@ jobs:
       # it touches the app's engine-v3 code or tests, the display-list-v3
       # protocol, or the host (`v3_app_paths` in the script).
       v3_app: ${{ steps.p.outputs.v3_app }}
+      # 'true' when the real-document gate runs (real-doc-gate): after the
+      # merge, and on a pull request or branch push that touches the engine
+      # or its host, the display-list protocol, the Mac app's sources, or the
+      # gate itself (`realdoc_paths` in the script). Never in the merge queue.
+      realdoc: ${{ steps.p.outputs.realdoc }}
       # JSON `os` lists for the Rust workspace/standalone jobs and for
       # trip/etrip/pdftex-regression: the gate and pull requests run trip and
       # co. on Linux only and the Rust jobs not at all; after the merge, both
       # systems.
       rust_os: ${{ steps.p.outputs.rust_os }}
       trip_os: ${{ steps.p.outputs.trip_os }}
+      # Where the gate's Linux legs (build, quick, checks, engine parity) run:
+      # `pc` (the *-pc jobs, supervised by gate-pc, with a hosted fallback) or
+      # `hosted`. See "The gate on the NixOS PC" below.
+      gate_route: ${{ steps.p.outputs.gate_route }}
+      gate_pc_wait: ${{ steps.p.outputs.gate_pc_wait }}
+      # How many PC jobs gate-pc must see pass: 3 legs plus 3 engine shards.
+      pc_expected: ${{ steps.p.outputs.pc_expected }}
     steps:
       - name: Decide
         id: p
@@ -187,6 +212,9 @@ jobs:
           MG_BASE: ${{ github.event.merge_group.base_sha }}
           MG_HEAD: ${{ github.event.merge_group.head_sha }}
           GATE_ONLY: ${{ inputs.gate_only }}
+          GATE_RUNNER: ${{ inputs.gate_runner }}
+          GATE_PC_WAIT: ${{ inputs.gate_pc_wait }}
+          MG_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           ENGINE_PARITY_HOSTED: ${{ inputs.engine_parity_hosted }}
         run: |
           set -euo pipefail
@@ -311,11 +339,67 @@ jobs:
           # with no queueing, where the PC's three runners queued the gate for
           # up to 50 minutes). The PC twin runs only on a full manual run with
           # its switch on (and the PC keeps nightly.yml's suites).
+          # Since 2026-11-08 (lane GATES) also on the push to main, which waits
+          # for nobody: gate-pc supervises the PC shards there too and falls
+          # back to the hosted ones after gate_pc_wait minutes, so a busy or
+          # offline PC (11-03 to 11-08) costs main's run 5 minutes, and a free
+          # PC takes five hosted Linux jobs off every merge.
+          #
+          # The gate on the NixOS PC (Commander, 2026-11-01). A merge group's
+          # gate waited up to 64 minutes for GitHub-hosted runners (the org's
+          # free plan runs about ten jobs at once, shared with every pull
+          # request), while the PC's runners were often free. So a merge group
+          # runs its Linux legs on the PC when the PC's switch is on and no
+          # pull request in the merge queue comes from a fork (§9.3: fork code
+          # never reaches a self-hosted runner; any API failure counts as a
+          # fork). gate-pc watches those jobs and falls back to the hosted
+          # jobs when one is not picked up within gate_pc_wait minutes.
+          gate_route=hosted
+          fork_check=n/a
+          if [ "$tier" = "gate" ] && [ "$selfhosted_linux" = "true" ]; then
+            want_pc=false
+            case "$EVENT" in
+              merge_group) want_pc=true ;;
+              workflow_dispatch) [ "${GATE_RUNNER:-auto}" = "pc" ] && want_pc=true ;;
+            esac
+            if [ "$want_pc" = "true" ]; then
+              # This group's own pull request (gh-readonly-queue/main/pr-N-<sha>);
+              # none on a manual run.
+              own=ok
+              pr=$(sed -nE 's#^(refs/heads/)?gh-readonly-queue/[^/]+/pr-([0-9]+)-.*#\2#p' <<<"${MG_HEAD_REF:-}")
+              if [ "$EVENT" = "merge_group" ]; then
+                own=fork
+                if [ -n "$pr" ]; then
+                  head=$(gh api "repos/$THIS_REPO/pulls/$pr" --jq '.head.repo.full_name' 2>/dev/null || echo)
+                  [ "$head" = "$THIS_REPO" ] && own=ok
+                fi
+              fi
+              # Every pull request in the queue: the ones ahead of this one are
+              # in this group's tree. (Those behind it are included too; that
+              # only ever errs towards hosted.)
+              # shellcheck disable=SC2016  # GraphQL variables, not shell ones
+              queue=$(gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){mergeQueue(branch:"main"){entries(first:100){nodes{pullRequest{isCrossRepository}}}}}}' \
+                        -f o="${THIS_REPO%%/*}" -f n="${THIS_REPO#*/}" \
+                        --jq '[.data.repository.mergeQueue.entries.nodes[].pullRequest.isCrossRepository] | if any then "fork" else "ok" end' \
+                      2>/dev/null || echo fork)
+              fork_check="this PR: $own; queue: $queue"
+              if [ "$own" = "ok" ] && [ "$queue" = "ok" ]; then
+                gate_route=pc
+              fi
+            fi
+          fi
+          gate_pc_wait="${GATE_PC_WAIT:-5}"
+          case "$gate_pc_wait" in ''|*[!0-9]*) gate_pc_wait=5 ;; esac
+
           engine_nixos=false
           engine_hosted=false
           if [ "$engine" = "true" ]; then
-            if [ "$selfhosted_linux" = "true" ] && [ "$EVENT" = "workflow_dispatch" ] && [ "$tier" = "all" ]; then
+            if [ "$gate_route" = "pc" ]; then
               engine_nixos=true
+            elif [ "$selfhosted_linux" = "true" ] && [ "$tier" = "all" ]; then
+              # A full manual run, or the push to main: selfhosted_linux is
+              # only ever true for those, merge groups and gate-only runs.
+              case "$EVENT" in workflow_dispatch|push) engine_nixos=true ;; esac
             fi
             if [ "$engine_nixos" != "true" ] || [ "$ENGINE_PARITY_HOSTED" = "true" ]; then
               engine_hosted=true
@@ -346,6 +430,20 @@ jobs:
           case "$tier" in
             all) v3_app=true ;;
             pr) [ "$run" = "true" ] && touches "$v3_app_paths" && v3_app=true ;;
+          esac
+
+          # The real-document gate (real-doc-gate; lane REAL-DOC-GATE, DESIGN
+          # §1.2, §9): T7's late-page typing row on Infinite Descent x2 and the
+          # app's one-frame stall test on the same book. The owner found typing
+          # on its page 883 taking 32 s and freezing the editor (2026-10-24),
+          # which no generated document showed. After the merge, and before it
+          # whenever the engine or its host, the protocol, the Mac app's sources
+          # or the gate's own files change. Never in the gate (merge queue).
+          realdoc_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.lock$|apps/mac/(Sources/|Package\.swift$|Tests/FlashTeXMacTests/(EngineV3RealDocTypingTests|MainThreadStall|MainThreadStallMonitor)\.swift$)|tools/incr-bench/(t7|docspec|mkbook|mkreal|mkeng)\.(py|sh)$|tools/incr-bench/realdocs\.json$|tools/parity/corpus/(infdesc_x2\.py|books\.json)$|scripts/realdoc-gate\.sh$|\.github/workflows/ci\.yml$)'
+          realdoc=false
+          case "$tier" in
+            all) realdoc=true ;;
+            pr) [ "$run" = "true" ] && touches "$realdoc_paths" && realdoc=true ;;
           esac
 
           # The parity fixtures on macOS (parity-fixtures and its hosted twin):
@@ -402,8 +500,15 @@ jobs:
             echo "parity_fixtures=$parity_fixtures"
             echo "apple=$apple"
             echo "v3_app=$v3_app"
+            echo "realdoc=$realdoc"
             echo "rust_os=$rust_os"
             echo "trip_os=$trip_os"
+            echo "gate_route=$gate_route"
+            echo "gate_pc_wait=$gate_pc_wait"
+            pc_expected=0
+            [ "$gate_route" = "pc" ] && pc_expected=3
+            [ "$engine_nixos" = "true" ] && pc_expected=$((pc_expected + 3))
+            echo "pc_expected=$pc_expected"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -421,8 +526,10 @@ jobs:
             echo "| new engine parity | $engine (NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
             echo "| Mac app / iPad | $apple |"
             echo "| engine-v3 host tests (Mac app) | $v3_app |"
+            echo "| real-document gate (T7 infdesc-x2 late page, app stalls) | $realdoc |"
             echo "| parity fixtures (macOS) | $parity_fixtures |"
             echo "| Rust workspace / flashtex-xetex | \`$rust_os\` |"
+            echo "| gate's Linux legs | **$gate_route** (fork check: $fork_check; PC wait ${gate_pc_wait} min) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$run" != "true" ]; then
@@ -442,12 +549,12 @@ jobs:
   build:
     name: build (workspace, all targets)
     needs: [plan]
-    if: needs.plan.outputs.run == 'true'
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.gate_route != 'pc'
     # GitHub-hosted on every event since 2026-10-05: on the PC it queued
     # behind the gate's engine-parity shards (30 minutes, measured).
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
+    env: &build-env
       # In the merge queue, and on the push to main whose cache the queue
       # restores, `cargo check`: it type-checks every target of the workspace
       # without code generation or linking (cargo build took 5.0-6.6 min
@@ -455,14 +562,58 @@ jobs:
       # and link everything in release, and `quick` builds the touched
       # crates' tests. Pull requests keep `cargo build`.
       CARGO_MODE: ${{ (needs.plan.outputs.tier == 'gate' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'check' || 'build' }}
-    steps:
+    steps: &build-steps
       - uses: actions/checkout@v4
+      - &pc-stand-down
+        name: "NixOS PC: stand down if the gate already fell back to hosted runners"
+        if: (needs.plan.outputs.gate_route == 'pc' || needs.plan.outputs.engine_nixos == 'true') && runner.environment == 'self-hosted' && runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/gate-pc.py stood-down >> "$GITHUB_ENV"
+      - &pc-target
+        name: "NixOS PC: this runner's build directory (warm, size-capped)"
+        if: runner.environment == 'self-hosted' && runner.os == 'Linux' && env.GATE_STOOD_DOWN != '1'
+        run: scripts/ci/pc-gate-target.sh >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
+        if: env.GATE_STOOD_DOWN != '1'
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !(runner.environment == 'self-hosted' && runner.os == 'Linux') }}
         with:
           # check and build artifacts are not interchangeable: one cache each.
           key: workspace-debug-${{ env.CARGO_MODE }}
-      - run: cargo "$CARGO_MODE" --workspace --all-targets --locked
+      - if: env.GATE_STOOD_DOWN != '1'
+        run: cargo "$CARGO_MODE" --workspace --all-targets --locked
+
+  # The same job on the NixOS PC (gate_route=pc), and on hosted runners when
+  # gate-pc falls back. See "The gate on the NixOS PC" at gate-pc.
+  build-pc:
+    name: build (workspace, all targets; NixOS PC)
+    needs: [plan]
+    if: needs.plan.outputs.gate_route == 'pc' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      # gate-pc.py stood-down reads this run's jobs
+      actions: read
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    # Every run step in a scope of its own inside flashtex.slice (MemoryMax 10G,
+    # MemoryHigh 9G, no swap, nice 10), never in the runner's own cgroup: a
+    # reclaim stall there stalls the listener and GitHub drops the job
+    # (nightly.yml's T4, 37423737667). No systemd --user, no step (it fails).
+    defaults: &pc-scope
+      run:
+        shell: systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0 nice -n 10 bash --noprofile --norc -eo pipefail {0}
+    timeout-minutes: 30
+    env: *build-env
+    steps: *build-steps
+
+  build-fallback:
+    name: build (workspace, all targets; hosted fallback)
+    needs: [plan, gate-pc]
+    if: ${{ !cancelled() && needs.plan.outputs.gate_route == 'pc' && needs.gate-pc.outputs.gate == 'fallback' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env: *build-env
+    steps: *build-steps
 
   # fmt, clippy and tests, scoped to the crates this branch touches. The steps
   # ARE scripts/gate.sh quick -- the same script an agent runs before pushing,
@@ -470,24 +621,29 @@ jobs:
   quick:
     name: quick (touched crates)
     needs: [plan]
-    if: needs.plan.outputs.run == 'true'
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.gate_route != 'pc'
     # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
     # public, so it costs nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    steps:
+    steps: &quick-steps
       - uses: actions/checkout@v4
         with:
           # gate.sh scopes itself with `git diff <base>...HEAD`, which needs the
           # merge base. A shallow clone has no merge base.
           fetch-depth: 0
+      - *pc-stand-down
+      - *pc-target
       - uses: dtolnay/rust-toolchain@stable
+        if: env.GATE_STOOD_DOWN != '1'
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !(runner.environment == 'self-hosted' && runner.os == 'Linux') }}
         with:
           key: workspace-debug
       - name: Resolve the base revision
+        if: env.GATE_STOOD_DOWN != '1'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -506,7 +662,29 @@ jobs:
           echo "FLASHTEX_GATE_BASE=$base" >> "$GITHUB_ENV"
           echo "base revision: $base"
       - name: scripts/gate.sh quick
+        if: env.GATE_STOOD_DOWN != '1'
         run: scripts/gate.sh quick --committed-only
+
+  quick-pc:
+    name: quick (touched crates; NixOS PC)
+    needs: [plan]
+    if: needs.plan.outputs.gate_route == 'pc' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      # gate-pc.py stood-down reads this run's jobs
+      actions: read
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
+    timeout-minutes: 45
+    steps: *quick-steps
+
+  quick-fallback:
+    name: quick (touched crates; hosted fallback)
+    needs: [plan, gate-pc]
+    if: ${{ !cancelled() && needs.plan.outputs.gate_route == 'pc' && needs.gate-pc.outputs.gate == 'fallback' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps: *quick-steps
 
   # Six cheap gates in ONE job (2026-10-05). Each took under two minutes, but
   # each was a job of its own, and the organisation's Free plan runs at most
@@ -544,43 +722,47 @@ jobs:
   checks:
     name: gate checks and engine T0 (${{ matrix.os }})
     needs: [plan]
-    if: needs.plan.outputs.run == 'true'
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.gate_route != 'pc'
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
-    steps:
+    steps: &checks-steps
       - uses: actions/checkout@v4
+      - *pc-stand-down
+      - *pc-target
       - uses: dtolnay/rust-toolchain@stable
+        if: env.GATE_STOOD_DOWN != '1'
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !(runner.environment == 'self-hosted' && runner.os == 'Linux') }}
         with:
           key: gate-checks
       - name: "licence boundary: no MIT crate or iPad target may reach the GPL engine"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: scripts/check-license-boundary.sh
       # The check's own self-tests, as gate.sh's licence step runs them: each
       # copies a fixture tree with planted violations and requires every one
       # to fire, so a weakened rule fails here (#1236 S1b; #1400 review).
       - name: "licence boundary self-test: the poppler/MuPDF rules fire"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: scripts/tests/check-license-boundary.test.sh
       - name: "licence boundary self-test: check E (apps/mac links no GPL) fires"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: scripts/tests/check-license-boundary-mac.test.sh
       - name: "retirement: retired code is not named outside the allowlist (#1236 §4.6)"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: python3 tools/parity/retirement_refs.py
       - name: "app parity: every checklist row names tests that exist (#1236 §4.4, S4(h))"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: python3 tools/parity/app_parity_rows.py check
       # The parity harness, the P5 board (its owner's bar, crash row and gate), package-smoke
       # and the P5 board's T4 pick, by their own unit tests (as `gate.sh pr`'s
       # gate_parity_selftest does, less tools/lockstep), so a pull request cannot break them unseen (cases
       # that need pdfTeX or qpdf skip on this runner).
       - name: "parity, P5 board and package-smoke self-tests"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         # ~1 min when green; a hang (WorkerDeath's pool, 2026-10) must fail this step, not eat the job
         timeout-minutes: 10
         run: |
@@ -589,18 +771,26 @@ jobs:
           command -v qpdf >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf >/dev/null; }
           python3 -m unittest discover -s tools/parity -p 'test_*.py'
           python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+          # the Python tools that CI, a gate or a nightly workflow runs: their pure-logic
+          # unit tests (no network, TeX Live or display needed)
+          python3 -m unittest discover -s tools/displaylist -p 'test_*.py'
+          python3 -m unittest discover -s tools/xetex-lockstep -p 'test_*.py'
+          python3 -m unittest discover -s tools/unicode-m3 -p 'test_*.py'
+          python3 -m unittest discover -s tools/web2rust -p 'test_*.py'
+          python3 -m unittest discover -s tools/font-census -p 'test_*.py'
+          python3 -m unittest discover -s tools/rewrite -p 'test_*.py'
           scripts/tests/p5-pick-t4.test.sh
       # RQ5: the vocabulary generated from measured package support (pdflatex is the
       # oracle; the probe itself is the supported-latex workflow's), and the two
       # copies the editors bundle.
       - name: "supported-latex: the generated vocabulary matches its inputs and the bundled copies"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: |
           set -euo pipefail
           python3 -m unittest discover -s apps/mac/scripts -p 'test_gen_supported_latex.py'
           python3 apps/mac/scripts/gen-supported-latex.py check --installed
       - name: "generated tables match the manifest"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: python3 scripts/check-generated.py
       # The lockstep harness by its own unit tests (capture, coverage, dupcheck,
       # no-halt, shard), as `gate.sh pr`'s gate_parity_selftest runs them, so a
@@ -608,10 +798,10 @@ jobs:
       # install Ubuntu's texlive-binaries, so the cases that need pdftex skip
       # here rather than meet a pdftex with no TeX tree.
       - name: "lockstep: harness self-tests"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
       - name: "trip: third_party/knuth checksums"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         working-directory: third_party/knuth
         run: shasum -a 256 -c SHA256SUMS
       # DVItype for the trip.typ gate (tripman.tex step 5). Without it that
@@ -619,34 +809,37 @@ jobs:
       # (#1208). Ubuntu's texlive-binaries ships it; the Linux leg then
       # requires it (TRIP_REQUIRE_DVITYPE=1).
       - name: "trip: dvitype (Linux)"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' && runner.os == 'Linux' }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends texlive-binaries
+          # The NixOS PC has TeX Live 2026's dvitype on PATH; a hosted runner installs it.
+          if ! command -v dvitype >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends texlive-binaries
+          fi
           echo "TRIP_REQUIRE_DVITYPE=1" >> "$GITHUB_ENV"
       - name: "trip: scripts/flashtex-trip.sh"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
       # The trip/etrip harness's own checks (#1208): byte-exact .fot
       # comparison, and the timeout that kills a hung engine's process group.
       - name: "trip: harness self-tests"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         run: |
           python3 tools/web2rust/tools/test_trip_fot.py
           python3 scripts/tests/test_run_with_timeout.py
       - name: "etrip: third_party/pdftex checksums"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         working-directory: third_party/pdftex
         run: shasum -a 256 -c SHA256SUMS
       - name: "etrip: scripts/flashtex-etrip.sh"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
       - name: "pdfTeX regression: third_party/pdftex/regression checksums"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         working-directory: third_party/pdftex/regression
         run: shasum -a 256 -c SHA256SUMS
       - name: "pdfTeX regression: scripts/pdftex-regression.sh"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && env.GATE_STOOD_DOWN != '1' }}
         run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
       # The runner's own fail-closed paths (#1207: timeouts, XPASS, nothing
       # verified, skips under REGRESSION_REQUIRE_ALL, engine arguments),
@@ -654,6 +847,29 @@ jobs:
       - name: "pdfTeX regression: runner self-tests"
         if: ${{ !cancelled() }}
         run: bash scripts/tests/pdftex-regression.test.sh
+
+  # In the gate tier the checks run their Linux leg only, so the PC and
+  # fallback copies have no matrix.
+  checks-pc:
+    name: gate checks and engine T0 (NixOS PC)
+    needs: [plan]
+    if: needs.plan.outputs.gate_route == 'pc' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      # gate-pc.py stood-down reads this run's jobs
+      actions: read
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
+    timeout-minutes: 75
+    steps: *checks-steps
+
+  checks-fallback:
+    name: gate checks and engine T0 (hosted fallback)
+    needs: [plan, gate-pc]
+    if: ${{ !cancelled() && needs.plan.outputs.gate_route == 'pc' && needs.gate-pc.outputs.gate == 'fallback' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps: *checks-steps
 
   # The parity fixtures tier against baseline-fixtures.json, with the new
   # engine (the only one since S7). The new engine's P-T gates are `engine-parity`
@@ -734,7 +950,9 @@ jobs:
   #                         2026, five shards: every event that needs parity,
   #                         the merge queue included
   #   engine-parity         the NixOS PC (TeX Live 2026 first on its runners'
-  #                         PATH), three shards: only a full manual run (§9.3)
+  #                         PATH), three shards: a merge group on the PC route,
+  #                         the push to main and a full manual run (§9.3),
+  #                         supervised by gate-pc with a hosted fallback
   #
   # `CI required` fails a gate run (merge_group) in which plan's `engine` is
   # 'true' and neither job passed in full (a matrix job passes only when every
@@ -746,7 +964,12 @@ jobs:
       needs.plan.outputs.run == 'true' && needs.plan.outputs.engine_nixos == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      # gate-pc.py stood-down reads this run's jobs
+      actions: read
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
     timeout-minutes: 30
     strategy:
       # A red shard frees the other two runners at once for the next group.
@@ -765,8 +988,11 @@ jobs:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
     steps:
       - uses: actions/checkout@v4
+      - *pc-stand-down
       - uses: dtolnay/rust-toolchain@stable
+        if: env.GATE_STOOD_DOWN != '1'
       - name: this runner's build directory; a fresh oracle cache
+        if: env.GATE_STOOD_DOWN != '1'
         # A per-runner target directory outside the checkout, so a run
         # rebuilds only what changed (the checkout is cleaned every job): the
         # warm cache. Per runner, not shared: cargo locks a target directory
@@ -780,9 +1006,10 @@ jobs:
           echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
           echo "FLASHTEX_PARITY_CACHE=$RUNNER_TEMP/parity-oracle" >> "$GITHUB_ENV"
       - name: scripts/engine-parity.sh ${{ matrix.steps }}
+        if: env.GATE_STOOD_DOWN != '1'
         run: scripts/engine-parity.sh --jobs ${{ matrix.jobs }} ${{ matrix.steps }}
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && env.GATE_STOOD_DOWN != '1'
         with:
           name: engine-parity-nixos-${{ matrix.id }}
           path: |
@@ -804,7 +1031,7 @@ jobs:
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.engine_hosted == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    strategy:
+    strategy: &engine-hosted-strategy
       fail-fast: false
       matrix:
         include:
@@ -818,12 +1045,12 @@ jobs:
           - {shard: P-T fixtures 2/2, id: fixtures-1, steps: build parity, jobs: 4, slice: 1/2, cache: build}
           - {shard: engine tests 1/2, id: tests-0, steps: tests, jobs: 4, slice: 0/2, cache: tests}
           - {shard: engine tests 2/2, id: tests-1, steps: tests, jobs: 4, slice: 1/2, cache: tests}
-    env:
+    env: &engine-hosted-env
       FLASHTEX_REQUIRE_TEXLIVE: "1"
       # texlive/texlive:latest-medium as of 2026-09-27 (TeX Live 2026, pdfTeX
       # 1.40.29). Pinned by digest; see .github/actions/texlive-2026.
       TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
-    steps:
+    steps: &engine-hosted-steps
       - uses: actions/checkout@v4
       - uses: ./.github/actions/texlive-2026
         with:
@@ -875,6 +1102,77 @@ jobs:
             ${{ runner.temp }}/engine-parity/parity/documents.json
           if-no-files-found: ignore
           retention-days: 14
+
+  # The hosted shards again when gate-pc fell back from the PC's
+  # engine-parity (above).
+  engine-parity-fallback:
+    name: engine parity (hosted fallback, ${{ matrix.shard }})
+    needs: [plan, gate-pc]
+    if: ${{ !cancelled() && needs.plan.outputs.engine_nixos == 'true' && needs.gate-pc.outputs.gate == 'fallback' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy: *engine-hosted-strategy
+    env: *engine-hosted-env
+    steps: *engine-hosted-steps
+
+  # ---------------------------------------------------------------------------
+  # The gate on the NixOS PC (Commander, 2026-11-01).
+  #
+  # WHY. In the merge queue every gate job is a few minutes, but they waited for
+  # GitHub-hosted runners for up to 64 minutes (20 merge groups measured on
+  # 2026-11-01: plan up to 47, gate checks up to 64), because the org's free
+  # plan runs about ten hosted jobs at once and pull requests fill them. The
+  # PC's three runners were often free: over the same days a PC job's wait was
+  # 0 min at the median, 1.6 at p75, 14 at p90 (behind a lane's long job).
+  #
+  # HOW. When plan says gate_route=pc (a merge group whose own pull request and
+  # every pull request in the queue are from this repository, and the PC's
+  # switch is on; or a manual gate run with gate_runner=pc), the gate's Linux
+  # legs run as build-pc, quick-pc, checks-pc and engine-parity (three shards)
+  # on the PC's existing runners, and the hosted build/quick/checks/
+  # engine-parity-hosted jobs are skipped. This job watches the PC jobs
+  # (scripts/ci/gate-pc.py) and ends
+  #   success   all of them passed;
+  #   failure   one failed: red, as a hosted leg's failure would be;
+  #   fallback  one was still not picked up after gate_pc_wait minutes: the
+  #             *-fallback jobs run the whole gate on hosted runners, and a
+  #             PC job that starts later stands down in seconds.
+  # `CI required` judges the PC jobs through this job's outputs, never by
+  # `needs` (a PC job that is never picked up must not hold the gate).
+  #
+  # WAIT: 5 minutes. A free PC runner picks a job up in seconds (p50 0, p75
+  # 1.6 min); a job still waiting at 5 is behind a lane's long job (p90 14 min),
+  # and a hosted job's median wait is 1-3 minutes. So falling back at 5 costs a
+  # group at most ~5 minutes over hosted-only in the worst case, and saves the
+  # hosted queue (up to an hour) whenever the PC is free.
+  #
+  # Fork safety (§9.3): gate_route=pc never on pull_request (and the PC jobs
+  # repeat that guard); in the merge queue only when no queued pull request is
+  # cross-repository, and any failed lookup counts as a fork.
+  gate-pc:
+    name: gate on the NixOS PC (supervisor)
+    needs: [plan]
+    if: needs.plan.outputs.gate_route == 'pc' || needs.plan.outputs.engine_nixos == 'true'
+    runs-on: ubuntu-latest
+    # the longest PC job's limit (checks-pc, 75) plus the wait
+    timeout-minutes: 95
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      gate: ${{ steps.s.outputs.gate }}
+      engine: ${{ steps.s.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci/gate-pc.py
+          sparse-checkout-cone-mode: false
+      - id: s
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PC_EXPECTED: ${{ needs.plan.outputs.pc_expected }}
+          GATE_PC_WAIT: ${{ needs.plan.outputs.gate_pc_wait }}
+        run: python3 scripts/ci/gate-pc.py supervise
 
   # ===========================================================================
   # The post-merge set: push to main and manual runs (plan's `post`; plus
@@ -1233,6 +1531,147 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The real-document gate (plan's `realdoc`; DESIGN §1.2, §9's fast cycle):
+  # scripts/realdoc-gate.sh at Infinite Descent x2's page ~887 (site x2-late,
+  # the owner's page 883), on signals a shared 3-vCPU VM cannot blur
+  # (tools/incr-bench/realdocs.json pr_gate): (1) T7 letter@x2-late, each key
+  # re-typesets at most 3 pages (converges near the edit);
+  # typing@150ms@x2-late, whether every key is painted by its own compile
+  # (reported, not gated: load moves it); (2)
+  # EngineV3RealDocTypingTests: the whole app on that host types into the
+  # page during and after the first compile, no main run-loop turn and no
+  # key's way into the text storage over 100 ms (main: 1.9 s before #1890 and
+  # #1900). GATING: in `CI required` (lane GATES, 2026-11-01). The budget on
+  # instructions from the compile's start to the edited page
+  # (pr_gate.to_edited_instr_m_max) is only a warning here: GitHub-hosted VMs
+  # have no PMU counters (macOS: thread_selfcounts fails; Ubuntu: perf has no
+  # instructions:u). real-doc-instr below gates it after the merge. The 20 ms
+  # / 16 ms wall targets are the nightly's (t7-real-documents) and the
+  # reference run's. The book is fetched at its pinned commit (cached).
+  # GitHub-hosted macos-26 (windows, so never a team laptop). BasicTeX plus
+  # the packages infdesc loads.
+  real-doc-gate:
+    name: "real-doc gate (infdesc-x2 late page: T7 row, app stalls)"
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.realdoc == 'true'
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      CI: "1"
+      FLASHTEX_NO_ACTIVATE: "1"
+      FLASHTEX_KEYCHAIN_OFF: "1"
+      FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      INCR_BENCH_DIR: /tmp/fth-realdoc
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Install BasicTeX and the packages Infinite Descent loads
+        run: |
+          set -euo pipefail
+          brew install --cask basictex
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH="/Library/TeX/texbin:$PATH"
+          want=()
+          while read -r p; do [[ -n "$p" && "$p" != \#* ]] && want+=("$p"); done < scripts/ci/realdoc-texlive-packages.txt
+          for attempt in 1 2 3 4; do
+            sudo tlmgr update --self || { sleep 5; continue; }
+            # Only the listed packages BasicTeX lacks: the list comes from a full
+            # TeX Live's tlpdb, and a name the repository no longer has
+            # (l3backend, which BasicTeX already carries) fails the whole install.
+            have="$(tlmgr info --only-installed --data name 2>/dev/null)"
+            pkgs=()
+            for p in "${want[@]}"; do grep -qx "$p" <<<"$have" || pkgs+=("$p"); done
+            echo "installing ${#pkgs[@]} of ${#want[@]} packages: ${pkgs[*]}"
+            [ ${#pkgs[@]} = 0 ] && break
+            sudo tlmgr install "${pkgs[@]}" && break
+            [ "$attempt" = 4 ] && exit 1
+            echo "tlmgr attempt $attempt failed (mirror skew?): again"; sleep 5
+          done
+          kpsewhich pdflatex.ini
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: realdoc
+          cache-on-failure: true
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/fth-realdoc/cache
+          key: realdoc-books-${{ hashFiles('tools/parity/corpus/books.json') }}
+      - name: scripts/realdoc-gate.sh
+        run: |
+          set -o pipefail
+          scripts/realdoc-gate.sh 2>&1 | tee realdoc-gate.log
+      - name: The T7 row as the run summary
+        if: always()
+        run: |
+          { echo "### real-doc gate"; echo; grep -E '^T7: |^  infdesc|RealDocTyping|realdoc-gate:' realdoc-gate.log || true; echo
+            cat /tmp/fth-realdoc/t7-out/table.md 2>/dev/null || true; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-doc-gate
+          path: |
+            realdoc-gate.log
+            /tmp/fth-realdoc/t7-out
+            /tmp/fth-realdoc/app-test.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The real-document gate's instruction budget (realdocs.json pr_gate
+  # to_edited_instr_m_max: the engine thread's instructions from the
+  # compile's start to the edited page, which load and clock speed do not
+  # move), where it can be counted: a self-hosted Mac (MacTeX 2026), so only
+  # after the merge and on manual runs (plan's selfhosted_mac, §9.3), never
+  # in the merge queue (realdoc is never 'true' there). T7 letter@x2-late
+  # with t7.py --gate counted: a missing count misses.
+  # A miss on main files `main-red`. The budget is a ratchet at main's value
+  # (lane GATES, 2026-11-01: main spends up to 472 M against DESIGN §1.2's
+  # ~100 M); lower it as fixes land.
+  real-doc-instr:
+    name: "real-doc instructions (self-hosted Mac: infdesc-x2 late page)"
+    needs: [plan]
+    if: >-
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.realdoc == 'true' &&
+      needs.plan.outputs.selfhosted_mac == 'true'
+    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's directories
+        # A per-runner build directory outside the checkout (a warm cache), and
+        # a per-runner bench directory under /tmp (the host's socket path must
+        # fit 104 bytes; the runners of one Mac must not share it).
+        run: |
+          set -euo pipefail
+          echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-realdoc" >> "$GITHUB_ENV"
+          echo "INCR_BENCH_DIR=/tmp/fth-realdoc-$RUNNER_NAME" >> "$GITHUB_ENV"
+          if [ -x /Library/TeX/texbin/pdflatex ]; then echo /Library/TeX/texbin >> "$GITHUB_PATH"; fi
+      - name: scripts/realdoc-gate.sh --counted --t7-only
+        run: |
+          set -o pipefail
+          kpsewhich pdflatex.ini
+          scripts/realdoc-gate.sh --counted --t7-only 2>&1 | tee realdoc-instr.log
+      - name: The T7 rows as the run summary
+        if: always()
+        run: |
+          { echo "### real-doc instructions"; echo; grep -E '^T7: |^  infdesc|realdoc-gate:' realdoc-instr.log || true; echo
+            cat "$INCR_BENCH_DIR/t7-out/table.md" 2>/dev/null || true; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-doc-instr
+          path: |
+            realdoc-instr.log
+            ${{ env.INCR_BENCH_DIR }}/t7-out
+          if-no-files-found: ignore
+          retention-days: 14
+
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
@@ -1296,9 +1735,11 @@ jobs:
   # pull requests the push merged; a fully green run on main's tip closes it
   # (scripts/ci/main-red.sh). Policy (docs/ci-cd.md, "main-red"): the PR's
   # owner fixes forward within 2 hours, or the Commander reverts the merge.
+  # The PC's engine-parity shards are judged through gate-pc (and its hosted
+  # fallback), not needed here: one never picked up must not hold the report.
   main-red:
     name: main-red issue
-    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, ipad]
+    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, gate-pc, engine-parity-fallback, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, real-doc-gate, real-doc-instr, ipad]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.plan.outputs.run == 'true'
@@ -1339,14 +1780,26 @@ jobs:
       # tests (trip, etrip, pdfTeX regression): skipped only when plan says
       # the run is a duplicate; their macOS leg runs post-merge only.
       - checks
+      # The gate on the NixOS PC: its jobs (build-pc, quick-pc, checks-pc,
+      # engine-parity) are judged through gate-pc's outputs, NOT needed here,
+      # so a PC job that is never picked up cannot hold the gate; gate-pc
+      # fails when one of them fails. The *-fallback jobs are the hosted copies.
+      - gate-pc
+      - build-fallback
+      - quick-fallback
+      - checks-fallback
+      - engine-parity-fallback
       - parity-fixtures
       - parity-fixtures-hosted
-      - engine-parity
       - engine-parity-hosted
       - rust-workspace
       - rust-standalone
       - mac-app
       - ipad
+      # the real-document gate (PR and after the merge; never in the merge
+      # queue) and, after the merge, its instruction budget on a self-hosted Mac
+      - real-doc-gate
+      - real-doc-instr
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1369,10 +1822,25 @@ jobs:
           # shard of it -- must have run and passed, not merely been skipped.
           # A filter must not be able to skip parity by accident, so plan's
           # outputs going missing counts as "required" too.
+          gate_pc = needs["gate-pc"].get("outputs", {})
+          pc_engine = "success" if gate_pc.get("engine") == "success" else "not passed"
           if (os.environ["EVENT"] == "merge_group" and plan_out.get("engine") != "false"
-                  and "success" not in (needs["engine-parity"]["result"],
-                                        needs["engine-parity-hosted"]["result"])):
-              bad["engine-parity (either runner, every shard)"] = "did not run"
+                  and "success" not in (pc_engine,
+                                        needs["engine-parity-hosted"]["result"],
+                                        needs["engine-parity-fallback"]["result"])):
+              bad["engine-parity (PC, hosted or fallback; every shard)"] = "did not run"
+          # The gate's Linux legs on the PC: gate-pc must have passed them all,
+          # or fallen back, and then every hosted copy must have passed. A
+          # missing plan output counts as the PC route (the stricter reading).
+          if plan_out.get("gate_route") != "hosted" and plan_out.get("run") != "false":
+              verdict = gate_pc.get("gate")
+              if verdict == "fallback":
+                  for k in ("build-fallback", "quick-fallback", "checks-fallback"):
+                      if needs[k]["result"] != "success":
+                          bad[k + " (the gate fell back from the PC)"] = needs[k]["result"]
+              elif verdict != "success":
+                  bad["gate-pc (the gate on the NixOS PC)"] = "%s, verdict %s" % (
+                      needs["gate-pc"]["result"], verdict)
           # The parity fixtures on macOS: when plan says this run needs them
           # (parity_fixtures), one of their two jobs must have run and passed.
           # Both skipped is a pass only when plan said they were not needed.

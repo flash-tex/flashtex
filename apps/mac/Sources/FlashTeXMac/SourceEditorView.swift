@@ -173,6 +173,9 @@ struct SourceEditorView: NSViewRepresentable {
         }
         context.coordinator.syntax.enabled = syntaxHighlighting
         context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
+        context.coordinator.syntax.onCharacterEdit = { [weak coordinator = context.coordinator] range, length in
+            coordinator?.environmentPairsEdited(range, replacementLength: length)
+        }
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
         context.coordinator.attach(scroll)
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
@@ -679,6 +682,11 @@ struct SourceEditorView: NSViewRepresentable {
         /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
         /// captured before the edit (EditorChangeEnvironment.swift).
         var linkedSession: EditorChangeEnvironment.LinkedSession?
+        /// Whole-buffer pair scans for linked rename (tests: one per rename, not per keystroke).
+        var linkedPairScans = 0
+        /// The session after the last rename keystroke rewrote the partner,
+        /// for the next keystroke; dropped by any other edit.
+        var carriedLinkedSession: EditorChangeEnvironment.LinkedSession?
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
@@ -1172,10 +1180,12 @@ struct SourceEditorView: NSViewRepresentable {
                     }
                 } else {
                     linkedSession = nil
+                    carriedLinkedSession = nil
                 }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
             } else if !pairing {
                 linkedSession = nil // a programmatic change: the captured spans no longer describe the buffer
+                carriedLinkedSession = nil
             }
             return true
         }
@@ -1359,7 +1369,10 @@ struct SourceEditorView: NSViewRepresentable {
 
         func textWasReset() {
             braceHighlight = nil // the reset dropped every temporary attribute
+            pairCache = nil
+            pairScanEdits = nil
             linkedSession = nil
+            carriedLinkedSession = nil
             pendingClosers = []
             syntax.reset()
             hover.dismiss()
@@ -1401,15 +1414,116 @@ struct SourceEditorView: NSViewRepresentable {
 
         /// The environment pair whose `\begin`/`\end` the caret is on, or nil
         /// (also when the caret's line has no `\begin{`/`\end{`, without a scan).
+        ///
+        /// Pairing is a whole-buffer question (a per-name stack from the
+        /// top), so the pairs are scanned once per buffer change and cached
+        /// (`pairCache`); caret moves are lookups. Edits since the scan are
+        /// logged and the cached pairs mapped across them, so the highlight
+        /// stays put while typing; a pair an edit touched is not shown. Above
+        /// `pairScanOffMainUTF16` the rescan runs off the main thread (it was
+        /// a 70 ms lex per caret move and per keystroke at 3 MB) and the
+        /// highlight refreshes when it lands.
         func environmentPair(at caret: Int, in tv: NSTextView) -> EditorNavigation.EnvironmentPair? {
             let table = syntax.highlighter
             guard let storage = tv.textStorage, table.length == storage.length, caret <= table.length else { return nil }
             let line = table.lineRange(table.line(at: caret))
-            let lineText = (storage.string as NSString).substring(with: line)
+            let lineText = storage.mutableString.substring(with: line) // not `storage.string`: a copy of the whole buffer
             guard lineText.contains("\\begin{") || lineText.contains("\\end{") || lineText.contains("\\begin {") || lineText.contains("\\end {") else { return nil }
-            // The storage itself (UTF-16, copied out in one `getCharacters`): the
-            // native String copy would be transcoded back to UTF-16 for the scan.
-            return EditorNavigation.environmentPair(at: caret, in: storage.string as NSString)
+            if pairCache?.edits.isEmpty != true {
+                if storage.length <= Self.pairScanOffMainUTF16 {
+                    // The storage's string (UTF-16, copied out in one `getCharacters`).
+                    // Not `mutableString`: the scan's per-argument substrings through
+                    // that proxy cost twice as much (125 vs 66 ms at 3 MB, debug).
+                    environmentPairScansOnMain += 1
+                    pairCache = EnvironmentPairCache(pairs: EditorNavigation.environmentPairs(in: storage.string as NSString))
+                } else {
+                    scanEnvironmentPairsOffMain(tv)
+                }
+            }
+            return pairCache?.pair(at: caret)
+        }
+
+        /// Environment pairs as of a scan, and the character edits since then
+        /// (pre-edit range, replacement length; oldest first).
+        struct EnvironmentPairCache {
+            var pairs: [EditorNavigation.EnvironmentPair]
+            var edits: [(range: NSRange, length: Int)] = []
+            /// More edits than this between scans: drop the cache instead.
+            static let maxEdits = 64
+
+            /// The pair whose `\begin` or `\end` holds `caret` (now), mapped
+            /// across the edits; nil when an edit touched either span.
+            func pair(at caret: Int) -> EditorNavigation.EnvironmentPair? {
+                var p = caret
+                for e in edits.reversed() { // back to the scan's offsets
+                    if p < e.range.location { continue }
+                    if p >= e.range.location + e.length { p += e.range.length - e.length; continue }
+                    return nil // inside text typed since the scan
+                }
+                guard let old = pairs.first(where: { pair in
+                    NSLocationInRange(p, pair.begin) || p == NSMaxRange(pair.begin)
+                        || (pair.end.map { NSLocationInRange(p, $0) || p == NSMaxRange($0) } ?? false)
+                }) else { return nil }
+                guard let begin = forward(old.begin) else { return nil }
+                guard let end = old.end else { return EditorNavigation.EnvironmentPair(name: old.name, begin: begin, end: nil) }
+                guard let newEnd = forward(end) else { return nil }
+                return EditorNavigation.EnvironmentPair(name: old.name, begin: begin, end: newEnd)
+            }
+
+            /// `r` (scan offsets) after the edits, or nil when one overlapped it.
+            private func forward(_ r: NSRange) -> NSRange? {
+                var r = r
+                for e in edits {
+                    if NSMaxRange(r) <= e.range.location { continue }
+                    if r.location >= NSMaxRange(e.range) { r.location += e.length - e.range.length; continue }
+                    return nil
+                }
+                return r
+            }
+        }
+
+        private(set) var pairCache: EnvironmentPairCache?
+        /// Edits since the running off-main scan's snapshot; nil when none runs
+        /// (or too many came to map across).
+        private var pairScanEdits: [(range: NSRange, length: Int)]?
+        private var pairScanRunning = false
+        /// Whole-buffer pair scans on the main thread (tests: none above the threshold).
+        private(set) var environmentPairScansOnMain = 0
+        /// Above this many UTF-16 units the pair scan runs off the main thread.
+        static let pairScanOffMainUTF16 = 100_000
+
+        /// Every character edit (`SyntaxPainter.onCharacterEdit`, inside
+        /// `processEditing`): log it for the cache and a running scan.
+        func environmentPairsEdited(_ range: NSRange, replacementLength: Int) {
+            if pairCache != nil {
+                if pairCache!.edits.count >= EnvironmentPairCache.maxEdits { pairCache = nil } else { pairCache!.edits.append((range, replacementLength)) }
+            }
+            if pairScanEdits != nil {
+                if pairScanEdits!.count >= EnvironmentPairCache.maxEdits { pairScanEdits = nil } else { pairScanEdits!.append((range, replacementLength)) }
+            }
+        }
+
+        /// One scan at a time; when it lands the cache takes it (with the
+        /// edits that came meanwhile, so the next lookup asks for another)
+        /// and the highlight is recomputed.
+        private func scanEnvironmentPairsOffMain(_ tv: NSTextView) {
+            guard !pairScanRunning else { return }
+            pairScanRunning = true
+            pairScanEdits = []
+            let text = tv.string // an immutable copy for the other thread
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let pairs = EditorNavigation.environmentPairs(in: text as NSString)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.pairScanRunning = false
+                        guard let edits = self.pairScanEdits else { return }
+                        self.pairScanEdits = nil
+                        self.pairCache = EnvironmentPairCache(pairs: pairs, edits: edits)
+                        if let tv = self.textView { self.refreshBraceHighlight(tv) }
+                    }
+                }
+            }
         }
 
         /// ", matches line L column C" for the delimiter partner farthest from the caret.

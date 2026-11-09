@@ -106,6 +106,25 @@ final class DecoderParityTests: XCTestCase {
         XCTAssertEqual(try DL3Page.decode(kind: .page, body: skip).items.count, 0)
     }
 
+    /// A Type 3 glyph whose width is near UInt32.max is refused, not a trap
+    /// (`(w + 7) / 8` overflowed UInt32 before the size check); a glyph
+    /// that fits still decodes.
+    func testType3GlyphWidthNearUInt32MaxIsRefused() throws {
+        func program(width: UInt32, height: UInt32, rows: [UInt8]) -> [UInt8] {
+            func le(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 24)] }
+            return Array("T3B1".utf8) + le(1) + [65] + le(0) + le(0) + le(width) + le(height) + rows
+        }
+        for w: UInt32 in [.max, .max - 6, .max - 3] {
+            XCTAssertThrowsError(try DL3Type3.decode(program(width: w, height: 1, rows: [UInt8](repeating: 0, count: 8))), "\(w)")
+            // No rows: an empty mask (the renderer draws none), decoded without a trap.
+            XCTAssertEqual(try DL3Type3.decode(program(width: w, height: 0, rows: [])).first?.rows, [], "\(w)")
+        }
+        let ok = try DL3Type3.decode(program(width: 9, height: 2, rows: [0xFF, 0x80, 0x01, 0x00]))
+        XCTAssertEqual(ok.first?.bytesPerRow, 2)
+        XCTAssertEqual(ok.first?.rows, [0xFF, 0x80, 0x01, 0x00])
+        XCTAssertEqual(DL3Type3Glyph(code: 0, llx: 0, lly: 0, width: .max, height: 0, rows: []).bytesPerRow, 536_870_912)
+    }
+
     /// ORIGINS (spec §4.2, section 7): one f64 pair per GLYPH, else refused;
     /// a writer before ORIGINS (the checked-in fixture) decodes with none.
     func testOriginsDecodeAndFailClosed() throws {

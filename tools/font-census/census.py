@@ -139,6 +139,8 @@ def families(texbin, per_family):
             continue
         if len(usable) <= per_family:
             pick = usable
+        elif per_family == 1:
+            pick = usable[:1]  # the even spread below needs two ends (#2056)
         else:
             step = (len(usable) - 1) / (per_family - 1)
             pick = sorted({usable[round(i * step)] for i in range(per_family)})

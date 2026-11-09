@@ -870,6 +870,10 @@ pub struct Globals {
     pub ckpt_resuming: bool,
     // §1727
     pub ckpt_on_shipout: i32,
+    // §1730
+    pub intr_verify_on: bool,
+    // §1730
+    pub intr_at_switch: bool,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
     /// The engine's state outside the word space (`--host-state`).
@@ -1202,7 +1206,9 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<i32>();
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -1740,6 +1746,8 @@ impl Globals {
             ckpt_arm_again: 0,
             ckpt_resuming: false,
             ckpt_on_shipout: 0,
+            intr_verify_on: false,
+            intr_at_switch: false,
             arena: __arena,
             host: Default::default(),
         })
@@ -2073,6 +2081,8 @@ impl Globals {
         v.pod(&mut self.ckpt_arm_again);
         v.pod(&mut self.ckpt_resuming);
         v.pod(&mut self.ckpt_on_shipout);
+        v.pod(&mut self.intr_verify_on);
+        v.pod(&mut self.intr_at_switch);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

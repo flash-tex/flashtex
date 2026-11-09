@@ -1,0 +1,27 @@
+% Preview probe: PDF pages included as Form XObjects (pdftoepdf): /Rotate,
+% a CropBox off the MediaBox's origin, /UserUnit, and a page without colour
+% operators drawn in a colour (a form inherits the graphics state it is
+% drawn in). One case per page. Input from ../make_inputs.py.
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\pagestyle{empty}
+\newcommand\probe[2][]{\noindent\detokenize{#2}\par\medskip
+  \includegraphics[#1]{pages.pdf}\quad
+  \includegraphics[#1,width=1.5cm]{pages.pdf}\quad
+  \includegraphics[#1,angle=30,width=2cm]{pages.pdf}\par\newpage}
+\begin{document}
+\probe[page=1]{page 1: no /Rotate}
+\probe[page=2]{page 2: /Rotate 90}
+\probe[page=3]{page 3: /Rotate 180}
+\probe[page=4]{page 4: /Rotate 270}
+\probe[page=5]{page 5: /CropBox [0 0 75 60] in /MediaBox [-20 -10 80 80], /Rotate 90}
+\probe[page=5,pagebox=mediabox]{page 5, pagebox=mediabox}
+\probe[page=6]{page 6: /UserUnit 2}
+\probe[page=7]{page 7: no colour operators, drawn in black}
+
+\noindent page 7 drawn in red and in blue, and with a 4 bp pen\par\medskip
+{\color{red}\includegraphics[page=7]{pages.pdf}}\quad
+{\color{blue}\includegraphics[page=7,width=1.5cm]{pages.pdf}}\quad
+\pdfliteral{4 w}\includegraphics[page=7]{pages.pdf}\pdfliteral{1 w}
+\end{document}
