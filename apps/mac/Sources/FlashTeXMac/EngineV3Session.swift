@@ -2703,7 +2703,10 @@ final class EngineV3Session {
     /// Pages the display list cannot draw exactly render from the compile's PDF.
     /// The PDF (whole: `DL3PDFBytes`) is read and opened off main, `data`
     /// when the caller has read it already; its pages are taken on main if
-    /// no later load or page drop came first (`fallbackLoad`).
+    /// no later load or page drop came first (`fallbackLoad`). The next
+    /// compile may already be rewriting the file in place: bytes that do not
+    /// end whole (`DL3Renderer.endsWhole`) are not opened, so a torn read
+    /// gives no fallback page rather than a page mixing two runs.
     private func loadFallbacks(pdf: String?, data: Data? = nil) {
         fallbackLoad &+= 1
         let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms(forPage: $0)) == true }.sorted()
@@ -2711,7 +2714,8 @@ final class EngineV3Session {
         let token = fallbackLoad
         let ref = EngineV3WeakRef(self)
         Self.readQueue.async {
-            let doc = data.flatMap { DL3Renderer.openPDF(data: $0) } ?? DL3Renderer.openPDF(URL(fileURLWithPath: pdf))
+            let open = { (d: Data) in DL3Renderer.endsWhole(d) ? DL3Renderer.openPDF(data: d) : nil }
+            let doc = data.flatMap(open) ?? (try? Data(contentsOf: URL(fileURLWithPath: pdf))).flatMap(open)
             EngineV3Session.onMain {
                 guard let self = ref.value, token == self.fallbackLoad, let doc else { return }
                 let start = DispatchTime.now().uptimeNanoseconds
