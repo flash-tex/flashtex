@@ -639,6 +639,166 @@ pub fn pdf_page(path: &str, page_num: i32, pdf_box: i32) -> Option<PdfPage> {
     })
 }
 
+/// A page of a PDF file as xdvipdfmx includes it (`pdf_include_page`):
+/// the form XObject's `/BBox` and `/Matrix`, and the box
+/// `pdf_ximage_scale_image` fits (`I->attr.bbox`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DpxPage {
+    pub page: i32,
+    /// `set_bounding_box`: the box as the file writes it (not normalised),
+    /// cut to the `MediaBox` element by element.
+    pub bbox: [f64; 4],
+    /// `set_transform_matrix`: the page's `/Rotate`.
+    pub matrix: [f64; 6],
+    /// `pdf_ximage_set_form`: the bounds of `bbox`'s corners through
+    /// `matrix`.
+    pub attr_bbox: [f64; 4],
+}
+
+/// `pdf_ximage_set_form`'s `I->attr.bbox`: the bounds of four corners of
+/// `bbox` through `m`. The C sets `p1.y` where it means `p2.y`
+/// (pdfximage.c, `p2.x = info->bbox.urx; p1.y = info->bbox.lly;`), so
+/// `p2.y` is never set. TeX Live 2026's macOS arm64 xdvipdfmx (the
+/// ruling build, DESIGN.md §13) reads it as 0: measured with an
+/// unrotated page whose CropBox is [10 10 80 50] placed `height 40pt`,
+/// which xdvipdfmx scales by 39.85/50, not 39.85/40.
+pub fn dpx_form_bounds(bbox: [f64; 4], m: [f64; 6]) -> [f64; 4] {
+    let t = |x: f64, y: f64| (x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]);
+    let p = [
+        t(bbox[0], bbox[1]),
+        t(bbox[2], 0.0),
+        t(bbox[2], bbox[3]),
+        t(bbox[0], bbox[3]),
+    ];
+    // min4/max4
+    let min4 = |a: f64, b: f64, c: f64, d: f64| a.min(b).min(c).min(d);
+    let max4 = |a: f64, b: f64, c: f64, d: f64| a.max(b).max(c).max(d);
+    [
+        min4(p[0].0, p[1].0, p[2].0, p[3].0),
+        min4(p[0].1, p[1].1, p[2].1, p[3].1),
+        max4(p[0].0, p[1].0, p[2].0, p[3].0),
+        max4(p[0].1, p[1].1, p[2].1, p[3].1),
+    ]
+}
+
+/// The entry `name` of the page or of its nearest ancestor that has one
+/// (`get_page_properties`, called on every node from the root down).
+fn inherited(page: &xpdf::Obj, name: &[u8]) -> Option<xpdf::Obj> {
+    let o = page.dict_lookup(name);
+    if !o.is_null() {
+        return Some(o);
+    }
+    let mut dict = page.dict_lookup(b"Parent");
+    for _ in 0..1024 {
+        if !dict.is_dict() {
+            return None;
+        }
+        let o = dict.dict_lookup(name);
+        if !o.is_null() {
+            return Some(o);
+        }
+        dict = dict.dict_lookup(b"Parent");
+    }
+    None
+}
+
+/// Page `page_num` of the PDF file at `path` as xdvipdfmx includes it
+/// (dvipdfm-x 20260317 `pdf_doc_get_page`): page 0 is the first page and a
+/// page that does not exist is an error (None); box `pdf_box` (0: none
+/// given, else XeTeX's `pdfbox_*` codes) chosen by `set_bounding_box` in
+/// XDV mode; the matrix of `set_transform_matrix`.
+pub fn dvipdfmx_page(path: &str, page_num: i32, pdf_box: i32) -> Option<DpxPage> {
+    let doc = open_pdf(path)?;
+    let n = if page_num == 0 { 1 } else { page_num };
+    if n <= 0 || n > doc.num_pages() {
+        return None;
+    }
+    let (num, gen) = doc.page_ref(n)?;
+    let page = doc.fetch(num, gen);
+    if !page.is_dict() {
+        return None;
+    }
+    let get = |name: &[u8]| -> Result<Option<[f64; 4]>, ()> {
+        match inherited(&page, name) {
+            None => Ok(None),
+            Some(o) => {
+                if !o.is_array() || o.array_len() != 4 {
+                    return Err(());
+                }
+                let mut r = [0.0; 4];
+                for (i, v) in r.iter_mut().enumerate() {
+                    let e = o.array_get(i as i32);
+                    if !e.is_num() {
+                        return Err(());
+                    }
+                    *v = e.get_num();
+                }
+                Ok(Some(r))
+            }
+        }
+    };
+    let media = get(b"MediaBox").ok()??;
+    let crop = get(b"CropBox").ok()?;
+    let art = get(b"ArtBox").ok()?;
+    let trim = get(b"TrimBox").ok()?;
+    let bleed = get(b"BleedBox").ok()?;
+    let mut b = if pdf_box == 0 {
+        crop.or(art).or(trim).or(bleed).unwrap_or(media)
+    } else {
+        let crop = crop.unwrap_or(media);
+        match pdf_box {
+            PDFBOX_MEDIA => media,
+            PDFBOX_ART => art.unwrap_or(crop),
+            PDFBOX_TRIM => trim.unwrap_or(crop),
+            PDFBOX_BLEED => bleed.unwrap_or(crop),
+            _ => crop,
+        }
+    };
+    // "New scheme only for XDV files": the box cut to the MediaBox.
+    if b[0] < media[0] {
+        b[0] = media[0];
+    }
+    if b[1] < media[1] {
+        b[1] = media[1];
+    }
+    if b[2] > media[2] {
+        b[2] = media[2];
+    }
+    if b[3] > media[3] {
+        b[3] = media[3];
+    }
+    let mut m = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    if let Some(r) = inherited(&page, b"Rotate") {
+        if !r.is_num() {
+            return None;
+        }
+        let deg = r.get_num();
+        if deg - (deg as i32) as f64 != 0.0 {
+            return None;
+        }
+        if deg != 0.0 {
+            let rot = deg as i32;
+            if rot % 90 == 0 {
+                let rot = rot % 360;
+                let rot = if rot < 0 { rot + 360 } else { rot };
+                let [llx, lly, urx, ury] = b;
+                m = match rot {
+                    90 => [0.0, -1.0, 1.0, 0.0, llx - lly, lly + urx],
+                    180 => [-1.0, 0.0, 0.0, -1.0, llx + urx, lly + ury],
+                    270 => [0.0, 1.0, -1.0, 0.0, llx + ury, lly - llx],
+                    _ => m,
+                };
+            }
+        }
+    }
+    Some(DpxPage {
+        page: n,
+        bbox: b,
+        matrix: m,
+        attr_bbox: dpx_form_bounds(b, m),
+    })
+}
+
 /// `pdf_count_pages`.
 pub fn pdf_pages(path: &str) -> i32 {
     open_pdf(path).map_or(0, |d| d.num_pages())

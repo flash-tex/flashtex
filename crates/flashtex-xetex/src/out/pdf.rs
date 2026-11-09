@@ -969,6 +969,18 @@ impl<'a> Writer<'a> {
                 return Ok(());
             }
         }
+        if img.kind == Kind::Bmp {
+            return match bmp_image(&data) {
+                Ok((dict, samples)) => {
+                    self.stream(num, dict.as_bytes(), &samples, true);
+                    Ok(())
+                }
+                Err(e) => {
+                    self.object(num, b"null");
+                    Err(format!("{}: {e}", img.path))
+                }
+            };
+        }
         let jpeg_profile = if img.kind == Kind::Jpeg {
             jpeg_icc(&data)
         } else {
@@ -978,8 +990,14 @@ impl<'a> Writer<'a> {
         let x = match img.kind {
             Kind::Png => flashtex_pdf::images::from_png(&data),
             Kind::Jpeg => flashtex_pdf::images::from_jpeg(&data),
-            Kind::Pdf => flashtex_pdf::images::from_pdf_page(&data, img.page.max(1) as u32),
-            Kind::Bmp => Err("BMP images are not written yet".into()),
+            // xdvipdfmx's box (`set_bounding_box`); the placement
+            // (special.rs `place_image`) makes up for /Matrix's convention
+            Kind::Pdf => flashtex_pdf::images::from_pdf_page_box(
+                &data,
+                img.page.max(1) as u32,
+                Some(img.bbox),
+            ),
+            Kind::Bmp => unreachable!("BMP images are written above"),
         };
         let x = match x {
             Ok(x) => x,
@@ -2304,6 +2322,274 @@ fn jpeg_icc(data: &[u8]) -> Option<Vec<u8>> {
     Some(parts.into_iter().flat_map(|p| p.1).collect())
 }
 
+/// A BMP file as xdvipdfmx writes it (dvipdfm-x 20260317 bmpimage.c
+/// `bmp_include_image`): the image dictionary's entries (from a space) and
+/// the samples. 1, 4 and 8-bit images are `/Indexed` over their palette at
+/// their own depth, 24-bit ones DeviceRGB; rows are unpadded, top row
+/// first; RLE8 and RLE4 are decoded as `read_raster_rle8`/`_rle4` decode
+/// them. What the C would read or write out of bounds is an error here.
+fn bmp_image(d: &[u8]) -> Result<(String, Vec<u8>), String> {
+    let u32le = |p: usize| -> Result<u32, String> {
+        d.get(p..p + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| "Could not read BMP file header...".to_string())
+    };
+    let u16le = |p: usize| -> Result<u32, String> {
+        d.get(p..p + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as u32)
+            .ok_or_else(|| "Could not read BMP file header...".to_string())
+    };
+    // read_header
+    if d.len() < 18 {
+        return Err("Could not read BMP file header...".into());
+    }
+    if &d[..2] != b"BM" {
+        return Err("File not starting with 'B' 'M'... Not a BMP file?".into());
+    }
+    if u32le(6)? != 0 {
+        return Err("Not a BMP file???".into());
+    }
+    let offset = u32le(10)? as usize;
+    let hsize = u32le(14)? as usize;
+    if hsize < 4 || d.len() < 14 + hsize {
+        return Err("Could not read BMP file header...".into());
+    }
+    let (width, height, bit_count, compression, xppm, yppm, psize) = match hsize {
+        12 => {
+            if u16le(22)? != 1 {
+                return Err("Unknown bcPlanes value in BMP COREHEADER.".into());
+            }
+            (u16le(18)?, u16le(20)? as i32, u16le(24)?, 0, 0, 0, 3usize)
+        }
+        40 | 64 | 108 | 124 => {
+            if u16le(26)? != 1 {
+                return Err("Unknown biPlanes value in BMP INFOHEADER.".into());
+            }
+            (
+                u32le(18)?,
+                u32le(22)? as i32,
+                u16le(28)?,
+                u32le(30)?,
+                u32le(38)?,
+                u32le(42)?,
+                4,
+            )
+        }
+        _ => return Err("Unknown BMP header type.".into()),
+    };
+    let _ = (xppm, yppm); // the density is the picture's (images.rs)
+    let (height, flip) = if height < 0 {
+        (height.unsigned_abs(), false)
+    } else {
+        (height as u32, true)
+    };
+    let (num_palette, bpc) = if bit_count < 24 {
+        if !matches!(bit_count, 1 | 4 | 8) {
+            return Err(format!("Unsupported palette size: {bit_count}"));
+        }
+        let n = (offset as i64 - hsize as i64 - 14) / psize as i64;
+        (n, bit_count)
+    } else if bit_count == 24 {
+        (1, 8)
+    } else {
+        return Err(format!(
+            "Unkown/Unsupported BMP bitCount value: {bit_count}"
+        ));
+    };
+    if width == 0 || height == 0 || num_palette < 1 {
+        return Err(format!(
+            "Invalid BMP file: width={width}, height={height}, #palette={num_palette}"
+        ));
+    }
+    let space = if bit_count < 24 {
+        let mut pal = Vec::with_capacity(num_palette as usize * 3);
+        let start = 14 + hsize;
+        for i in 0..num_palette as usize {
+            let q = d
+                .get(start + i * psize..start + i * psize + psize)
+                .ok_or("Reading file failed...")?;
+            pal.extend([q[2], q[1], q[0]]);
+        }
+        let hex: String = pal.iter().map(|b| format!("{b:02x}")).collect();
+        format!("[/Indexed /DeviceRGB {} <{hex}>]", num_palette - 1)
+    } else {
+        "/DeviceRGB".to_string()
+    };
+    let (w, h) = (width as usize, height as usize);
+    let rowbytes = (w * bit_count as usize).div_ceil(8);
+    let mut data = vec![0u8; rowbytes * h];
+    let mut pos = offset;
+    let mut byte = || -> Result<u8, String> {
+        let b = *d.get(pos).ok_or("File ended prematurely")?;
+        pos += 1;
+        Ok(b)
+    };
+    let rle_failed = || "RLE decode failed...".to_string();
+    match compression {
+        0 => {
+            let padding = if !rowbytes.is_multiple_of(4) {
+                4 - rowbytes % 4
+            } else {
+                0
+            };
+            let dib = rowbytes + padding;
+            for n in 0..h {
+                let src = d
+                    .get(offset + n * dib..offset + n * dib + dib)
+                    .ok_or("Reading BMP raster data failed...")?;
+                data[n * rowbytes..(n + 1) * rowbytes].copy_from_slice(&src[..rowbytes]);
+            }
+        }
+        1 => {
+            // read_raster_rle8 (rowbytes = width)
+            let (mut v, mut eoi) = (0usize, false);
+            while v < h && !eoi {
+                let (mut x, mut eol) = (0usize, false);
+                while x < w && !eol {
+                    let (b0, b1) = (byte()?, byte()?);
+                    let at = v * rowbytes + x;
+                    if b0 == 0 {
+                        match b1 {
+                            0 => eol = true,
+                            1 => eoi = true,
+                            2 => {
+                                x += byte()? as usize;
+                                v += byte()? as usize;
+                            }
+                            n => {
+                                let n = n as usize;
+                                x += n;
+                                if x > w {
+                                    return Err(rle_failed());
+                                }
+                                for k in 0..n {
+                                    let b = byte()?;
+                                    *data.get_mut(at + k).ok_or_else(rle_failed)? = b;
+                                }
+                                if n % 2 == 1 {
+                                    byte()?;
+                                }
+                            }
+                        }
+                    } else {
+                        x += b0 as usize;
+                        if x > w {
+                            return Err(rle_failed());
+                        }
+                        data.get_mut(at..at + b0 as usize)
+                            .ok_or_else(rle_failed)?
+                            .fill(b1);
+                    }
+                }
+                if !eol && !eoi {
+                    let (b0, b1) = (byte()?, byte()?);
+                    if b0 != 0 {
+                        return Err(rle_failed());
+                    } else if b1 == 1 {
+                        eoi = true;
+                    } else if b1 != 0 {
+                        return Err(rle_failed());
+                    }
+                }
+                v += 1;
+            }
+        }
+        2 => {
+            // read_raster_rle4 (rowbytes = (width + 1) / 2)
+            let (mut v, mut eoi) = (0usize, false);
+            while v < h && !eoi {
+                let (mut x, mut eol) = (0usize, false);
+                while x < w && !eol {
+                    let (mut b0, mut b1) = (byte()?, byte()?);
+                    let mut p = v * rowbytes + x / 2;
+                    if b0 == 0 {
+                        match b1 {
+                            0 => eol = true,
+                            1 => eoi = true,
+                            2 => {
+                                x += byte()? as usize;
+                                v += byte()? as usize;
+                            }
+                            n => {
+                                let n = n as usize;
+                                if x + n > w {
+                                    return Err(rle_failed());
+                                }
+                                let nbytes = n.div_ceil(2);
+                                if x % 2 == 1 {
+                                    for _ in 0..nbytes {
+                                        let b = byte()?;
+                                        *data.get_mut(p).ok_or_else(rle_failed)? |= (b >> 4) & 0x0f;
+                                        p += 1;
+                                        *data.get_mut(p).ok_or_else(rle_failed)? = (b << 4) & 0xf0;
+                                    }
+                                } else {
+                                    for k in 0..nbytes {
+                                        let b = byte()?;
+                                        *data.get_mut(p + k).ok_or_else(rle_failed)? = b;
+                                    }
+                                }
+                                x += n;
+                                if nbytes % 2 == 1 {
+                                    byte()?;
+                                }
+                            }
+                        }
+                    } else {
+                        if x + b0 as usize > w {
+                            return Err(rle_failed());
+                        }
+                        if x % 2 == 1 {
+                            *data.get_mut(p).ok_or_else(rle_failed)? = (b1 >> 4) & 0x0f;
+                            p += 1;
+                            b1 = ((b1 << 4) & 0xf0) | ((b1 >> 4) & 0x0f);
+                            b0 -= 1;
+                            x += 1;
+                        }
+                        let nbytes = (b0 as usize).div_ceil(2);
+                        data.get_mut(p..p + nbytes).ok_or_else(rle_failed)?.fill(b1);
+                        x += b0 as usize;
+                        if x % 2 == 1 && nbytes > 0 {
+                            data[p + nbytes - 1] &= 0xf0;
+                        }
+                    }
+                }
+                if !eol && !eoi {
+                    let (b0, b1) = (byte()?, byte()?);
+                    if b0 != 0 {
+                        return Err("No EOL/EOI marker. RLE decode failed...".into());
+                    } else if b1 == 1 {
+                        eoi = true;
+                    } else if b1 != 0 {
+                        return Err("No EOL/EOI marker. RLE decode failed...".into());
+                    }
+                }
+                v += 1;
+            }
+        }
+        c => {
+            return Err(format!(
+                "Unknown/Unsupported compression type for BMP image: {c}"
+            ))
+        }
+    }
+    if bit_count == 24 {
+        // "gbr --> rgb"
+        for n in (0..w * h * 3).step_by(3) {
+            data.swap(n, n + 2);
+        }
+    }
+    let samples = if flip {
+        data.chunks(rowbytes).rev().flatten().copied().collect()
+    } else {
+        data
+    };
+    let dict = format!(
+        " /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {space} /BitsPerComponent {bpc}"
+    );
+    Ok((dict, samples))
+}
+
 fn png_has_alpha(doc: &Doc, id: u32) -> bool {
     let Some(img) = doc.images.get(id) else {
         return false;
@@ -2890,5 +3176,75 @@ mod tests {
         for n in ["(3)", "(alpha)", "(beta)", "(gamma)", "(delta)"] {
             assert!(!dests.contains(n), "{n}: {dests}");
         }
+    }
+
+    /// A Windows BMP (40-byte header) with palette `pal` and raster `raw`.
+    fn bmp_file(w: i32, h: i32, bits: u16, comp: u32, pal: &[[u8; 3]], raw: &[u8]) -> Vec<u8> {
+        let mut info = Vec::new();
+        info.extend(40u32.to_le_bytes());
+        info.extend(w.to_le_bytes());
+        info.extend(h.to_le_bytes());
+        info.extend(1u16.to_le_bytes());
+        info.extend(bits.to_le_bytes());
+        info.extend(comp.to_le_bytes());
+        info.extend((raw.len() as u32).to_le_bytes());
+        info.extend([0; 16]);
+        let mut palb = Vec::new();
+        for [r, g, b] in pal {
+            palb.extend([*b, *g, *r, 0]);
+        }
+        let off = (14 + info.len() + palb.len()) as u32;
+        let mut v = b"BM".to_vec();
+        v.extend((off + raw.len() as u32).to_le_bytes());
+        v.extend([0; 4]);
+        v.extend(off.to_le_bytes());
+        v.extend(info);
+        v.extend(palb);
+        v.extend(raw);
+        v
+    }
+
+    /// bmpimage.c's samples, as TeX Live 2026's xdvipdfmx writes them for
+    /// the same files (decoded image streams; lane AUDIT-DVIPDFMX). RLE4's
+    /// run after an odd column overwrites the byte (`*p++ = ...`, not
+    /// `|=`): `34 56 08 80`, not `34 56 78 80`.
+    #[test]
+    fn bmp_samples_as_xdvipdfmx() {
+        let pal8: Vec<[u8; 3]> = (0..8u8).map(|i| [i, i, i]).collect();
+        let rle8 = [
+            3, 1, 0, 3, 2, 3, 4, 0, 0, 0, 6, 5, 0, 0, 2, 7, 0, 2, 2, 0, 2, 6, 0, 1,
+        ];
+        let (dict, s) = bmp_image(&bmp_file(6, 3, 8, 1, &pal8, &rle8)).unwrap();
+        assert!(dict.contains("/Indexed /DeviceRGB 7 <"), "{dict}");
+        assert!(dict.contains("/BitsPerComponent 8"), "{dict}");
+        assert_eq!(s, [7, 7, 0, 0, 6, 6, 5, 5, 5, 5, 5, 5, 1, 1, 1, 2, 3, 4]);
+        let pal16: Vec<[u8; 3]> = (0..16u8).map(|i| [i, i, i]).collect();
+        let rle4 = [
+            7, 0x12, 0, 0, 0, 5, 0x34, 0x56, 0x70, 0, 2, 0x88, 0, 0, 3, 0x9a, 4, 0xbc, 0, 1,
+        ];
+        let (dict, s) = bmp_image(&bmp_file(7, 3, 4, 2, &pal16, &rle4)).unwrap();
+        assert!(dict.contains("/BitsPerComponent 4"), "{dict}");
+        assert_eq!(
+            s,
+            [0x9a, 0x0b, 0xcb, 0xc0, 0x34, 0x56, 0x08, 0x80, 0x12, 0x12, 0x12, 0x10]
+        );
+        // 24-bit, bottom-up, rows padded to 4 bytes: BGR -> RGB, top row first
+        let raw = [
+            10, 20, 30, 40, 50, 60, 70, 80, 90, 0, 0, 0, 200, 100, 0, 1, 2, 3, 250, 251, 252, 0, 0,
+            0,
+        ];
+        let (dict, s) = bmp_image(&bmp_file(3, 2, 24, 0, &[], &raw)).unwrap();
+        assert!(
+            dict.contains("/ColorSpace /DeviceRGB /BitsPerComponent 8"),
+            "{dict}"
+        );
+        assert_eq!(
+            s,
+            [0, 100, 200, 3, 2, 1, 252, 251, 250, 30, 20, 10, 60, 50, 40, 90, 80, 70]
+        );
+        // a top-down (negative height) 1-bit image keeps its row order
+        let raw = [0b1011_0010, 0b1000_0000, 0, 0, 0b0100_1101, 0, 0, 0];
+        let (_, s) = bmp_image(&bmp_file(9, -2, 1, 0, &[[255, 0, 0], [0, 0, 255]], &raw)).unwrap();
+        assert_eq!(s, [0b1011_0010, 0b1000_0000, 0b0100_1101, 0]);
     }
 }
