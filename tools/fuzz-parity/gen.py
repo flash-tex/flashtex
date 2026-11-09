@@ -818,8 +818,60 @@ class G:
             "\\message{\\pdfmdfivesum{%s}}" % self.pick(["", "abc", "^^e9", "\\relax"]),
         ])
 
+    def media(self):
+        """Images (PDF, PNG, JPEG inclusion: pdfTeX's C parts and xpdf),
+        virtual fonts, font expansion and letterspacing at shipout."""
+        imgs = ["example-image-a.pdf", "example-image-a.png", "example-image-a.jpg",
+                "example-image.pdf", "example-grid-100x100pt.pdf", "example-grid-100x100bp.png",
+                "example-image-a4-numbered.pdf"]
+        def ximage():
+            opts = []
+            if self.chance(0.4):
+                opts.append(self.pick(["width", "height", "depth"]) + " " + self.pick(SMALLDIMS + ["3cm", "0.3\\hsize"]))
+            if self.chance(0.3):
+                opts.append("page %d" % self.n(0, 4))
+            if self.chance(0.3):
+                opts.append(self.pick(["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"]))
+            if self.chance(0.2):
+                opts.append("attr{/Interpolate true}")
+            if self.chance(0.1):
+                opts.append("colorspace %d" % self.n(0, 3))
+            return "\\pdfximage %s{%s}" % (" ".join(opts), self.pick(imgs))
+        vf = self.pick(["ptmr7t", "pplr7t", "phvr7t", "ptmb7t", "ptmri7t"])
+        return self.pick([
+            ximage() + "\\pdfrefximage\\pdflastximage",
+            ximage() + "\\message{\\the\\pdflastximage,\\the\\pdflastximagepages}"
+            "\\setbox7\\hbox{\\pdfrefximage\\pdflastximage}\\showbox7 \\box7",
+            "\\immediate" + ximage() + "\\immediate" + ximage() + "\\pdfrefximage\\pdflastximage",
+            "{\\pdfimageresolution=%d \\pdfimagehicolor=%d \\pdfimageapplygamma=%d \\pdfimagegamma=%d %s"
+            "\\pdfrefximage\\pdflastximage}" % (self.n(0, 600), self.n(0, 1), self.n(0, 1), self.n(0, 3000), ximage()),
+            "{\\pdfinclusionerrorlevel=%d \\pdfinclusioncopyfonts=%d %s\\pdfrefximage\\pdflastximage}"
+            % (self.n(-1, 1), self.n(0, 1), ximage()),
+            "{\\font\\fzv=%s at %s \\fzv %s}" % (vf, self.pick(["10pt", "7pt", "12.3pt", "1pt"]), self.words(2, 12)),
+            "{\\font\\fzv=%s \\setbox7\\hbox{\\fzv %s}\\showbox7 \\box7}" % (vf, self.words(1, 4)),
+            "{\\font\\fzv=%s \\fzv \\char%d \\char%d}" % (vf, self.n(0, 255), self.n(0, 255)),
+            "{\\font\\fzv=%s \\pdffontexpand\\fzv %d %d %d %s\\pdfadjustspacing=%d \\fzv \\hsize=%s %s\\par}"
+            % (vf, self.n(0, 40), self.n(0, 40), self.n(1, 10), self.pick(["autoexpand", ""]), self.n(0, 2),
+               self.pick(["100pt", "150pt", "3in"]), self.words(10, 30)),
+            "{\\pdffontexpand\\tenrm %d %d %d autoexpand \\pdfadjustspacing=2 \\efcode\\tenrm`e=%d "
+            "\\hsize=%s \\tenrm %s\\par}" % (self.n(1, 50), self.n(1, 50), self.n(1, 10), self.n(0, 1000),
+                                               self.pick(["100pt", "150pt", "2in"]), self.words(15, 40)),
+            "{\\letterspacefont\\fzls\\tenrm %d \\fzls %s}" % (self.n(-200, 400), self.words(1, 6)),
+            "{\\pdfcopyfont\\fzcp\\tenrm \\fzcp %s \\message{\\fontname\\fzcp}}" % self.words(1, 3),
+            "{\\font\\fzv=%s \\letterspacefont\\fzlv\\fzv %d \\fzlv %s}" % (vf, self.n(-100, 300), self.words(1, 5)),
+            "{\\pdfprotrudechars=%d \\rpcode\\tenrm`.=%d \\lpcode\\tenrm``=%d \\hsize=%s %s\\par}"
+            % (self.n(0, 2), self.n(-1000, 1000), self.n(-1000, 1000), self.pick(["120pt", "200pt"]),
+               self.words(15, 40) + "."),
+            "{\\pdfpkresolution=%d \\pdfpkmode{%s}\\pdfpkfixeddpi=%d }" % (self.n(0, 1200), self.pick(["", "ljfour", "x"]),
+                                                                         self.n(0, 1)),
+            "\\pdfnobuiltintounicode\\tenrm \\pdfgentounicode=1 \\pdfglyphtounicode{ff}{0066 0066}\\tenrm ff",
+            "{\\pdfomitcharset=%d \\pdfomitcidset=%d \\pdfomitprocset=%d \\pdfomitinfodict=%d }"
+            % (self.n(0, 1), self.n(0, 1), self.n(-1, 2), self.n(0, 1)),
+            "\\pdffontattr\\tenrm{/Fz 1}\\message{\\the\\pdffontobjnum\\tenrm,\\pdffontname\\tenrm,\\pdffontsize\\tenrm}",
+        ])
+
     def chunk(self):
-        k = self.n(0, 118)
+        k = self.n(0, 126)
         if k < 22:
             return self.paragraph()
         if k < 28:
@@ -854,6 +906,8 @@ class G:
             return self.web2cstuff()
         if k < 118:
             return self.pdfwriter()
+        if k < 126:
+            return self.media()
         return "\\setbox%d\\hbox{%s}" % (self.n(10, 12), self.inline(2))
 
     def hyph_setting(self):
@@ -892,6 +946,10 @@ def preamble(g, pdf):
         pats.append("{\\language=2 \\savinghyphcodes=1 \\lccode`Q=`q \\patterns{1q 2qq}}")
     lines += pats
     lines.append("\\pdfoutput=%d" % (1 if pdf else 0))
+    # pdfTeX seeds its generator from the clock; a deviate that is expanded
+    # before the \pdfsetrandomseed beside it runs (in an argument, a
+    # \write) would otherwise differ from run to run.
+    lines.append("\\pdfsetrandomseed 271828")
     if pdf:
         lines.append("\\pdfcompresslevel=0 \\pdfobjcompresslevel=0")
     lines.append("\\showboxdepth=%s \\showboxbreadth=%s" % (
@@ -923,6 +981,7 @@ def latex_preamble(g):
         lines.append("\\usepackage%s{%s}" % (opt, p))
     lines.append("\\font\\tenrm=cmr10 \\font\\tenbf=cmbx10 \\font\\tenit=cmti10 \\font\\tensl=cmsl10"
                  " \\font\\tentt=cmtt10 \\font\\sevenrm=cmr7 \\font\\fiverm=cmr5 \\font\\teni=cmmi10")
+    lines.append("\\pdfsetrandomseed 271828")
     lines.append("\\begin{document}")
     lines.append("\\showboxdepth=%s \\showboxbreadth=%s" % (g.pick(["10000", "3"]), g.pick(["10000", "5"])))
     trace = [t % g.pick(["1", "2"]) if "%s" in t else t for t in TRACING if g.chance(0.4)]

@@ -118,6 +118,11 @@ independent chunks, each balanced on its own:
   `\partokenname`/`\partokencontext`, `\lastnodetype`, `\pdfinsertht`,
   `\pdfcolorstackinit`, the interword-glue and kerning codes
   (`\knbscode` & co.), `\pdftracingfonts`, map files and lines;
+- images and fonts at shipout (`media`): `\pdfximage` of TeX Live's
+  mwe PDF, PNG and JPEG examples with sizes, pages, page boxes and the
+  image parameters; virtual fonts (Times, Palatino, Helvetica); font
+  expansion with and without `autoexpand`; `\letterspacefont`,
+  `\pdfcopyfont`, protrusion; the ToUnicode and omit switches;
 - the PDF writer (`pdfwriter`): object streams and files, reserved and
   reused object numbers, annotations, links of every kind, destinations,
   outlines, threads, the info/trailer/version keys, compression levels,
@@ -129,7 +134,7 @@ pdfTeX would then run kpathsea's `mktexpk` for every font, which writes
 into the TeX tree and is not something the two engines share.
 
 Random numbers: every `\pdfuniformdeviate`/`\pdfnormaldeviate` the grammar
-emits follows a `\pdfsetrandomseed`.
+emits follows a `\pdfsetrandomseed`, and the preamble sets one too (pdfTeX seeds from the clock, and a deviate in an argument or a `\write` can be expanded before the `\pdfsetrandomseed` beside it runs).
 
 ## Minimise
 
