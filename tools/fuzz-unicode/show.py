@@ -13,7 +13,10 @@ def show(d, ctx=4):
         r = json.load(fh)
     print("===", d, r.get("cls"), r.get("rc"))
     det = r.get("detail")
-    if isinstance(det, dict):
+    if isinstance(det, dict) and "line" not in det:
+        for k, v in det.items():
+            print("  %s: %s" % (k, v))
+    elif isinstance(det, dict):
         print("line", det.get("line"))
         for c in det.get("context", [])[-ctx:]:
             print("   ", repr(c))

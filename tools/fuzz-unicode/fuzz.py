@@ -184,15 +184,18 @@ def compare_pdf(text, candidate, oracle, work, timeout):
                        capture_output=True, text=True, timeout=timeout)
     if p.returncode == 0:
         return None
-    first = ""
     try:
         with open(out) as fh:
             rep = json.load(fh)
-        diffs = rep.get("differences") or rep.get("diffs") or []
-        first = json.dumps(diffs[0] if diffs else rep)[:300]
     except (OSError, ValueError):
-        first = (p.stdout + p.stderr)[-300:]
-    return {"cls": "pdf", "sig": signature("pdf", first), "detail": first}
+        tail = (p.stdout + p.stderr)[-300:]
+        return {"cls": "pdf", "sig": signature("pdf", tail), "detail": tail}
+    kinds = rep.get("kinds") or {}
+    # The signature is the kinds of difference, so one cause found in many
+    # seeds counts once; the detail keeps the first examples of each.
+    detail = {k: (v.get("examples") or [])[:3] for k, v in kinds.items()}
+    return {"cls": "pdf", "sig": "pdf:" + ",".join(sorted(kinds)) if kinds else signature("pdf", json.dumps(rep)[:200]),
+            "detail": detail or json.dumps(rep)[:600]}
 
 
 def compare(text, candidate, oracle, work, timeout, pdf=False):
