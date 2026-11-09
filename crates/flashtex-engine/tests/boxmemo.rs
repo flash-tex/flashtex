@@ -497,23 +497,27 @@ fn calls_in_math_groups_compare_their_save_stack() {
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
 
-/// #2211's review (REVIEW-C2 M1): a replay that swaps which of two control
-/// sequences shares a third's list. Normal path: `\IntrR` shares
-/// `\IntrSrc`'s list, `\IntrS` holds an equal copy; the replay
-/// (FLASHTEX_BOXMEMO_FAULT=swap-share): `\IntrS` shares it, `\IntrR` holds
-/// the copy. The reference counts are equal, so no word of the shared list
-/// differs: only the pairing of the list with itself through `\IntrSrc`,
-/// whose entry neither path wrote, shows it. The full walk finds it; the
-/// restricted walk must not hold where the full one does not
-/// (FLASHTEX_BOXMEMO_WALK_CHECK=1 aborts if it does).
+/// #2211's review (REVIEW-C2 M1): a replay that swaps which control
+/// sequence shares which of two equal lists. Normal path: `\IntrR` shares
+/// `\IntrX`'s list, `\IntrS` `\IntrY`'s; the replay
+/// (FLASHTEX_BOXMEMO_FAULT=swap-let): `\IntrR` shares `\IntrY`'s, `\IntrS`
+/// `\IntrX`'s. Both lists have two references in both states, so no word
+/// of either differs: only the pairing of each list with itself through
+/// `\IntrX` and `\IntrY`, entries neither path wrote, shows it. The full
+/// walk finds it; the restricted walk must not hold where the full one does
+/// not (FLASHTEX_BOXMEMO_WALK_CHECK=1 aborts if it does).
+///
+/// (The review's own example, a share and a copy swapped, changes a
+/// reference count: the shared list has two, the copy one, so the
+/// restricted walk already fails there on the count.)
 #[test]
 fn a_swapped_share_is_found_by_the_restricted_walk_too() {
-    let d = scratch("swap-share");
+    let d = scratch("swap-let");
     std::fs::write(
         d.join("t.tex"),
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
-         \\def\\IntrSrc{abc}\n\
-         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrSrc\\gdef\\IntrS{abc}\\endgroup}\n\
+         \\def\\IntrX{abc}\\def\\IntrY{abc}\n\
+         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrX\\global\\let\\IntrS\\IntrY\\endgroup}\n\
          \\share{x}\\share{x}\\share{x}\\share{x}\\message{[\\meaning\\IntrR|\\meaning\\IntrS]}\\end\n",
     )
     .unwrap();
@@ -531,7 +535,7 @@ fn a_swapped_share_is_found_by_the_restricted_walk_too() {
             .env("FLASHTEX_BOXMEMO", "verify")
             .env("FLASHTEX_BOXMEMO_NAMES", "share")
             .env("FLASHTEX_BOXMEMO_STATS", &stats)
-            .env("FLASHTEX_BOXMEMO_FAULT", "swap-share")
+            .env("FLASHTEX_BOXMEMO_FAULT", "swap-let")
             .env("FLASHTEX_BOXMEMO_FULL_EVERY", every)
             .env("FLASHTEX_BOXMEMO_WALK_CHECK", "1")
             .env_remove("FLASHTEX_BOXMEMO_VERIFY_FAIL")
