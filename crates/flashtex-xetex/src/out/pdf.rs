@@ -48,8 +48,7 @@ const K: f64 = 65781.76;
 pub struct Options {
     /// `/Producer`.
     pub producer: String,
-    /// `/CreationDate` and `/ModDate` (`D:...`), unless the document gives
-    /// them.
+    /// `/CreationDate` (`D:...`), unless the document gives one.
     pub date: Option<String>,
     /// Compress streams (zlib level 9).
     pub compress: bool,
@@ -1496,13 +1495,35 @@ impl<'a> Writer<'a> {
     }
 
     fn finish(mut self) -> Vec<u8> {
-        // the document information
+        // the document information, as pdf_doc_close_docinfo leaves it:
+        // `/Creator` is the XDV comment from the start (pdf_open_document),
+        // so the document's own, even an empty one, replaces it; then each
+        // of the eight standard keys that is not a string, or is an empty
+        // one, is removed (any other key stays as given); then
+        // `/Producer` and `/CreationDate` if missing (no `/ModDate`)
         let info = self.alloc();
-        let mut di = self.doc.docinfo.clone();
-        di.0.retain(|(_, v)| !matches!(v, Obj::Str(s) if s.is_empty()));
-        if di.get(b"Creator").is_none() {
-            if let Some(c) = &self.doc.dvi_comment {
-                di.set(b"Creator", Obj::Str(c.clone()));
+        let mut di = Dict::default();
+        if let Some(c) = &self.doc.dvi_comment {
+            di.set(b"Creator", Obj::Str(c.clone()));
+        }
+        di.merge(&self.doc.docinfo);
+        for k in [
+            &b"Title"[..],
+            b"Author",
+            b"Subject",
+            b"Keywords",
+            b"Creator",
+            b"Producer",
+            b"CreationDate",
+            b"ModDate",
+        ] {
+            let keep = match di.get(k) {
+                Some(Obj::Str(s)) => !s.is_empty(),
+                Some(_) => false,
+                None => true,
+            };
+            if !keep {
+                di.remove(k);
             }
         }
         if di.get(b"Producer").is_none() {
@@ -1514,9 +1535,6 @@ impl<'a> Writer<'a> {
         if let Some(date) = &self.opts.date {
             if di.get(b"CreationDate").is_none() {
                 di.set(b"CreationDate", Obj::Str(date.clone().into_bytes()));
-            }
-            if di.get(b"ModDate").is_none() {
-                di.set(b"ModDate", Obj::Str(date.clone().into_bytes()));
             }
         }
         let body = self.ser(&Obj::Dict(di));
@@ -2635,5 +2653,75 @@ mod tests {
         assert!(body.contains("/Transparency"), "{body}");
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
+    }
+
+    /// The document information as xdvipdfmx (TeX Live 2026) leaves it,
+    /// measured (#2358): a non-string standard key is dropped, an empty
+    /// string only for the eight standard keys, an empty `/Creator`
+    /// removes the XDV comment's, and there is no `/ModDate`.
+    #[test]
+    fn the_document_information_is_xdvipdfmxs() {
+        use super::super::pdfobj::Parser;
+        let mut doc = Doc::new();
+        doc.dvi_comment = Some(b" XeTeX output 1970.01.01:0000".to_vec());
+        let d = Parser::new(
+            b"<</Title /NotAString /Creator () /Keywords 5 /Trapped () /Foo () /Bar /Baz /Author (Me)>>",
+        )
+        .object()
+        .and_then(|o| o.as_dict().cloned())
+        .unwrap();
+        doc.docinfo.merge(&d);
+        let opts = Options {
+            producer: "P".into(),
+            date: Some("D:19700101000000Z".into()),
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let info = pdf.info().unwrap();
+        let keys: Vec<&str> = info.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            [
+                "Author",
+                "Bar",
+                "CreationDate",
+                "Foo",
+                "Producer",
+                "Trapped"
+            ]
+        );
+        assert_eq!(info.get("Foo"), Some(&Obj::String(Vec::new())));
+        // without a `/Creator` of its own, the XDV comment's
+        let mut doc = Doc::new();
+        doc.dvi_comment = Some(b" XeTeX output".to_vec());
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let info = pdf.info().unwrap();
+        assert_eq!(
+            info.get("Creator"),
+            Some(&Obj::String(b" XeTeX output".to_vec()))
+        );
+        assert!(info.get("ModDate").is_none());
+    }
+
+    /// `SOURCE_DATE_EPOCH` as dvipdfmx's `strtoll` reads it.
+    #[test]
+    fn source_date_epoch_is_read_as_dvipdfmx_reads_it() {
+        use super::super::source_date_epoch as sde;
+        assert_eq!(sde(b"0"), Some(0));
+        assert_eq!(sde(b""), Some(0));
+        assert_eq!(sde(b" 12"), Some(12));
+        assert_eq!(sde(b"+12"), Some(12));
+        assert_eq!(sde(b"-0"), Some(0));
+        assert_eq!(sde(b"-5"), None);
+        assert_eq!(sde(b"12 "), None);
+        assert_eq!(sde(b" "), None);
+        assert_eq!(sde(b"1e3"), None);
+        assert_eq!(sde(b"99999999999999999999"), None);
+        assert_eq!(
+            String::from_utf8(super::super::make_pdf_time(0, true)).unwrap(),
+            "D:19700101000000Z"
+        );
     }
 }
