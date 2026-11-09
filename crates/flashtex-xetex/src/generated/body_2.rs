@@ -3224,6 +3224,9 @@ impl Globals {
             }
             if __goto_1 <= 1 { // exit
                 // §371
+                if self.intr_verify_on {
+                    self.flashtex_intr_op(18i32, 0i32, 0i32, 0i32);
+                }
             }
             break 'l_dispatch_1;
         }
