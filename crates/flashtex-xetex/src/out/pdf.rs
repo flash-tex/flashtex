@@ -614,6 +614,11 @@ impl<'a> Writer<'a> {
         let mut out = b"<<".to_vec();
         let mut done = BTreeSet::new();
         for (k, v) in sup.resources.0.clone() {
+            // pdf_doc_finish_page / pdf_doc_end_grabbing set `/ProcSet`
+            // last, replacing the document's own
+            if k == b"ProcSet" {
+                continue;
+            }
             let ours = cats.get(&k).cloned().unwrap_or_default();
             write_name(&k, &mut out);
             out.push(b' ');
@@ -647,7 +652,7 @@ impl<'a> Writer<'a> {
             out.extend_from_slice(&v);
             out.extend_from_slice(b">>");
         }
-        out.extend_from_slice(b" /ProcSet [/PDF /Text /ImageB /ImageC /ImageI]>>");
+        out.extend_from_slice(b" /ProcSet [/PDF /Text /ImageC /ImageB /ImageI]>>");
         Ok(out)
     }
 
@@ -2890,5 +2895,38 @@ mod tests {
         for n in ["(3)", "(alpha)", "(beta)", "(gamma)", "(delta)"] {
             assert!(!dests.contains(n), "{n}: {dests}");
         }
+    }
+
+    /// `/ProcSet` as xdvipdfmx (TeX Live 2026) writes it, measured
+    /// (#2359): `[/PDF /Text /ImageC /ImageB /ImageI]`, replacing one the
+    /// document put in the page's resources (not a second key).
+    #[test]
+    fn procset_is_xdvipdfmxs_and_replaces_the_documents() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let body = special("pdf:put @resources <</ProcSet [/PDF]>>");
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes);
+        assert_eq!(text.matches("/ProcSet").count(), 1, "{text}");
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let page = pdf.pages().unwrap()[0];
+        let res = pdf.page_attr(page, "Resources").unwrap();
+        let res = pdf.resolve(res).as_dict().unwrap();
+        let ps: Vec<&str> = res
+            .get("ProcSet")
+            .and_then(Obj::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Obj::as_name)
+            .collect();
+        assert_eq!(ps, ["PDF", "Text", "ImageC", "ImageB", "ImageI"]);
     }
 }
