@@ -458,3 +458,29 @@ fn a_check_whose_real_path_was_too_long_to_record_is_no_difference() {
     assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
     assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
 }
+
+/// A value longer than a million tokens (`\IntrT` doubled 18 times from
+/// four, 1,048,576 `\relax`; the main memory holds about four such lists,
+/// so `\IntrE` is let go) was recorded cut short at its millionth token,
+/// and the check compared two lists by their first million only. So the
+/// second call, whose real path appends an `x` at the end, passed against
+/// the first call's replay, which a replay would get wrong twice over (the
+/// pdfTeX side's over-long key values, #2194). Every token is compared.
+#[test]
+fn a_value_longer_than_a_million_tokens_is_compared_to_its_end() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newtoks\\IntrT \\IntrT{\\relax\\relax\\relax\\relax}\n\
+         \\def\\IntrD{\\edef\\IntrE{\\the\\IntrT\\the\\IntrT}\\IntrT\\expandafter{\\IntrE}}\n\
+         \\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\
+         \\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\IntrD\\let\\IntrE\\relax\n\
+         \\def\\IntrY{\\edef\\IntrX{\\the\\IntrT}}\\def\\pdfstringdefPreHook{\\IntrY}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\
+         \\IntrT\\expandafter{\\the\\IntrT x}\\pdfstringdefPreHook\n\
+         x\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing.eqtb"), 1, "{s}");
+}
