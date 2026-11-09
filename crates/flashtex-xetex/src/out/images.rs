@@ -85,8 +85,20 @@ impl Images {
     pub fn load(&mut self, path: &str, page: i32, pagebox: i32) -> Result<u32, String> {
         let page = page.max(1);
         let k = (path.to_string(), page, pagebox);
+        // A document carried over from another run (a page checkpoint's,
+        // a converged run's, `crate::conv`) holds the images that run
+        // loaded: one whose file changed since is loaded again, under its
+        // id, so that its key and data are the file's as a fresh run's are
+        // (#2444)
+        let mut again = None;
         if let Some(&id) = self.by.get(&k) {
-            return Ok(id);
+            let len = std::fs::metadata(path).map(|m| m.len());
+            match (self.get(id), len) {
+                (Some(i), Ok(len)) if i.key == image_key(path, len, page, pagebox) => {
+                    return Ok(id)
+                }
+                _ => again = Some(id),
+            }
         }
         let data = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
         let (kind, size) = if pic::is_png(&data) {
@@ -103,22 +115,8 @@ impl Images {
         } else {
             return Err(format!("{path}: not a PNG, JPEG, BMP or PDF file"));
         };
-        let id = self.res.len() as u32 + 1;
-        let meta = std::fs::metadata(path).ok();
-        let mut h = Sha256::new();
-        h.update(b"display-list-v3 image\0");
-        h.update(path.as_bytes());
-        h.update(&[0]);
-        h.update(&(data.len() as u64).to_le_bytes());
-        if let Some(t) = meta
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        {
-            h.update(&t.as_nanos().to_le_bytes());
-        }
-        h.update(&page.to_le_bytes());
-        h.update(&pagebox.to_le_bytes());
-        let key = h.finish();
+        let id = again.unwrap_or(self.res.len() as u32 + 1);
+        let key = image_key(path, data.len() as u64, page, pagebox);
         let image = if kind == Kind::Pdf {
             let p = pic::pdf_page(path, page, pagebox)
                 .ok_or_else(|| format!("{path}: cannot read page {page} of the PDF file"))?;
@@ -184,8 +182,31 @@ impl Images {
                 info,
             }
         };
-        self.res.push(image);
+        match again {
+            Some(id) => self.res[id as usize - 1] = image,
+            None => self.res.push(image),
+        }
         self.by.insert(k, id);
         Ok(id)
     }
+}
+
+/// The display list's key of an image (spec §5.2: it changes when the file's
+/// path, size or modification time, or the selection, changes).
+fn image_key(path: &str, len: u64, page: i32, pagebox: i32) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"display-list-v3 image\0");
+    h.update(path.as_bytes());
+    h.update(&[0]);
+    h.update(&len.to_le_bytes());
+    if let Some(t) = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    {
+        h.update(&t.as_nanos().to_le_bytes());
+    }
+    h.update(&page.to_le_bytes());
+    h.update(&pagebox.to_le_bytes());
+    h.finish()
 }

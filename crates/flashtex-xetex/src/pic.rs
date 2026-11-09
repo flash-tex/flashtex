@@ -689,13 +689,6 @@ impl Globals {
         let Some(found) = flashtex_engine::system::find_file(&name, Format::Pict) else {
             return -1;
         };
-        // the read journal's entry (its content's hash and stat signature):
-        // a picture replaced in place is then a changed file for S₀'s key,
-        // the page checkpoints and convergence, as a font file is
-        // (`native::create_font_from_file`); `find_file` notes only the
-        // lookup, so a page checkpoint after the picture stood for an edit
-        // with the old picture's display-list key (#2444)
-        flashtex_engine::system::note_file(&found);
         let Some([x, y, wd, ht]) = pic_bounds(&found, pdf_box_type, page) else {
             return -1;
         };
@@ -745,10 +738,7 @@ impl Globals {
     pub fn count_pdf_file_pages(&mut self) -> i32 {
         let name = self.raw_file_name();
         match flashtex_engine::system::find_file(&name, Format::Pict) {
-            Some(found) => {
-                flashtex_engine::system::note_file(&found);
-                pdf_pages(&found)
-            }
+            Some(found) => pdf_pages(&found),
             None => 0,
         }
     }
