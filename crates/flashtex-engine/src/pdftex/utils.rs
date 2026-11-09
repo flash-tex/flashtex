@@ -718,7 +718,8 @@ impl Globals {
     /// (a job name need not be UTF-8). `\pdfuniqueresname`'s prefix is its
     /// CRC-32, so every part of it shows in the PDF.
     pub fn set_job_id(&mut self, y: i32, m: i32, d: i32, t: i32) {
-        let mut id = format!("{y:04}/{m:02}/{d:02} {:02}:{:02} ", t / 60, t % 60).into_bytes();
+        // C's `%.4d`/`%.2d`, also for a negative \year, \month, \day or \time
+        let mut id = super::cfmt::fmt_job_date(y, m, d, t / 60, t % 60);
         id.extend(self.str_bytes(self.job_name));
         id.push(b' ');
         id.extend(self.str_bytes(self.format_ident));

@@ -38,6 +38,29 @@ pub fn fmt_g(x: f64) -> Vec<u8> {
     buf[..(n.max(0) as usize).min(buf.len() - 1)].to_vec()
 }
 
+/// `"%.4d/%.2d/%.2d %.2d:%.2d "` of `y`, `m`, `d`, `h`, `mi`: the date part
+/// of utils.c's `setjobid`. C's precision pads the digits and puts a sign in
+/// front of them (`-0003`); Rust's `{:04}` counts the sign in the width.
+pub fn fmt_job_date(y: i32, m: i32, d: i32, h: i32, mi: i32) -> Vec<u8> {
+    let mut buf = [0u8; 80];
+    // SAFETY: `buf` is 80 bytes and `snprintf` writes at most that many, NUL
+    // included (five ints are at most 60 characters with the separators);
+    // the format takes exactly five ints.
+    let n = unsafe {
+        snprintf(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            c"%.4d/%.2d/%.2d %.2d:%.2d ".as_ptr(),
+            y as c_int,
+            m as c_int,
+            d as c_int,
+            h as c_int,
+            mi as c_int,
+        )
+    };
+    buf[..(n.max(0) as usize).min(buf.len() - 1)].to_vec()
+}
+
 /// `sprintf(buf, "%.<prec>f", x)` (pdftoepdf.cc's `%.1f` and `%.8f`).
 pub fn fmt_f(prec: i32, x: f64) -> Vec<u8> {
     let mut buf = vec![0u8; 512];
@@ -305,6 +328,17 @@ mod tests {
         assert_eq!(fmt_g(-9.46), b"-9.46");
         assert_eq!(fmt_g(1e-5), b"1e-05");
         assert_eq!(fmt_g(0.1669999957084656), b"0.167");
+    }
+
+    #[test]
+    fn job_dates_are_cs() {
+        assert_eq!(fmt_job_date(2023, 11, 14, 22, 13), b"2023/11/14 22:13 ");
+        // the sign goes in front of the padded digits (#2270)
+        assert_eq!(fmt_job_date(-3, -1, -7, 0, -5), b"-0003/-01/-07 00:-05 ");
+        assert_eq!(
+            fmt_job_date(12345, 123, 0, 1666, 40),
+            b"12345/123/00 1666:40 "
+        );
     }
 
     #[test]
