@@ -108,6 +108,15 @@ class Gen:
         self.n = 0
 
     # -- helpers -------------------------------------------------------
+    def prime(self, name):
+        """Usually type a space in the new font (`\\ ` in a box), which makes
+        its `font_glue`: with \\XeTeXinterwordspaceshaping>0, an explicit
+        glue between its first two native words otherwise reads
+        width(font_glue[f]) of null, which crashes xetex (#2391)."""
+        if self.chance(0.85):
+            return " \\setbox0=\\hbox{\\%s\\ }" % name
+        return ""
+
     def pick(self, xs):
         return self.r.choice(xs)
 
@@ -228,7 +237,7 @@ class Gen:
             name = "f" + "abcdefgh"[i]
             self.fonts.append(name)
             self.font_scripts[name] = scripts
-            L.append("\\font\\%s=%s%%" % (name, self.fontspec(f)))
+            L.append("\\font\\%s=%s%s%%" % (name, self.fontspec(f), self.prime(name)))
             if self.chance(0.4):
                 L.append("\\hyphenchar\\%s=%s%%" % (name, self.pick(["`-", "\"2010", "-1", "\"AD"])))
         if self.chance(0.4):
@@ -436,7 +445,7 @@ class Gen:
         f, scripts = self.pick(TEXT_FONTS)
         name = "fz" + "abcdefghijklmnopqrstuvwxyz"[self.n % 26] * (1 + self.n // 26)
         self.n += 1
-        L = ["\\font\\%s=%s%%" % (name, self.fontspec(f))]
+        L = ["\\font\\%s=%s%s%%" % (name, self.fontspec(f), self.prime(name))]
         if self.chance(0.4):
             L.append("\\fontdimen2\\%s=%s \\fontdimen3\\%s=%s%%" % (name, self.dim(1, 8), name, self.dim(0, 3)))
         L.append("\\setbox10=\\hbox{\\%s %s}\\showbox10 \\shipout\\box10%%" % (name, self.text(self.r.randint(2, 10))))
@@ -451,7 +460,7 @@ class Gen:
         f, scripts = self.pick([t for t in TEXT_FONTS if script in t[1]])
         name = "fl" + "abcdefghijklmnopqrstuvwxyz"[self.n % 26] * (1 + self.n // 26)
         self.n += 1
-        L = ["\\font\\%s=%s%%" % (name, self.fontspec(f))]
+        L = ["\\font\\%s=%s%s%%" % (name, self.fontspec(f), self.prime(name))]
         words = []
         for _ in range(self.r.randint(3, 15)):
             words.append(self.word(self.pick([script, script, script, "latn", "num"])))

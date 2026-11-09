@@ -92,9 +92,12 @@ itself fails ("driver return code") is not compared.
 Neutral outcomes, not failures: `both-hang`, `both-signal` (the same signal
 in both), and `oracle-crash`: xetex itself died by a signal (undefined
 behaviour; kept under `OUT/oracle-crash/` for reference). TeX Live 2026's
-xetex segfaults, for example, on `\XeTeXinterwordspaceshaping=2` with a
-native word, a space in `\nullfont` and another native word in one
-paragraph; the port then stops on a checked index (exit 101).
+xetex segfaults, for example, when `\XeTeXinterwordspaceshaping` is
+positive and two native words of a font are separated by an explicit glue
+before any space was typed in that font: it reads `width(font_glue[f])`
+of a null pointer (#2391). The port then stops on a checked index (exit
+101). The grammar usually types a space in each new font first
+(`Gen.prime`) so this crash does not hide the rest of a document.
 
 ## Grammar (gen.py)
 
@@ -147,4 +150,5 @@ The pure-logic tests (determinism, balanced lines, ddmin) always run; with
 | issue | what | fix |
 |---|---|---|
 | #2329 | `\XeTeXinputnormalization` ignored: `input_line` never called the TECkit normalizer | #2340 (crates/flashtex-xetex/src/system.rs) |
+| #2391 | not a difference: xetex segfaults and the port panics on `width(font_glue[f])` of null under `\XeTeXinterwordspaceshaping` | open (decision: keep the crash or deviate) |
 | #2382 | `\XeTeXinputencoding` with an ICU converter name (`latin1`, `cp1252`, ...) reads raw bytes (a documented gap: no ICU converters) | open; the grammar uses XeTeX's built-in names only |
