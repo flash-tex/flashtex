@@ -1527,6 +1527,14 @@ impl Globals {
             };
             f.input = Some(TextIn::Pipe(BufReader::new(out)));
             f.child = Some(child);
+            // texmfmp.c's `u_open_in_or_pipe` sniffs no byte order mark
+            // on a pipe (it cannot rewind one): `AUTO` is UTF-8 there, and
+            // the command's first bytes are the first line's.
+            f.err = 0;
+            f.at_eof = false;
+            let mode = if in_mode == AUTO { UTF8 } else { in_mode };
+            self.set_input_file_encoding(f, mode, encoding_data);
+            return true;
         } else {
             let must_exist = self.host.tex_input_type;
             let Some(name) = self.input_path(Format::Tex, must_exist) else {
