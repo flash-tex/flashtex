@@ -183,6 +183,79 @@ final class EngineV3HostProcess: @unchecked Sendable {
     private var buffer = Data()
     private let lock = NSLock()
 
+    /// Where a host of `mode` persists each document's S0 (`--s0-cache`), so
+    /// that a reopened document runs only its body. Each mode has its own
+    /// folder: the two hosts' files are not each other's.
+    static func s0Directory(mode: EngineV3Mode) -> URL {
+        EngineV3.cacheDirectory.appendingPathComponent(mode == .unicode ? "s0-unicode" : "s0", isDirectory: true)
+    }
+
+    /// Each S0 folder's S0 and S1 files (`s0Extensions`) stay under this many
+    /// bytes (`trimS0`): some 35–60 documents' S0s at 17–28 MB each. The
+    /// Unicode host's format bases (`.xs0base`, about 90 MB each) are not
+    /// counted or removed (the host collects unused ones itself), so
+    /// `s0-unicode` can hold more than this by its bases.
+    static let s0BudgetBytes = 1 << 30
+
+    /// The files a host writes in its S0 folder: the pdfTeX host's S0 and
+    /// S1 (`<hash>.s0`, `<hash>.s1`), the Unicode host's S0 (`<hash>.xs0`).
+    static let s0Extensions: Set<String> = ["s0", "s1", "xs0"]
+
+    /// Where `trimS0Later` trims, off the main thread.
+    static let s0TrimQueue = DispatchQueue(label: "flashtex.engine-v3.s0-trim", qos: .utility)
+
+    /// Keeps the S0 files in `dir` under `budget` bytes, least recently
+    /// used document first out. A document's files share a stem
+    /// (`<hash>.s0`, `<hash>.s1`, `<hash>.xs0`) and go together; their
+    /// newest modification date is the document's last use: a reopen only
+    /// reads the S0, which is written once, but each idle save rewrites the
+    /// S1. (By each file's own date, the most-used documents' S0s were the
+    /// oldest and went first, leaving their S1s, useless without the S0.)
+    /// Only `s0Extensions` files are counted or removed; a host's temporary
+    /// files are its own to clean. An S0 removed while a host reads it stays
+    /// readable to that host; one removed before a host opens it costs that
+    /// document one full run, as a first open does.
+    static func trimS0(_ dir: URL, budget: Int = s0BudgetBytes) {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
+        var groups: [String: (date: Date, bytes: Int, urls: [URL])] = [:]
+        for u in urls where s0Extensions.contains(u.pathExtension) {
+            guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+            let stem = u.deletingPathExtension().lastPathComponent
+            var g = groups[stem] ?? (.distantPast, 0, [])
+            g.date = max(g.date, v.contentModificationDate ?? .distantPast)
+            g.bytes += v.fileSize ?? 0
+            g.urls.append(u)
+            groups[stem] = g
+        }
+        var total = groups.values.reduce(0) { $0 + $1.bytes }
+        for g in groups.values.sorted(by: { $0.date < $1.date }) where total > budget {
+            for u in g.urls { try? fm.removeItem(at: u) }
+            total -= g.bytes
+        }
+    }
+
+    /// `trimS0` on `queue`, so that starting a host (on the main actor)
+    /// never waits on the folder: a first trim of an uncapped folder can
+    /// remove dozens of large files. The hosts tolerate an S0 that vanishes
+    /// meanwhile: that document's run starts cold.
+    static func trimS0Later(_ dir: URL, budget: Int = s0BudgetBytes, queue: DispatchQueue = s0TrimQueue) {
+        queue.async { trimS0(dir, budget: budget) }
+    }
+
+    /// The host's command line. `--once`: serve one connection, then exit
+    /// (the app's connection closes when the app quits or dies, so the host
+    /// never outlives it once connected). Both hosts are resident (the
+    /// Unicode one since XETEX-INCR): each takes its S0 cache and the
+    /// performance mode it starts in. Only the pdfTeX host has a checkpoint
+    /// interval (`--timed`, from `FLASHTEX_V3_TIMED`).
+    static func arguments(socketPath: String, mode: EngineV3Mode, s0Directory: URL, profile: String, timed: String?) -> [String] {
+        var a = ["--socket", socketPath, "--once", "--s0-cache", s0Directory.path, "--profile", profile]
+        if mode == .classic, let t = timed, Double(t) != nil { a += ["--timed", t] }
+        return a
+    }
+
     /// `confineRoots`: the host compiles text from a Live Share session and
     /// may read only inside these folders besides the job's own
     /// (`confinedEnvironment`); nil for an ordinary host.
@@ -193,20 +266,14 @@ final class EngineV3HostProcess: @unchecked Sendable {
         self.confineRoots = confineRoots
         let dir = NSTemporaryDirectory()
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
-        let s0 = EngineV3.cacheDirectory.appendingPathComponent("s0", isDirectory: true)
+        let s0 = Self.s0Directory(mode: mode)
         try? FileManager.default.createDirectory(at: s0, withIntermediateDirectories: true)
+        Self.trimS0Later(s0)
         process.executableURL = executable
-        // --once: serve one connection, then exit. The app's connection closes
-        // when the app quits or dies (the kernel closes the socket), so the
-        // host never outlives it once connected.
-        process.arguments = ["--socket", socketPath, "--once"]
-        // The resident pdfTeX host's S0 cache, performance mode and checkpoint
-        // interval. The Unicode host compiles cold and takes none of them.
-        if mode == .classic {
-            process.arguments! += ["--s0-cache", s0.path]
-            process.arguments! += ["--profile", PerformanceMode.current.hostProfile]
-            if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
-        }
+        process.arguments = Self.arguments(
+            socketPath: socketPath, mode: mode, s0Directory: s0,
+            profile: PerformanceMode.current.hostProfile,
+            timed: ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"])
         process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
             ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
