@@ -6860,7 +6860,8 @@ fn spans_hold_timed_checkpoints_back() {
     assert_eq!(stat("verify_differences"), 0, "{s}");
 }
 
-/// (lane AUDIT-SPANS) A font number names a font only in its timeline: an
+/// (lane AUDIT-SPANS, #2219; fixed on main by #2272, whose test is the
+/// registered-macro case) A font number names a font only in its timeline: an
 /// edit's restore takes the fonts loaded after the checkpoint away, and the
 /// re-run may load another font at the same number. BOX-MEMO keys a call's
 /// fonts by number (`cur_font` in K2, a `\font` identifier's meaning in K3)

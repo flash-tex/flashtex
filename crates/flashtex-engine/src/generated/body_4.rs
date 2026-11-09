@@ -1733,9 +1733,6 @@ impl Globals {
                 i = i.wrapping_add(1);
             }
         }
-        if self.bm_on {
-            self.flashtex_bm_font_new(k);
-        }
         auto_expand_font = k;
         auto_expand_font
     }
@@ -2223,9 +2220,6 @@ impl Globals {
                 self.c = self.c.wrapping_add(1);
             }
         }
-        if self.bm_on {
-            self.flashtex_bm_font_new(k);
-        }
         letter_space_font = k;
         letter_space_font
     }
@@ -2375,9 +2369,6 @@ impl Globals {
             }
         }
         self.fmem_ptr = (self.fmem_ptr).wrapping_add(lf);
-        if self.bm_on {
-            self.flashtex_bm_font_new(k);
-        }
         copy_font_info = k;
         copy_font_info
     }

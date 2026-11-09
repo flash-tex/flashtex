@@ -4268,11 +4268,6 @@ impl Globals {
         if file_opened {
             { let mut __f0 = ::core::mem::take(&mut self.tfm_file); let __r = self.b_close(&mut __f0); self.tfm_file = __f0; __r };
         }
-        if self.bm_on {
-            if (g != null_font) {
-                self.flashtex_bm_font_new(g);
-            }
-        }
         read_font_info = g;
         read_font_info
     }
