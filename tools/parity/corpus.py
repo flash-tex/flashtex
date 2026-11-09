@@ -359,6 +359,8 @@ def fetch_verified(url, want, polite, log=None, tries=FETCH_TRIES):
         except Exception as e:  # noqa: BLE001 - retried, then raised
             if i == tries - 1 or getattr(e, "code", None) in NOT_RETRIED:
                 raise
+            if getattr(e, "code", None) == 416:
+                have = b""  # the object shrank to len(have) or less: start over
             err, wait = e, backoff(i, e)
         else:
             have = b""

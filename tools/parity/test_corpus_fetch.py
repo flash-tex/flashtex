@@ -182,6 +182,11 @@ class Retries(unittest.TestCase):
             self.assertEqual(corpus.fetch_verified("u", SHA, no_wait), GOOD)
         self.assertEqual(net.calls, [("get", "u"), ("range", 5), ("get", "u")])
 
+    def test_a_416_drops_the_partial_bytes_and_starts_again_from_scratch(self):
+        with Net(cut(b"stale prefix"), http_error(416), GOOD) as net:
+            self.assertEqual(corpus.fetch_verified("u", SHA, no_wait), GOOD)
+        self.assertEqual(net.calls, [("get", "u"), ("range", 12), ("get", "u")])
+
     def test_gives_up_after_fetch_tries_and_raises_the_last_error(self):
         answers = [http_error(429)] * (corpus.FETCH_TRIES - 1) + [cut(b"x")]
         with Net(*answers) as net, self.assertRaises(http.client.IncompleteRead):
