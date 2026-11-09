@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The quit question for one window: true to go on quitting.
     @MainActor static func askBeforeQuitting(_ model: ShellModel) -> Bool {
-        guard model.project.anyDirty, model.documentURL != nil || !model.activeText.isEmpty else { return true }
+        guard quitNeedsAsking(model) else { return true }
         ProjectWindows.shared.entry(for: model)?.window?.makeKeyAndOrderFront(nil)
         let dirty = model.project.listing.filter(\.isDirty).map(\.path)
         let alert = NSAlert()
@@ -57,11 +57,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return allSaved && !model.project.anyDirty
         case .alertSecondButtonReturn:
-            // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
+            // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files:
+            // no autosave is in flight (`quitNeedsAsking` settled them) and none pending runs.
+            model.cancelPendingAutosave()
             model.preserveDirtyBuffers(reason: "quit without saving")
             return true
         default: return false
         }
+    }
+
+    /// Whether quitting must ask about `model`'s unsaved edits. A background
+    /// autosave in flight is settled first (its reply waited for, as the
+    /// main-thread save was): the question names only edits that are really
+    /// unsaved, and Don't Save never answers it while a save it doesn't know
+    /// about is still writing them.
+    @MainActor static func quitNeedsAsking(_ model: ShellModel) -> Bool {
+        model.files.settleBackgroundSaves()
+        return model.project.anyDirty && (model.documentURL != nil || !model.activeText.isEmpty)
     }
 
     /// Held for the app's lifetime: without it App Nap and timer coalescing

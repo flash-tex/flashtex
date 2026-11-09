@@ -1050,7 +1050,9 @@ final class ProjectDocuments {
             return noteSave(.saved(path: path, sha256: sha))
         case .conflict(let c):
             saveConflicts[path] = c
-            model.preserveDirtyText(text, at: url, reason: "save refused: file changed on disk")
+            // The buffer now (a background save's `text` may be older: typed on while it was out).
+            let current = model.documents.first(where: { $0.path == path })?.text ?? text
+            model.preserveDirtyText(current, at: url, reason: "save refused: file changed on disk")
             return noteSave(.conflict(c))
         case .failed(let why):
             return noteSave(.failed(why))
