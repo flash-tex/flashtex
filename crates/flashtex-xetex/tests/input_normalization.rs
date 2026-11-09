@@ -27,8 +27,10 @@ const INPUT: &str = "\\catcode`\\{=1 \\catcode`\\}=2
 \\end
 ";
 
-/// xetex's log line holding the messages (after `(./norm.tex `).
-const WANT: &str = "[233] [101\u{301}][101\u{304}\u{300}] [233][7701] [233][101\u{301}] [101\u{301}] )";
+/// xetex's log line holding the messages (after `(./norm.tex `; the run
+/// here prints the name as the cwd resolver gives it, `(norm.tex `).
+const WANT: &str =
+    "[233] [101\u{301}][101\u{304}\u{300}] [233][7701] [233][101\u{301}] [101\u{301}] )";
 
 fn run_dir() -> PathBuf {
     let d = std::env::temp_dir().join(format!("flashtex-xetex-norm-{}", std::process::id()));
@@ -46,7 +48,13 @@ fn input_lines_are_normalized_as_xetex_does() {
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env("FLASHTEX_RESOLVER", "cwd")
-        .args(["-ini", "-etex", "-no-pdf", "-interaction=nonstopmode", "norm.tex"])
+        .args([
+            "-ini",
+            "-etex",
+            "-no-pdf",
+            "-interaction=nonstopmode",
+            "norm.tex",
+        ])
         .output()
         .expect("run flashtex-xetex");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -54,7 +62,7 @@ fn input_lines_are_normalized_as_xetex_does() {
     let log = std::fs::read_to_string(dir.join("norm.log")).unwrap();
     let line = log
         .lines()
-        .find_map(|l| l.strip_prefix("(./norm.tex "))
+        .find_map(|l| l.split_once("norm.tex ").map(|(_, rest)| rest))
         .unwrap_or_else(|| panic!("no input line in the log:\n{log}"));
     assert_eq!(line, WANT, "log:\n{log}");
     let _ = std::fs::remove_dir_all(&dir);
