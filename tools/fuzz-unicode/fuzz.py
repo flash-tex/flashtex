@@ -316,7 +316,7 @@ def fuzz_replay_seed(seed, args):
     exit status and XDV of "on" and "verify" must equal it, verify must not
     exit 3 (FLASHTEX_INTRINSICS_VERIFY_FAIL=1) nor count a differing check."""
     L = latex_mod()
-    text = gen.generate(seed, latex=True).render()
+    text = gen.generate(seed, latex=True, replay=True).render()
     work = tempfile.mkdtemp(prefix="fzur-%d-" % seed, dir=args.tmp)
     runs = {}
     try:

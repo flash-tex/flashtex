@@ -146,4 +146,5 @@ The pure-logic tests (determinism, balanced lines, ddmin) always run; with
 
 | issue | what | fix |
 |---|---|---|
-| #2329 | `\XeTeXinputnormalization` ignored: `input_line` never called the TECkit normalizer | crates/flashtex-xetex/src/system.rs |
+| #2329 | `\XeTeXinputnormalization` ignored: `input_line` never called the TECkit normalizer | #2340 (crates/flashtex-xetex/src/system.rs) |
+| #2382 | `\XeTeXinputencoding` with an ICU converter name (`latin1`, `cp1252`, ...) reads raw bytes (a documented gap: no ICU converters) | open; the grammar uses XeTeX's built-in names only |

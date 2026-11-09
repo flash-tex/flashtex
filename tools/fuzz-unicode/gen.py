@@ -100,6 +100,8 @@ class Gen:
     def __init__(self, seed, area=None):
         self.r = random.Random(seed)
         self.area = area
+        # LaTeX documents dense in \pdfstringdef calls (fuzz.py --replay).
+        self.replay = False
         self.fonts = []      # control-sequence names of loaded text fonts
         self.font_scripts = {}
         self.math = False
@@ -464,7 +466,10 @@ class Gen:
     def chunk_encoding(self):
         """\\XeTeXinputencoding for the next line, then back to UTF-8; a
         TECkit mapping (tex-text) and \\Ucharcat."""
-        enc = self.pick(["bytes", "latin1", "utf8", "auto", "cp1252", "iso-8859-7", "nosuch"])
+        # XeTeX's built-in names and one ICU does not know; ICU converter
+        # names (latin1, cp1252, ...) are #2382, a known gap, left out so
+        # it does not mask other findings.
+        enc = self.pick(["bytes", "utf8", "auto", "nosuch"])
         f = self.pick(self.fonts)
         L = ['\\XeTeXinputencoding "%s"%%' % enc,
              "\\setbox13=\\hbox{\\%s %s}\\showbox13 \\shipout\\box13%%" % (
@@ -523,14 +528,14 @@ class Gen:
         # hyperref: every \pdfstringdef (bookmarks, page labels, anchors)
         # runs \pdfstringdefPreHook, XeTeX's guarded intrinsic (fuzz.py
         # --replay).
-        hyper = self.chance(0.6)
+        hyper = self.replay or self.chance(0.6)
         if hyper:
             L.append("\\usepackage[%s]{hyperref}" % self.pick(["", "bookmarks", "pdfencoding=auto",
                                                               "unicode,bookmarksnumbered", "colorlinks"]))
         L.append("\\begin{document}")
-        for _ in range(r.randint(3, 8)):
+        for _ in range(r.randint(12, 30) if self.replay else r.randint(3, 8)):
             k = r.random()
-            if hyper and k < 0.15:
+            if hyper and k < (0.5 if self.replay else 0.15):
                 title = self.pick([
                     lambda: " ".join(self.word("latn") for _ in range(r.randint(1, 4))),
                     lambda: "{\\hebrewfont %s}" % self.word("hebr"),
@@ -568,8 +573,9 @@ AREAS = ["paragraph", "bidi", "interchar", "queries", "ligkern", "glyph", "hyph"
          "picture", "fontchange", "showlists", "locale", "encoding"]
 
 
-def generate(seed, latex=False, area=None):
+def generate(seed, latex=False, area=None, replay=False):
     g = Gen(seed, area)
+    g.replay = replay
     return g.generate_latex() if latex else g.generate()
 
 
