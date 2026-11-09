@@ -2520,6 +2520,76 @@ mod tests {
         }
     }
 
+    /// The document information as xdvipdfmx (TeX Live 2026) leaves it,
+    /// measured (#2358): a non-string standard key is dropped, an empty
+    /// string only for the eight standard keys, an empty `/Creator`
+    /// removes the XDV comment's, and there is no `/ModDate`.
+    #[test]
+    fn the_document_information_is_xdvipdfmxs() {
+        use super::super::pdfobj::Parser;
+        let mut doc = Doc::new();
+        doc.dvi_comment = Some(b" XeTeX output 1970.01.01:0000".to_vec());
+        let d = Parser::new(
+            b"<</Title /NotAString /Creator () /Keywords 5 /Trapped () /Foo () /Bar /Baz /Author (Me)>>",
+        )
+        .object()
+        .and_then(|o| o.as_dict().cloned())
+        .unwrap();
+        doc.docinfo.merge(&d);
+        let opts = Options {
+            producer: "P".into(),
+            date: Some("D:19700101000000Z".into()),
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let info = pdf.info().unwrap();
+        let keys: Vec<&str> = info.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            [
+                "Author",
+                "Bar",
+                "CreationDate",
+                "Foo",
+                "Producer",
+                "Trapped"
+            ]
+        );
+        assert_eq!(info.get("Foo"), Some(&Obj::String(Vec::new())));
+        // without a `/Creator` of its own, the XDV comment's
+        let mut doc = Doc::new();
+        doc.dvi_comment = Some(b" XeTeX output".to_vec());
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let info = pdf.info().unwrap();
+        assert_eq!(
+            info.get("Creator"),
+            Some(&Obj::String(b" XeTeX output".to_vec()))
+        );
+        assert!(info.get("ModDate").is_none());
+    }
+
+    /// `SOURCE_DATE_EPOCH` as dvipdfmx's `strtoll` reads it.
+    #[test]
+    fn source_date_epoch_is_read_as_dvipdfmx_reads_it() {
+        use super::super::source_date_epoch as sde;
+        assert_eq!(sde(b"0"), Some(0));
+        assert_eq!(sde(b""), Some(0));
+        assert_eq!(sde(b" 12"), Some(12));
+        assert_eq!(sde(b"+12"), Some(12));
+        assert_eq!(sde(b"-0"), Some(0));
+        assert_eq!(sde(b"-5"), None);
+        assert_eq!(sde(b"12 "), None);
+        assert_eq!(sde(b" "), None);
+        assert_eq!(sde(b"1e3"), None);
+        assert_eq!(sde(b"99999999999999999999"), None);
+        assert_eq!(
+            String::from_utf8(super::super::make_pdf_time(0, true)).unwrap(),
+            "D:19700101000000Z"
+        );
+    }
+
     /// `/Flags`, `/StemV` and the embedding permission from the face: LM
     /// Mono is fixed pitch, regular weight, installable.
     #[test]
@@ -2653,75 +2723,5 @@ mod tests {
         assert!(body.contains("/Transparency"), "{body}");
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
-    }
-
-    /// The document information as xdvipdfmx (TeX Live 2026) leaves it,
-    /// measured (#2358): a non-string standard key is dropped, an empty
-    /// string only for the eight standard keys, an empty `/Creator`
-    /// removes the XDV comment's, and there is no `/ModDate`.
-    #[test]
-    fn the_document_information_is_xdvipdfmxs() {
-        use super::super::pdfobj::Parser;
-        let mut doc = Doc::new();
-        doc.dvi_comment = Some(b" XeTeX output 1970.01.01:0000".to_vec());
-        let d = Parser::new(
-            b"<</Title /NotAString /Creator () /Keywords 5 /Trapped () /Foo () /Bar /Baz /Author (Me)>>",
-        )
-        .object()
-        .and_then(|o| o.as_dict().cloned())
-        .unwrap();
-        doc.docinfo.merge(&d);
-        let opts = Options {
-            producer: "P".into(),
-            date: Some("D:19700101000000Z".into()),
-            compress: false,
-        };
-        let bytes = write(&doc, &opts).unwrap().0;
-        let pdf = PdfFile::parse(&bytes).unwrap();
-        let info = pdf.info().unwrap();
-        let keys: Vec<&str> = info.keys().map(String::as_str).collect();
-        assert_eq!(
-            keys,
-            [
-                "Author",
-                "Bar",
-                "CreationDate",
-                "Foo",
-                "Producer",
-                "Trapped"
-            ]
-        );
-        assert_eq!(info.get("Foo"), Some(&Obj::String(Vec::new())));
-        // without a `/Creator` of its own, the XDV comment's
-        let mut doc = Doc::new();
-        doc.dvi_comment = Some(b" XeTeX output".to_vec());
-        let bytes = write(&doc, &opts).unwrap().0;
-        let pdf = PdfFile::parse(&bytes).unwrap();
-        let info = pdf.info().unwrap();
-        assert_eq!(
-            info.get("Creator"),
-            Some(&Obj::String(b" XeTeX output".to_vec()))
-        );
-        assert!(info.get("ModDate").is_none());
-    }
-
-    /// `SOURCE_DATE_EPOCH` as dvipdfmx's `strtoll` reads it.
-    #[test]
-    fn source_date_epoch_is_read_as_dvipdfmx_reads_it() {
-        use super::super::source_date_epoch as sde;
-        assert_eq!(sde(b"0"), Some(0));
-        assert_eq!(sde(b""), Some(0));
-        assert_eq!(sde(b" 12"), Some(12));
-        assert_eq!(sde(b"+12"), Some(12));
-        assert_eq!(sde(b"-0"), Some(0));
-        assert_eq!(sde(b"-5"), None);
-        assert_eq!(sde(b"12 "), None);
-        assert_eq!(sde(b" "), None);
-        assert_eq!(sde(b"1e3"), None);
-        assert_eq!(sde(b"99999999999999999999"), None);
-        assert_eq!(
-            String::from_utf8(super::super::make_pdf_time(0, true)).unwrap(),
-            "D:19700101000000Z"
-        );
     }
 }
