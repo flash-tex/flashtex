@@ -620,13 +620,13 @@ impl Globals {
                 self.trie_c[crate::ix::U((0i32) as usize)] = 0i32;
                 self.trie_ptr = 0i32;
                 // §1270
-                self.hash[crate::ix::U(((frozen_protection) - 1179650) as usize)].set_rh(66625i32);
+                self.hash[crate::ix::U(((frozen_protection) - 1179650) as usize)].set_rh(66626i32);
                 // §1355
                 if self.ini_version() {
-                    self.format_ident = 66704i32;
+                    self.format_ident = 66705i32;
                 }
                 // §1432
-                self.hash[crate::ix::U(((end_write) - 1179650) as usize)].set_rh(66760i32);
+                self.hash[crate::ix::U(((end_write) - 1179650) as usize)].set_rh(66761i32);
                 self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b1(level_one);
                 self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b0(outer_call);
                 self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_rh((268435455i32).wrapping_neg());
@@ -634,7 +634,7 @@ impl Globals {
                 self.eTeX_mode = 0i32;
                 // §1623
                 self.max_reg_num = 255i32;
-                self.max_reg_help_line = 66952i32;
+                self.max_reg_help_line = 66953i32;
                 // §1629
                 {
                     let __for_end_4 = inter_char_val;
