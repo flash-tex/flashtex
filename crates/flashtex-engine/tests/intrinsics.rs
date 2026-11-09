@@ -311,3 +311,26 @@ fn a_replay_keeps_the_normal_paths_capacity_errors() {
         assert!(stat(&s, "replays") >= 2, "{tag}: {s}");
     }
 }
+
+#[test]
+fn a_replay_raises_the_stack_statistics_as_its_normal_path() {
+    // (#2451) a replay pushes no input level or parameter, so it left the
+    // high-water marks of `\tracingstats`' "stack positions" line below the
+    // normal path's: at input depth 5000, off printed ` 5009i,...` and on
+    // ` 5002i,...`, and verification mode did not see it
+    let h = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\\tracingstats=1\n";
+    let src = format!(
+        "{h}\\def\\ia{{\\ib\\relax}}\\def\\ib{{\\ic\\relax}}\\def\\ic{{\\id\\relax}}\\def\\id{{\\ie\\relax}}\n\
+         \\def\\ie{{\\if\\relax\\relax\\global\\count2=2 \\fi\\relax}}\n\
+         \\def\\hook{{\\begingroup\\ia\\endgroup}}\n\\hook\\hook\\hook\n\
+         \\def\\s{{\\relax\\hook\\relax}}\
+         \\def\\r{{\\advance\\count1 1 \\ifnum\\count1<5000 \\expandafter\\r\\else\\expandafter\\s\\fi\\relax}}\n\
+         \\r\\end\n"
+    );
+    let d = scratch("stack-stats");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "hook");
+    assert!(off.log.contains("stack positions"), "{}", off.log);
+    let s = check("stack-stats", &src);
+    assert!(stat(&s, "replays") >= 2, "{s}");
+}
