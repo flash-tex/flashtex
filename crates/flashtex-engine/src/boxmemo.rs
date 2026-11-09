@@ -3526,6 +3526,24 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
+        } else if (c == k::spacer || c == k::ex_space)
+            && self.nest_ptr == outer
+            && self.cur_list.mode_field.abs() == k::hmode
+            && self.bm_eq(INT_BASE + k::pdf_adjust_interword_glue_code).int() > 0
+        {
+            // `append_normal_space` widens the glue by the code of the
+            // character at `tail` (or before an auto kern, through
+            // `save_tail`): while the tail is still the one from before the
+            // call, that character is not in the key
+            let t = self.cur_list.tail_field;
+            if self.bm_with_rec(|r| r.start.tail) != Some(t) {
+                true
+            } else if t >= self.hi_mem_min {
+                false
+            } else {
+                let w = self.mem[t as usize].hh();
+                !(w.b0() == k::ligature_node || (w.b0() == k::kern_node && w.b1() == k::auto_kern))
+            }
         } else if c == k::make_box {
             if chr == k::vsplit_code {
                 false

@@ -496,3 +496,37 @@ fn calls_in_math_groups_compare_their_save_stack() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+#[test]
+fn interword_glue_adjusted_by_the_char_before_the_call_never_replays() {
+    // (#2450) with `\\pdfadjustinterwordglue>0`, `append_normal_space`
+    // widens a space by the `\\knbscode` of the character at `tail` (or
+    // before an auto kern, through `save_tail`). A space that is a call's
+    // first node reads the tail from before the call, which no key holds:
+    // the third box's glue must be widened by `x`'s code, not replayed
+    // from `y`'s. A call whose tail is no character still replays
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    for (tag, space) in [("iwg-spacer", " "), ("iwg-ex-space", "\\ ")] {
+        let s = check_with(
+            tag,
+            &format!(
+                "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\scrollmode\n\
+                 \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0\n\
+                 \\font\\f=cmr10 \\f \\pdfadjustinterwordglue=1 \\knbscode\\f`x=500\n\
+                 \\def\\measure#1{{{space}\\kern#1\\relax}}\n\
+                 \\setbox1\\hbox{{y\\relax\\measure{{1pt}}}}\\showbox1\n\
+                 \\setbox1\\hbox{{y\\relax\\measure{{1pt}}}}\\showbox1\n\
+                 \\setbox1\\hbox{{x\\relax\\measure{{1pt}}}}\\showbox1\n\
+                 \\setbox1\\hbox{{\\kern1pt\\measure{{1pt}}}}\\showbox1\n\
+                 \\setbox1\\hbox{{\\kern1pt\\measure{{1pt}}}}\\showbox1\n\
+                 \\setbox1\\hbox{{\\kern1pt\\measure{{1pt}}}}\\showbox1\n\
+                 \\end\n"
+            ),
+            &[("cmr10.tfm", tfm.clone())],
+        );
+        assert!(stat(&s, "hits") >= 2, "{tag}: {s}");
+    }
+}
