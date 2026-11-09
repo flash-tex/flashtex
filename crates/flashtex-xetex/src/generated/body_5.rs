@@ -4047,7 +4047,7 @@ impl Globals {
                             } else {
                                 self.print_nl(65544i32);
                             }
-                            self.print(66602i32);
+                            self.print(66603i32);
                         }
                         {
                             self.help_ptr = 2i32;
@@ -4070,12 +4070,12 @@ impl Globals {
                                     } else {
                                         self.print_nl(65544i32);
                                     }
-                                    self.print(66598i32);
+                                    self.print(66599i32);
                                 }
                                 {
                                     self.help_ptr = 2i32;
-                                    self.help_line[crate::ix::U((1i32) as usize)] = 66599i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 66600i32;
+                                    self.help_line[crate::ix::U((1i32) as usize)] = 66600i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 66601i32;
                                 }
                                 self.back_error();
                             }
@@ -4749,10 +4749,10 @@ impl Globals {
                                                                         if self.do_last_line_fit {
                                                                             // §1663
                                                                             {
-                                                                                self.print(66954i32);
+                                                                                self.print(66955i32);
                                                                                 self.print_scaled(self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int());
                                                                                 if (self.cur_p == (268435455i32).wrapping_neg()) {
-                                                                                    self.print(66955i32);
+                                                                                    self.print(66956i32);
                                                                                 } else {
                                                                                     self.print(66425i32);
                                                                                 }

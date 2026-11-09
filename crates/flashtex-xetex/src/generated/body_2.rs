@@ -22,12 +22,12 @@ impl Globals {
             } else {
                 self.print_nl(65544i32);
             }
-            self.print(66840i32);
+            self.print(66841i32);
         }
         self.print_cmd_chr(cmd, c);
-        self.print(66841i32);
+        self.print(66842i32);
         self.print(self.font_name[crate::ix::U((f) as usize)]);
-        self.print(66845i32);
+        self.print(66846i32);
         self.error();
     }
 
@@ -605,45 +605,45 @@ impl Globals {
             match self.cur_group {
                 bottom_level => {
                     {
-                        self.print(66860i32);
+                        self.print(66861i32);
                         break 'l_exit_f;
                     }
                 }
                 simple_group | semi_simple_group => {
                     {
                         if (self.cur_group == semi_simple_group) {
-                            self.print(66861i32);
+                            self.print(66862i32);
                         }
-                        self.print(66862i32);
+                        self.print(66863i32);
                     }
                 }
                 hbox_group | adjusted_hbox_group => {
                     {
                         if (self.cur_group == adjusted_hbox_group) {
-                            self.print(66863i32);
+                            self.print(66864i32);
                         }
-                        self.print(66488i32);
+                        self.print(66489i32);
                     }
                 }
                 vbox_group => {
                     self.print(66396i32);
                 }
                 vtop_group => {
-                    self.print(66487i32);
+                    self.print(66488i32);
                 }
                 align_group | no_align_group => {
                     {
                         if (self.cur_group == no_align_group) {
-                            self.print(66864i32);
+                            self.print(66865i32);
                         }
-                        self.print(66865i32);
+                        self.print(66866i32);
                     }
                 }
                 output_group => {
                     self.print(65690i32);
                 }
                 disc_group => {
-                    self.print(66866i32);
+                    self.print(66867i32);
                 }
                 insert_group => {
                     self.print(65618i32);
@@ -655,13 +655,13 @@ impl Globals {
                     {
                         self.print(65633i32);
                         if (self.cur_group == math_choice_group) {
-                            self.print(66867i32);
+                            self.print(66868i32);
                         } else {
                             if (self.cur_group == math_shift_group) {
-                                self.print(66868i32);
+                                self.print(66869i32);
                             } else {
                                 if (self.cur_group == math_left_group) {
-                                    self.print(66869i32);
+                                    self.print(66870i32);
                                 }
                             }
                         }
@@ -669,7 +669,7 @@ impl Globals {
                 }
                 _ => {}
             }
-            self.print(66870i32);
+            self.print(66871i32);
             self.print_int(self.cur_level);
             self.print_char(41i32);
             if (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int() != 0i32) {
@@ -694,9 +694,9 @@ impl Globals {
         self.begin_diagnostic();
         self.print_char(123i32);
         if e {
-            self.print(66871i32);
-        } else {
             self.print(66872i32);
+        } else {
+            self.print(66873i32);
         }
         self.print_group(e);
         self.print_char(125i32);
@@ -829,9 +829,9 @@ impl Globals {
         }
         if w {
             {
-                self.print_nl(66929i32);
+                self.print_nl(66930i32);
                 self.print_group(true);
-                self.print(66930i32);
+                self.print(66931i32);
                 self.print_ln();
                 if (self.eqtb[crate::ix::U(((7892329i32) - 1) as usize)].int() > 1i32) {
                     self.show_context();
@@ -876,15 +876,15 @@ impl Globals {
         }
         if w {
             {
-                self.print_nl(66929i32);
+                self.print_nl(66930i32);
                 self.print_cmd_chr(if_test, self.cur_if);
                 if (self.if_line != 0i32) {
                     {
-                        self.print(66891i32);
+                        self.print(66892i32);
                         self.print_int(self.if_line);
                     }
                 }
-                self.print(66930i32);
+                self.print(66931i32);
                 self.print_ln();
                 if (self.eqtb[crate::ix::U(((7892329i32) - 1) as usize)].int() > 1i32) {
                     self.show_context();
@@ -913,9 +913,9 @@ impl Globals {
         while (self.grp_stack[crate::ix::U((self.in_open) as usize)] != self.save_ptr) {
             {
                 self.cur_level = (self.cur_level).wrapping_sub(1i32);
-                self.print_nl(66931i32);
+                self.print_nl(66932i32);
                 self.print_group(true);
-                self.print(66932i32);
+                self.print(66933i32);
                 self.cur_group = self.save_stack[crate::ix::U((self.save_ptr) as usize)].hh().b1();
                 self.save_ptr = self.save_stack[crate::ix::U((self.save_ptr) as usize)].hh().rh();
             }
@@ -929,18 +929,18 @@ impl Globals {
         i = self.if_line;
         while (self.if_stack[crate::ix::U((self.in_open) as usize)] != self.cond_ptr) {
             {
-                self.print_nl(66931i32);
+                self.print_nl(66932i32);
                 self.print_cmd_chr(if_test, self.cur_if);
                 if (self.if_limit == fi_code) {
                     self.print_esc(66158i32);
                 }
                 if (self.if_line != 0i32) {
                     {
-                        self.print(66891i32);
+                        self.print(66892i32);
                         self.print_int(self.if_line);
                     }
                 }
-                self.print(66932i32);
+                self.print(66933i32);
                 self.if_line = self.mem[crate::ix::U(((self.cond_ptr).wrapping_add(1i32)) as usize)].int();
                 self.cur_if = self.mem[crate::ix::U((self.cond_ptr) as usize)].hh().b1();
                 self.if_limit = self.mem[crate::ix::U((self.cond_ptr) as usize)].hh().b0();
@@ -1817,7 +1817,7 @@ impl Globals {
                         self.print_char(41i32);
                         if (l != 0i32) {
                             {
-                                self.print(66891i32);
+                                self.print(66892i32);
                                 self.print_int(l);
                             }
                         }
@@ -4070,7 +4070,7 @@ impl Globals {
                                         self.print(66025i32);
                                     }
                                     self.print_esc(66155i32);
-                                    self.print(66928i32);
+                                    self.print(66929i32);
                                     self.print_cmd_chr(self.cur_cmd, self.cur_chr);
                                     self.print_char(39i32);
                                     {

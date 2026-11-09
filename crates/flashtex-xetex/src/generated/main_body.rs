@@ -244,153 +244,153 @@ impl Globals {
                     self.first = (self.last).wrapping_add(1i32);
                 }
                 // §1451
-                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 66704i32)) {
+                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 66705i32)) {
                     {
                         self.no_new_control_sequence = false;
                         // §1399
-                        self.primitive(66743i32, extension, pic_file_code);
-                        self.primitive(66744i32, extension, pdf_file_code);
-                        self.primitive(66745i32, extension, glyph_code);
-                        self.primitive(66746i32, extension, XeTeX_linebreak_locale_extension_code);
-                        self.primitive(66747i32, assign_toks, XeTeX_inter_char_loc);
-                        self.primitive(66748i32, extension, pdf_save_pos_node);
+                        self.primitive(66744i32, extension, pic_file_code);
+                        self.primitive(66745i32, extension, pdf_file_code);
+                        self.primitive(66746i32, extension, glyph_code);
+                        self.primitive(66747i32, extension, XeTeX_linebreak_locale_extension_code);
+                        self.primitive(66748i32, assign_toks, XeTeX_inter_char_loc);
+                        self.primitive(66749i32, extension, pdf_save_pos_node);
                         // §1452
-                        self.primitive(66804i32, last_item, last_node_type_code);
-                        self.primitive(66805i32, last_item, eTeX_version_code);
+                        self.primitive(66805i32, last_item, last_node_type_code);
+                        self.primitive(66806i32, last_item, eTeX_version_code);
                         self.primitive(66106i32, convert, eTeX_revision_code);
-                        self.primitive(66806i32, last_item, XeTeX_version_code);
-                        self.primitive(66807i32, convert, XeTeX_revision_code);
-                        self.primitive(66808i32, last_item, XeTeX_count_glyphs_code);
-                        self.primitive(66809i32, last_item, XeTeX_count_variations_code);
-                        self.primitive(66810i32, last_item, XeTeX_variation_code);
-                        self.primitive(66811i32, last_item, XeTeX_find_variation_by_name_code);
-                        self.primitive(66812i32, last_item, XeTeX_variation_min_code);
-                        self.primitive(66813i32, last_item, XeTeX_variation_max_code);
-                        self.primitive(66814i32, last_item, XeTeX_variation_default_code);
-                        self.primitive(66815i32, last_item, XeTeX_count_features_code);
-                        self.primitive(66816i32, last_item, XeTeX_feature_code_code);
-                        self.primitive(66817i32, last_item, XeTeX_find_feature_by_name_code);
-                        self.primitive(66818i32, last_item, XeTeX_is_exclusive_feature_code);
-                        self.primitive(66819i32, last_item, XeTeX_count_selectors_code);
-                        self.primitive(66820i32, last_item, XeTeX_selector_code_code);
-                        self.primitive(66821i32, last_item, XeTeX_find_selector_by_name_code);
-                        self.primitive(66822i32, last_item, XeTeX_is_default_selector_code);
-                        self.primitive(66823i32, convert, XeTeX_variation_name_code);
-                        self.primitive(66824i32, convert, XeTeX_feature_name_code);
-                        self.primitive(66825i32, convert, XeTeX_selector_name_code);
-                        self.primitive(66826i32, last_item, XeTeX_OT_count_scripts_code);
-                        self.primitive(66827i32, last_item, XeTeX_OT_count_languages_code);
-                        self.primitive(66828i32, last_item, XeTeX_OT_count_features_code);
-                        self.primitive(66829i32, last_item, XeTeX_OT_script_code);
-                        self.primitive(66830i32, last_item, XeTeX_OT_language_code);
-                        self.primitive(66831i32, last_item, XeTeX_OT_feature_code);
-                        self.primitive(66832i32, last_item, XeTeX_map_char_to_glyph_code);
-                        self.primitive(66833i32, last_item, XeTeX_glyph_index_code);
-                        self.primitive(66834i32, last_item, XeTeX_glyph_bounds_code);
-                        self.primitive(66835i32, convert, XeTeX_glyph_name_code);
-                        self.primitive(66836i32, last_item, XeTeX_font_type_code);
-                        self.primitive(66837i32, last_item, XeTeX_first_char_code);
-                        self.primitive(66838i32, last_item, XeTeX_last_char_code);
-                        self.primitive(66839i32, last_item, XeTeX_pdf_page_count_code);
+                        self.primitive(66807i32, last_item, XeTeX_version_code);
+                        self.primitive(66808i32, convert, XeTeX_revision_code);
+                        self.primitive(66809i32, last_item, XeTeX_count_glyphs_code);
+                        self.primitive(66810i32, last_item, XeTeX_count_variations_code);
+                        self.primitive(66811i32, last_item, XeTeX_variation_code);
+                        self.primitive(66812i32, last_item, XeTeX_find_variation_by_name_code);
+                        self.primitive(66813i32, last_item, XeTeX_variation_min_code);
+                        self.primitive(66814i32, last_item, XeTeX_variation_max_code);
+                        self.primitive(66815i32, last_item, XeTeX_variation_default_code);
+                        self.primitive(66816i32, last_item, XeTeX_count_features_code);
+                        self.primitive(66817i32, last_item, XeTeX_feature_code_code);
+                        self.primitive(66818i32, last_item, XeTeX_find_feature_by_name_code);
+                        self.primitive(66819i32, last_item, XeTeX_is_exclusive_feature_code);
+                        self.primitive(66820i32, last_item, XeTeX_count_selectors_code);
+                        self.primitive(66821i32, last_item, XeTeX_selector_code_code);
+                        self.primitive(66822i32, last_item, XeTeX_find_selector_by_name_code);
+                        self.primitive(66823i32, last_item, XeTeX_is_default_selector_code);
+                        self.primitive(66824i32, convert, XeTeX_variation_name_code);
+                        self.primitive(66825i32, convert, XeTeX_feature_name_code);
+                        self.primitive(66826i32, convert, XeTeX_selector_name_code);
+                        self.primitive(66827i32, last_item, XeTeX_OT_count_scripts_code);
+                        self.primitive(66828i32, last_item, XeTeX_OT_count_languages_code);
+                        self.primitive(66829i32, last_item, XeTeX_OT_count_features_code);
+                        self.primitive(66830i32, last_item, XeTeX_OT_script_code);
+                        self.primitive(66831i32, last_item, XeTeX_OT_language_code);
+                        self.primitive(66832i32, last_item, XeTeX_OT_feature_code);
+                        self.primitive(66833i32, last_item, XeTeX_map_char_to_glyph_code);
+                        self.primitive(66834i32, last_item, XeTeX_glyph_index_code);
+                        self.primitive(66835i32, last_item, XeTeX_glyph_bounds_code);
+                        self.primitive(66836i32, convert, XeTeX_glyph_name_code);
+                        self.primitive(66837i32, last_item, XeTeX_font_type_code);
+                        self.primitive(66838i32, last_item, XeTeX_first_char_code);
+                        self.primitive(66839i32, last_item, XeTeX_last_char_code);
+                        self.primitive(66840i32, last_item, XeTeX_pdf_page_count_code);
                         // §1467
-                        self.primitive(66849i32, assign_toks, every_eof_loc);
-                        self.primitive(66850i32, assign_int, 7892325i32);
-                        self.primitive(66851i32, assign_int, 7892326i32);
-                        self.primitive(66852i32, assign_int, 7892327i32);
-                        self.primitive(66853i32, assign_int, 7892328i32);
-                        self.primitive(66854i32, assign_int, 7892329i32);
-                        self.primitive(66855i32, assign_int, 7892330i32);
-                        self.primitive(66856i32, assign_int, 7892331i32);
-                        self.primitive(66857i32, assign_int, 7892332i32);
-                        self.primitive(66858i32, assign_int, 7892333i32);
-                        self.primitive(66859i32, assign_int, 7892335i32);
+                        self.primitive(66850i32, assign_toks, every_eof_loc);
+                        self.primitive(66851i32, assign_int, 7892325i32);
+                        self.primitive(66852i32, assign_int, 7892326i32);
+                        self.primitive(66853i32, assign_int, 7892327i32);
+                        self.primitive(66854i32, assign_int, 7892328i32);
+                        self.primitive(66855i32, assign_int, 7892329i32);
+                        self.primitive(66856i32, assign_int, 7892330i32);
+                        self.primitive(66857i32, assign_int, 7892331i32);
+                        self.primitive(66858i32, assign_int, 7892332i32);
+                        self.primitive(66859i32, assign_int, 7892333i32);
+                        self.primitive(66860i32, assign_int, 7892335i32);
                         // §1473
-                        self.primitive(66873i32, last_item, current_group_level_code);
-                        self.primitive(66874i32, last_item, current_group_type_code);
+                        self.primitive(66874i32, last_item, current_group_level_code);
+                        self.primitive(66875i32, last_item, current_group_type_code);
                         // §1476
-                        self.primitive(66875i32, last_item, current_if_level_code);
-                        self.primitive(66876i32, last_item, current_if_type_code);
-                        self.primitive(66877i32, last_item, current_if_branch_code);
+                        self.primitive(66876i32, last_item, current_if_level_code);
+                        self.primitive(66877i32, last_item, current_if_type_code);
+                        self.primitive(66878i32, last_item, current_if_branch_code);
                         // §1479
-                        self.primitive(66878i32, last_item, font_char_wd_code);
-                        self.primitive(66879i32, last_item, font_char_ht_code);
-                        self.primitive(66880i32, last_item, font_char_dp_code);
-                        self.primitive(66881i32, last_item, font_char_ic_code);
+                        self.primitive(66879i32, last_item, font_char_wd_code);
+                        self.primitive(66880i32, last_item, font_char_ht_code);
+                        self.primitive(66881i32, last_item, font_char_dp_code);
+                        self.primitive(66882i32, last_item, font_char_ic_code);
                         // §1482
-                        self.primitive(66882i32, last_item, par_shape_length_code);
-                        self.primitive(66883i32, last_item, par_shape_indent_code);
-                        self.primitive(66884i32, last_item, par_shape_dimen_code);
+                        self.primitive(66883i32, last_item, par_shape_length_code);
+                        self.primitive(66884i32, last_item, par_shape_indent_code);
+                        self.primitive(66885i32, last_item, par_shape_dimen_code);
                         // §1485
-                        self.primitive(66885i32, xray, show_groups);
+                        self.primitive(66886i32, xray, show_groups);
                         // §1494
-                        self.primitive(66887i32, xray, show_tokens);
+                        self.primitive(66888i32, xray, show_tokens);
                         // §1496
-                        self.primitive(66888i32, the, 1i32);
-                        self.primitive(66889i32, the, show_tokens);
+                        self.primitive(66889i32, the, 1i32);
+                        self.primitive(66890i32, the, show_tokens);
                         // §1499
-                        self.primitive(66890i32, xray, show_ifs);
+                        self.primitive(66891i32, xray, show_ifs);
                         // §1502
-                        self.primitive(66894i32, set_page_int, 2i32);
+                        self.primitive(66895i32, set_page_int, 2i32);
                         // §1507
                         self.primitive(66281i32, left_right, middle_noad);
                         // §1511
-                        self.primitive(66898i32, assign_int, 7892334i32);
-                        self.primitive(66899i32, assign_int, 7892339i32);
-                        self.primitive(66900i32, assign_int, 7892341i32);
-                        self.primitive(66901i32, assign_int, 7892342i32);
-                        self.primitive(66902i32, assign_int, 7892343i32);
-                        self.primitive(66903i32, assign_int, 7892340i32);
-                        self.primitive(66904i32, assign_int, 7892344i32);
-                        self.primitive(66905i32, assign_int, 7892347i32);
-                        self.primitive(66906i32, assign_int, 7892348i32);
-                        self.primitive(66907i32, assign_int, 7892349i32);
-                        self.primitive(66908i32, assign_int, 7892350i32);
-                        self.primitive(66749i32, extension, XeTeX_input_encoding_extension_code);
-                        self.primitive(66750i32, extension, XeTeX_default_encoding_extension_code);
-                        self.primitive(66909i32, valign, begin_L_code);
-                        self.primitive(66910i32, valign, end_L_code);
-                        self.primitive(66911i32, valign, begin_R_code);
-                        self.primitive(66912i32, valign, end_R_code);
+                        self.primitive(66899i32, assign_int, 7892334i32);
+                        self.primitive(66900i32, assign_int, 7892339i32);
+                        self.primitive(66901i32, assign_int, 7892341i32);
+                        self.primitive(66902i32, assign_int, 7892342i32);
+                        self.primitive(66903i32, assign_int, 7892343i32);
+                        self.primitive(66904i32, assign_int, 7892340i32);
+                        self.primitive(66905i32, assign_int, 7892344i32);
+                        self.primitive(66906i32, assign_int, 7892347i32);
+                        self.primitive(66907i32, assign_int, 7892348i32);
+                        self.primitive(66908i32, assign_int, 7892349i32);
+                        self.primitive(66909i32, assign_int, 7892350i32);
+                        self.primitive(66750i32, extension, XeTeX_input_encoding_extension_code);
+                        self.primitive(66751i32, extension, XeTeX_default_encoding_extension_code);
+                        self.primitive(66910i32, valign, begin_L_code);
+                        self.primitive(66911i32, valign, end_L_code);
+                        self.primitive(66912i32, valign, begin_R_code);
+                        self.primitive(66913i32, valign, end_R_code);
                         // §1558
-                        self.primitive(66921i32, input, 2i32);
+                        self.primitive(66922i32, input, 2i32);
                         // §1570
-                        self.primitive(66923i32, read_to_cs, 1i32);
+                        self.primitive(66924i32, read_to_cs, 1i32);
                         // §1573
                         self.primitive(66155i32, expand_after, 1i32);
-                        self.primitive(66924i32, if_test, if_def_code);
-                        self.primitive(66925i32, if_test, if_cs_code);
-                        self.primitive(66926i32, if_test, if_font_char_code);
-                        self.primitive(66927i32, if_test, if_in_csname_code);
+                        self.primitive(66925i32, if_test, if_def_code);
+                        self.primitive(66926i32, if_test, if_cs_code);
+                        self.primitive(66927i32, if_test, if_font_char_code);
+                        self.primitive(66928i32, if_test, if_in_csname_code);
                         // §1581
-                        self.primitive(66617i32, prefix, 8i32);
+                        self.primitive(66618i32, prefix, 8i32);
                         // §1589
-                        self.primitive(66933i32, last_item, 67i32);
-                        self.primitive(66934i32, last_item, 68i32);
-                        self.primitive(66935i32, last_item, 69i32);
-                        self.primitive(66936i32, last_item, 70i32);
+                        self.primitive(66934i32, last_item, 67i32);
+                        self.primitive(66935i32, last_item, 68i32);
+                        self.primitive(66936i32, last_item, 69i32);
+                        self.primitive(66937i32, last_item, 70i32);
                         // §1612
-                        self.primitive(66940i32, last_item, glue_stretch_order_code);
-                        self.primitive(66941i32, last_item, glue_shrink_order_code);
-                        self.primitive(66942i32, last_item, glue_stretch_code);
-                        self.primitive(66943i32, last_item, glue_shrink_code);
+                        self.primitive(66941i32, last_item, glue_stretch_order_code);
+                        self.primitive(66942i32, last_item, glue_shrink_order_code);
+                        self.primitive(66943i32, last_item, glue_stretch_code);
+                        self.primitive(66944i32, last_item, glue_shrink_code);
                         // §1616
-                        self.primitive(66944i32, last_item, mu_to_glue_code);
-                        self.primitive(66945i32, last_item, glue_to_mu_code);
+                        self.primitive(66945i32, last_item, mu_to_glue_code);
+                        self.primitive(66946i32, last_item, glue_to_mu_code);
                         // §1620
-                        self.primitive(66946i32, mark, marks_code);
-                        self.primitive(66947i32, top_bot_mark, 5i32);
-                        self.primitive(66948i32, top_bot_mark, 6i32);
-                        self.primitive(66949i32, top_bot_mark, 7i32);
-                        self.primitive(66950i32, top_bot_mark, 8i32);
-                        self.primitive(66951i32, top_bot_mark, 9i32);
+                        self.primitive(66947i32, mark, marks_code);
+                        self.primitive(66948i32, top_bot_mark, 5i32);
+                        self.primitive(66949i32, top_bot_mark, 6i32);
+                        self.primitive(66950i32, top_bot_mark, 7i32);
+                        self.primitive(66951i32, top_bot_mark, 8i32);
+                        self.primitive(66952i32, top_bot_mark, 9i32);
                         // §1672
-                        self.primitive(66956i32, un_vbox, last_box_code);
-                        self.primitive(66957i32, un_vbox, vsplit_code);
+                        self.primitive(66957i32, un_vbox, last_box_code);
+                        self.primitive(66958i32, un_vbox, vsplit_code);
                         // §1675
-                        self.primitive(66958i32, set_shape, inter_line_penalties_loc);
-                        self.primitive(66959i32, set_shape, club_penalties_loc);
-                        self.primitive(66960i32, set_shape, widow_penalties_loc);
-                        self.primitive(66961i32, set_shape, display_widow_penalties_loc);
+                        self.primitive(66959i32, set_shape, inter_line_penalties_loc);
+                        self.primitive(66960i32, set_shape, club_penalties_loc);
+                        self.primitive(66961i32, set_shape, widow_penalties_loc);
+                        self.primitive(66962i32, set_shape, display_widow_penalties_loc);
                         // §1451
                         if (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32) {
                             self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
@@ -398,7 +398,7 @@ impl Globals {
                         self.eTeX_mode = 1i32;
                         // §1624
                         self.max_reg_num = 32767i32;
-                        self.max_reg_help_line = 66953i32;
+                        self.max_reg_help_line = 66954i32;
                     }
                 }
                 // §1451

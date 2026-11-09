@@ -907,6 +907,7 @@
 43Your \output commands should empty \box255,
 34e.g., by saying `\shipout\box255'.
 43Proceed; I'll discard its present contents.
+62FlashTeX: internal error avoided (TeX Live xetex crashes here)
 18Missing $ inserted
 56I've inserted a begin-math/end-math symbol since I think
 48you left one out. Proceed, with fingers crossed.
@@ -1425,4 +1426,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*173681847
+*016195732
