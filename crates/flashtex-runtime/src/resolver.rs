@@ -148,6 +148,13 @@ pub trait FileResolver: Send {
     fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
         true
     }
+    /// [`FileResolver::name_ok`], with kpathsea's message on a refusal
+    /// naming `invocation` (the engine's `argv[0]` as given), as a web2c
+    /// program's own kpathsea instance names it: `/path/pdftex: Not writing
+    /// to ../x.tex (openout_any = p; no extended check).`
+    fn name_ok_as(&mut self, name: &str, write: bool, _invocation: &str) -> bool {
+        self.name_ok(name, write)
+    }
     /// [`FileResolver::name_ok`] without kpathsea's message on a refusal
     /// (`kpse_out_name_ok_silent`), for a caller that reports it under
     /// another program's name.
@@ -665,6 +672,12 @@ mod kpse {
         fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
         fn flashtex_kpse_get_make_tex_discard_errors(k: *mut c_void) -> c_int;
         fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
+        fn flashtex_kpse_name_ok_as(
+            k: *mut c_void,
+            name: *const c_char,
+            write: c_int,
+            invocation: *const c_char,
+        ) -> c_int;
         fn flashtex_kpse_name_ok_silent(k: *mut c_void, name: *const c_char, write: c_int)
             -> c_int;
         fn flashtex_kpse_find_all(
@@ -1769,6 +1782,15 @@ mod kpse {
                 return false;
             };
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
+        fn name_ok_as(&mut self, name: &str, write: bool, invocation: &str) -> bool {
+            let (Ok(n), Ok(i)) = (CString::new(name), CString::new(invocation)) else {
+                return self.name_ok(name, write);
+            };
+            // SAFETY: `self.k` is the live kpathsea instance; `n` and `i`
+            // are NUL-terminated strings that outlive the call, which puts
+            // the instance's own invocation name back before it returns.
+            unsafe { flashtex_kpse_name_ok_as(self.k, n.as_ptr(), write as c_int, i.as_ptr()) != 0 }
         }
         fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
             let Ok(n) = CString::new(name) else {
