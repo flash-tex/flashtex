@@ -164,7 +164,10 @@ fn uncovered_subrs(last: i32) -> Vec<(Key, Vec<C>)> {
     vec![
         (Key::Glyph("a"), glyph()),
         (Key::Glyph("b"), glyph()),
-        (Key::Subr(10), vec![N(-3), N(0), CALLOTHERSUBR, CALLSUBR, RETURN]),
+        (
+            Key::Subr(10),
+            vec![N(-3), N(0), CALLOTHERSUBR, CALLSUBR, RETURN],
+        ),
         (Key::Subr(11), t(12)),
         (Key::Subr(12), t(13)),
         (Key::Subr(13), t(last)),

@@ -683,7 +683,8 @@ impl Charstrings {
             if walk.active.contains_key(&state) {
                 match walk.confirm.get(&state) {
                     Some((stack, above, _))
-                        if *stack == self.stack.values && above.as_slice() == self.stack.uncoverable() =>
+                        if *stack == self.stack.values
+                            && above.as_slice() == self.stack.uncoverable() =>
                     {
                         let caller = walk.frames.last().map_or(&frame.owner, |f| &f.owner);
                         return Err(caller.error(format_args!(
