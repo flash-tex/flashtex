@@ -38,6 +38,10 @@ SMALL = ["0pt", "1pt", "2pt", "3pt", "5pt", "10pt", "-2pt"]
 PENS = ["0", "50", "-50", "100", "10000", "-10000", "-10001", "-20000",
         "150", "-1073741824", "1000"]
 INSERTS = ["100", "101", "254"]
+# Material an output routine adds to the contributions makes another page,
+# whose output adds it again: bounded by \count6, or every run would loop
+# until the output cap.
+ONCE = "\\ifnum\\count6<3 \\global\\advance\\count6 1 %s\\fi"
 
 
 class A:
@@ -101,6 +105,12 @@ class A:
             return "\\penalty%s" % self.pick(PENS)
         if k == 8:
             return "\\hbox to %s{%s}" % (self.pick(SMALL), self.text())
+        if not self.quiet and self.plain and self.chance(0.5):
+            # leaders and shipout-time positions inside the cells
+            return self.pick(["\\hrulefill", "\\dotfill", "\\leaders\\hrule\\hfil",
+                              "\\xleaders\\hbox to 7pt{.\\hss}\\hfill",
+                              "\\pdfsavepos\\write-1{[pos \\the\\pdflastxpos,\\the\\pdflastypos]}",
+                              "\\special{al}", "\\pdfliteral{0 g}"])
         return "\\unskip" if self.chance(0.5) else "\\vadjust{\\kern1pt}"
 
     def vstuff(self):
@@ -333,11 +343,11 @@ class A:
             elif k == 13:
                 parts.append("\\unvbox%s" % self.pick(INSERTS))
             elif k == 14:
-                parts.append("\\insert100{\\hbox{re}}")
+                parts.append(ONCE % "\\insert100{\\hbox{re}}")
             elif k == 15:
-                parts.append("\\mark{from-output}")
+                parts.append(ONCE % "\\mark{from-output}")
             elif k == 16:
-                parts.append("\\vbox{\\unvcopy255}\\setbox255\\box255")
+                parts.append(ONCE % "\\vbox{\\unvcopy255}\\setbox255\\box255")
             elif k == 17:
                 parts.append("\\global\\advance\\count9 by 1 ")
             elif k == 18:
@@ -463,14 +473,21 @@ def generate_replay(seed, fonts=False):
     if fonts:
         lines.append(r"\font\fa=cmr10 \fa %")
     lines.append(r"\output={\shipout\box255}%")
-    style = a.pick(["box", "box", "page"])
+    # box/page: measure calls (BOX-MEMO.md §2); draw: calls that append
+    # their nodes to the list they are called in (§10.3)
+    style = a.pick(["box", "box", "page", "draw", "draw"])
     arity = a.pick([0, 0, 1])
     a.quiet = True
     body = []
     for _ in range(a.n(1, 4)):
         # a measure call (BOX-MEMO.md §2): local boxes inside a group,
         # results out through \global registers
-        if style == "box" or a.chance(0.5):
+        if style == "draw":
+            body.append(a.alignment(wrap=True).replace("#", "##"))
+            if a.chance(0.3):
+                body.append(a.pick(["\\kern1pt", "\\penalty7", "\\global\\advance\\count9 1 ",
+                                    "\\vrule width 1pt", "\\hbox{\\vrule width 2pt}"]))
+        elif style == "box" or a.chance(0.5):
             al = a.alignment(wrap=True).replace("#", "##")  # inside \def
             reg = a.n(0, 4)
             body.append("\\begingroup\\setbox%d%s\\global\\dimen1=\\wd%d \\global\\dimen2=\\ht%d "
@@ -488,6 +505,16 @@ def generate_replay(seed, fonts=False):
     lines.extend(b + "%" for b in body)
     lines.append("}%")
     call = "\\measure" + ("{\\kern1pt}" if arity else "")
+    if style == "draw":
+        # where a draw call's nodes go: a box, an alignment cell, an output
+        # routine, the main vertical list
+        call = a.pick([
+            "\\setbox4\\vbox{%s}" % call, "\\setbox4\\hbox{%s}" % call,
+            "\\setbox4\\vbox{\\halign{#\\cr %s\\cr %s\\cr}}" % (call, call),
+            "\\setbox4\\vtop{\\kern1pt %s\\unskip\\setbox5\\lastbox}" % call,
+            "\\setbox4\\hbox{\\valign{#\\cr %s\\cr}}" % call,
+            "{\\output={\\setbox4\\vbox{%s\\unvbox255}\\shipout\\box4}\\hbox{p}\\penalty-10000}" % call,
+            call])
     steps = [call + "\\show%", call + "\\show%"]
     for _ in range(a.n(3, 10)):
         x = a.r.random()
