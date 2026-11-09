@@ -573,6 +573,13 @@ gate_parity_selftest() {
   python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
   # package-smoke's runner and the P5 board's T4 pick (ci.yml's gate job runs the same)
   python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+  # the Python tools that CI, a gate or a nightly workflow runs: their pure-logic unit tests
+  python3 -m unittest discover -s tools/displaylist -p 'test_*.py'
+  python3 -m unittest discover -s tools/xetex-lockstep -p 'test_*.py'
+  python3 -m unittest discover -s tools/unicode-m3 -p 'test_*.py'
+  python3 -m unittest discover -s tools/web2rust -p 'test_*.py'
+  python3 -m unittest discover -s tools/font-census -p 'test_*.py'
+  python3 -m unittest discover -s tools/rewrite -p 'test_*.py'
   scripts/tests/p5-pick-t4.test.sh
 }
 
