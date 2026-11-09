@@ -6778,3 +6778,698 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// AUDIT-PAGES: where an edit's compile restarted and converged (shown with
+/// `--nocapture`).
+fn page_trace(what: &str, r: &str) {
+    eprintln!(
+        "{what}: mode {} restart_pages {} converged_at {} rerun_from {} pages {}",
+        field(r, "mode"),
+        field(r, "restart_pages"),
+        field(r, "converged_at"),
+        field(r, "rerun_from"),
+        field(r, "pages")
+    );
+}
+
+/// AUDIT-PAGES: the page builder's state at the restart points between pages
+/// (DESIGN.md §5.2, after `build_page`) and at convergence (§5.3): held
+/// floats, footnotes split across pages (with `\skip`, `\dimen` and `\count`
+/// of the class changed mid-document), marks and e-TeX mark classes read by
+/// the header, `\lastpenalty`, `\pagetotal` and the rest read in vertical
+/// mode right after `build_page`, and `\afterpage`. The edits lengthen a
+/// paragraph early, mid and late, reflow two pages that converge later, and
+/// remove a float and a split footnote; each is reverted.
+#[test]
+fn page_builder_state_at_restart_points_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pages");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fig = |pos: &str, h: &str, k: usize| {
+        format!(
+            "\\begin{{figure}}[{pos}]\\centering\\rule{{4cm}}{{{h}}}\
+             \\caption{{Figure {k}}}\\label{{fig{k}}}\\end{{figure}}\n"
+        )
+    };
+    let long_fn = format!(
+        "A long footnote {}and ends.",
+        "that goes on and on with words ".repeat(30)
+    );
+    let readout =
+        "\\par\\penalty 7 \\edef\\x{P\\the\\lastpenalty/K\\the\\lastkern/S\\the\\lastskip/\
+                   N\\the\\lastnodetype/T\\the\\pagetotal/G\\the\\pagegoal/D\\the\\pagedepth/\
+                   I\\the\\insertpenalties}\\noindent\\x\\par\\kern 3pt\\penalty 9 \
+                   \\noindent\\the\\lastkern/\\the\\lastpenalty\\par\n";
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for (i, s) in [
+        (3, fig("t", "3cm", 1)),
+        (9, fig("b", "2cm", 2)),
+        (15, fig("h", "2cm", 3)),
+        (16, fig("p", "12cm", 4)),
+        (22, fig("tbp", "0.5\\textheight", 5)),
+        (23, fig("t", "6cm", 6)),
+        (31, fig("!h", "3cm", 8)),
+        (8, format!("Text\\footnote{{{long_fn}}} here.")),
+        (19, format!("Again\\footnote{{{long_fn}}}.")),
+        (
+            25,
+            "\\setlength{\\skip\\footins}{20pt plus 4pt}\\setlength{\\dimen\\footins}{4cm}".into(),
+        ),
+        (28, format!("x\\footnote{{{long_fn}}}\\footnote{{second}}")),
+        (36, "\\count\\footins=800 z\\footnote{scaled}".into()),
+        (
+            12,
+            "\\afterpage{\\noindent AFTERPAGE \\thepage\\par}".into(),
+        ),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    for i in (0..48).step_by(7) {
+        at.entry(i)
+            .or_default()
+            .push_str(&format!("\\section{{Sec {i}}}\\markright{{R{i}}}"));
+    }
+    for i in (0..48).step_by(2) {
+        at.entry(i)
+            .or_default()
+            .push_str(&format!("\\marks1{{a{i}}}"));
+    }
+    for i in (1..48).step_by(4) {
+        at.entry(i).or_default().push_str(readout);
+    }
+    let body: String = (0..48)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{afterpage}}\\usepackage{{fancyhdr}}\\pagestyle{{fancy}}\n\
+         \\fancyhead[L]{{\\leftmark}}\\fancyhead[C]{{\\topmarks1/\\firstmarks1/\\botmarks1}}\
+         \\fancyhead[R]{{\\rightmark}}\n\
+         \\begin{{document}}\n{body}See p.~\\pageref{{fig5}}.\n\\end{{document}}\n"
+    );
+    let longer = |t: &str, i: usize| {
+        t.replacen(
+            &format!("Paragraph {i} with"),
+            &format!(
+                "Paragraph {i}, now edited and longer than before so that it takes a line or two more, with"
+            ),
+            1,
+        )
+    };
+    let drop = |t: &str, i: usize| {
+        let a = t.find(&format!("Paragraph {i} with")).unwrap();
+        let b = a + t[a..].find("\n\n").unwrap() + 2;
+        format!("{}{}", &t[..a], &t[b..])
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+    }
+    let edits = [
+        ("early", longer(&doc, 5)),
+        ("mid", longer(&doc, 21)),
+        ("a reflow that converges later", drop(&longer(&doc, 8), 13)),
+        ("late", longer(&doc, 40)),
+        ("two paragraphs", longer(&longer(&doc, 15), 16)),
+        ("a float removed", doc.replacen(&fig("p", "12cm", 4), "", 1)),
+        (
+            "a float removed early",
+            doc.replacen(&fig("t", "3cm", 1), "", 1),
+        ),
+        (
+            "a split footnote removed",
+            doc.replacen(&format!("Again\\footnote{{{long_fn}}}."), "Again.", 1),
+        ),
+    ];
+    for (what, text) in &edits {
+        assert_ne!(text, &doc, "{what}");
+        page_trace(
+            what,
+            &compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what),
+        );
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc)],
+            &format!("{what}: revert"),
+        );
+    }
+}
+
+/// AUDIT-PAGES: the page builder's primitives across restart points and
+/// convergence: a box `\vsplit` piece by piece over many pages (split marks,
+/// `\splitdiscards`), `\pagediscards`, `\outputpenalty`, `\insertpenalties`
+/// and `\deadcycles` read by the header inside the output routine,
+/// `\holdinginserts` switched on and off, `\pagegoal` set and a forced break
+/// by `\vadjust`, a longtable across pages, and hyperref's per-page links.
+#[test]
+fn page_builder_primitives_at_restart_points_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pages2");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src: String = (0..80)
+        .map(|k| format!("\\marks2{{s{k}}}\\mark{{sm{k}}}\\hbox{{source line {k}}}\\penalty0\\vskip 2pt plus 1pt\n"))
+        .collect();
+    let take = "\\par\\setbox\\piece=\\vsplit\\src to 1in \\noindent[SF\\splitfirstmark/SB\\splitbotmark/\
+                \\splitfirstmarks2/\\splitbotmarks2/\\the\\ht\\piece/\\the\\ht\\src]\\par\
+                \\setbox\\sdisc=\\vbox{\\splitdiscards}\\noindent[D\\the\\ht\\sdisc]\\par\\box\\piece\
+                \\setbox\\pdisc=\\vbox{\\pagediscards}\\noindent[PD\\the\\ht\\pdisc/\\the\\dp\\pdisc]\\par\n";
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for i in (2..48).step_by(4) {
+        at.entry(i).or_default().push_str(take);
+    }
+    for i in (0..48).step_by(3) {
+        at.entry(i)
+            .or_default()
+            .push_str("\\vskip 7pt plus 2pt\\penalty 30\\kern 3pt\\vskip 2pt\n");
+    }
+    for (i, s) in [
+        (
+            5,
+            format!(
+                "See \\pageref{{s30}}\\footnote{{note {}}}.",
+                "words ".repeat(80)
+            ),
+        ),
+        (11, "\\pagegoal=300pt ".to_string()),
+        (
+            14,
+            "\\noindent[\\the\\insertpenalties]\\vadjust{\\penalty-10000}".to_string(),
+        ),
+        (
+            18,
+            "\\begin{longtable}{ll}A&B\\\\\\endhead ".to_string()
+                + &(0..60)
+                    .map(|k| format!("r{k}&v{k}\\\\"))
+                    .collect::<String>()
+                + "\\end{longtable}\n",
+        ),
+        (
+            24,
+            "\\global\\holdinginserts=1 x\\footnote{held}".to_string(),
+        ),
+        (27, "\\global\\holdinginserts=0 ".to_string()),
+        (
+            30,
+            "\\section{Thirty}\\label{s30}\\href{http://a.b}{link}".to_string(),
+        ),
+        (33, "\\penalty-10001 ".to_string()),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..48)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{longtable}}\\usepackage{{fancyhdr}}\\pagestyle{{fancy}}\n\
+         \\fancyhead[L]{{OP\\the\\outputpenalty/IP\\the\\insertpenalties/DC\\the\\deadcycles}}\
+         \\fancyhead[R]{{\\topmarks2/\\botmarks2}}\\usepackage{{hyperref}}\n\
+         \\savingvdiscards=1 \\splitmaxdepth=1pt \\splittopskip=5pt\n\
+         \\newbox\\src\\newbox\\piece\\newbox\\sdisc\\newbox\\pdisc\n\\setbox\\src=\\vbox{{{src}}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let longer = |t: &str, i: usize| {
+        t.replacen(
+            &format!("Paragraph {i} with"),
+            &format!(
+                "Paragraph {i}, now edited and longer than before so that it takes a line or two more, with"
+            ),
+            1,
+        )
+    };
+    let drop = |t: &str, i: usize| {
+        let a = t.find(&format!("Paragraph {i} with")).unwrap();
+        let b = a + t[a..].find("\n\n").unwrap() + 2;
+        format!("{}{}", &t[..a], &t[b..])
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+    }
+    let edits = [
+        ("early", longer(&doc, 3)),
+        ("mid", longer(&doc, 20)),
+        ("a reflow that converges later", drop(&longer(&doc, 9), 13)),
+        ("late", longer(&doc, 40)),
+        ("in the held pages", longer(&doc, 25)),
+        ("a split taken out", doc.replacen(take, "", 3)),
+    ];
+    for (what, text) in &edits {
+        assert_ne!(text, &doc, "{what}");
+        page_trace(
+            what,
+            &compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what),
+        );
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc)],
+            &format!("{what}: revert"),
+        );
+    }
+}
+
+/// AUDIT-PAGES: output routines of their own (installed after
+/// `\begin{document}`, the run ended by the primitive `\end`) that carry
+/// state into the next page: `\holdinginserts` double output, an output that
+/// puts half the page back and changes `\vsize` (so `\deadcycles` and the
+/// next page's goal depend on it), and one that emits an insertion and a
+/// mark for the next page. Each with split insertions of a class whose
+/// `\skip`, `\dimen` and `\count` change mid-document and `\floatingpenalty`.
+#[test]
+fn output_routines_carrying_state_across_restart_points_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let info = "\\def\\info{\\hbox{OP\\the\\outputpenalty\\ IP\\the\\insertpenalties\\ DC\\the\\deadcycles\\ \
+                T:\\topmark/F:\\firstmark/B:\\botmark\\ M1:\\topmarks1/\\firstmarks1/\\botmarks1}}";
+    let outputs = [
+        (
+            "hold",
+            "\\global\\holdinginserts=1 \\output={\\ifnum\\holdinginserts>0 \\global\\holdinginserts=0 \
+             \\unvbox255 \\penalty\\outputpenalty\\else\\global\\holdinginserts=1 \\shipout\\vbox{\\info\\box255\
+             \\ifvoid\\notes\\else\\vskip\\skip\\notes\\box\\notes\\fi}\\fi}",
+        ),
+        (
+            "putback",
+            "\\maxdeadcycles=100 \\newcount\\oc \\output={\\global\\advance\\oc1 \\ifodd\\oc \
+             \\setbox0=\\vsplit255 to 1in \\shipout\\vbox{\\info\\box0}\\unvbox255 \\penalty\\outputpenalty\
+             \\global\\vsize=2.5in\\else\\global\\vsize=3in \\shipout\\vbox{\\info\\box255\
+             \\ifvoid\\notes\\else\\box\\notes\\fi}\\fi}",
+        ),
+        (
+            "emit",
+            "\\newcount\\oc \\output={\\global\\advance\\oc1 \\shipout\\vbox{\\info\\box255\
+             \\ifvoid\\notes\\else\\box\\notes\\fi}\\ifnum\\oc<9 \\insert\\notes{\\hbox{from output \\the\\oc}}\
+             \\mark{out\\the\\oc}\\fi}",
+        ),
+    ];
+    let note = format!(
+        "\\insert\\notes{{\\hsize=4in\\noindent {}end}}",
+        "note words go on ".repeat(25)
+    );
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for i in (0..44).step_by(3) {
+        at.entry(i)
+            .or_default()
+            .push_str(&format!("\\mark{{m{i}}}\\marks1{{n{i}}}"));
+    }
+    for (i, s) in [
+        (4, note.clone()),
+        (9, format!("\\floatingpenalty=50 {note}{note}")),
+        (17, "\\insert\\notes{\\hbox{short}}".to_string()),
+        (
+            20,
+            format!("\\skip\\notes=12pt \\dimen\\notes=0.5in \\count\\notes=1000 {note}"),
+        ),
+        (27, note.clone()),
+        (
+            33,
+            format!("\\floatingpenalty=20000 {note}\\insert\\notes{{\\hbox{{x}}}}"),
+        ),
+        (38, "\\par\\penalty-10000 ".to_string()),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..44)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let longer = |t: &str, i: usize| {
+        t.replacen(
+            &format!("Paragraph {i} with"),
+            &format!(
+                "Paragraph {i}, now edited and longer so that it takes a line or two more, with"
+            ),
+            1,
+        )
+    };
+    let drop = |t: &str, i: usize| {
+        let a = t.find(&format!("Paragraph {i} with")).unwrap();
+        let b = a + t[a..].find("\n\n").unwrap() + 2;
+        format!("{}{}", &t[..a], &t[b..])
+    };
+    for (name, output) in outputs {
+        let dir = e.dir.join(format!("output-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\makeatletter\n\
+             \\hsize=4in \\vsize=3in \\maxdepth=2pt \\parfillskip=0pt plus 1fil \\tolerance=9999\n\
+             \\newinsert\\notes \\skip\\notes=6pt plus 2pt \\dimen\\notes=1in \\count\\notes=500\n\
+             {info}\n{output}\n{body}\\par\\vfill\\penalty-20000\\@@end\n"
+        );
+        let mut h = Host::start(&e, &dir);
+        for _ in 0..2 {
+            compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc)],
+                &format!("{name}: settle"),
+            );
+        }
+        let edits = [
+            ("early", longer(&doc, 2)),
+            ("mid", longer(&doc, 19)),
+            ("a reflow that converges later", drop(&longer(&doc, 8), 12)),
+            ("late", longer(&doc, 35)),
+            ("an insertion removed", doc.replacen(&note, "", 1)),
+        ];
+        for (what, text) in &edits {
+            assert_ne!(text, &doc, "{what}");
+            let what = format!("{name}: {what}");
+            page_trace(
+                &what,
+                &compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], &what),
+            );
+            compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc)],
+                &format!("{what}: revert"),
+            );
+        }
+    }
+}
+
+/// AUDIT-PAGES: LaTeX's two-column float queues (`\@deferlist`, the column
+/// state carried from the first column to the second and to the next page),
+/// marginal notes, `\clearpage` flushing held floats, a longtable whose rows
+/// are edited, and hyperref footnotes split across pages; a float removed
+/// from a queue and one added.
+#[test]
+fn twocolumn_float_queues_at_restart_points_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pages-twocol");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fig = |env: &str, pos: &str, h: &str, k: usize| {
+        format!(
+            "\\begin{{{env}}}[{pos}]\\centering\\rule{{2cm}}{{{h}}}\
+             \\caption{{Figure {k}}}\\label{{fig{k}}}\\end{{{env}}}\n"
+        )
+    };
+    let long_fn = format!(
+        "A long footnote {}and ends.",
+        "that goes on and on with words ".repeat(30)
+    );
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for (i, s) in [
+        (3, fig("figure", "t", "3cm", 1)),
+        (5, fig("figure*", "t", "4cm", 2)),
+        (9, fig("figure", "b", "2cm", 3)),
+        (14, fig("figure", "p", "15cm", 4)),
+        (15, fig("figure*", "tp", "6cm", 5)),
+        (
+            22,
+            fig("figure", "t", "5cm", 6) + &fig("figure", "t", "5cm", 7),
+        ),
+        (26, "\\clearpage ".to_string()),
+        (30, fig("figure*", "t", "3cm", 8)),
+        (34, "\\marginpar{m34}".to_string()),
+        (8, format!("Text\\footnote{{{long_fn}}} here.")),
+        (19, format!("Again\\footnote{{{long_fn}}}.")),
+        (
+            40,
+            "\\begin{longtable}{ll}A&B\\\\\\endhead ".to_string()
+                + &(0..50)
+                    .map(|k| format!("row{k}&v{k}\\\\"))
+                    .collect::<String>()
+                + "\\end{longtable}\n",
+        ),
+        (44, "See \\ref{fig5} on \\pageref{fig5}.".to_string()),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..70)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let doc = format!(
+        "\\documentclass[twocolumn]{{article}}\n\\usepackage{{longtable}}\\usepackage{{hyperref}}\n\
+         \\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let longer = |t: &str, i: usize| {
+        t.replacen(
+            &format!("Paragraph {i} with"),
+            &format!(
+                "Paragraph {i}, now edited and longer than before so that it takes a line or two more, with"
+            ),
+            1,
+        )
+    };
+    let drop = |t: &str, i: usize| {
+        let a = t.find(&format!("Paragraph {i} with")).unwrap();
+        let b = a + t[a..].find("\n\n").unwrap() + 2;
+        format!("{}{}", &t[..a], &t[b..])
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+    }
+    let edits = [
+        ("early", longer(&doc, 4)),
+        ("mid", longer(&doc, 23)),
+        ("a reflow that converges later", drop(&longer(&doc, 10), 17)),
+        ("late", longer(&doc, 60)),
+        (
+            "a row edited",
+            doc.replacen("row30&v30", "row30 edited and longer&v30", 1),
+        ),
+        (
+            "a page float removed",
+            doc.replacen(&fig("figure", "p", "15cm", 4), "", 1),
+        ),
+        (
+            "a wide float removed",
+            doc.replacen(&fig("figure*", "t", "4cm", 2), "", 1),
+        ),
+        (
+            "a float added",
+            doc.replacen(
+                "Paragraph 12 with",
+                &(fig("figure", "t", "4cm", 9) + "Paragraph 12 with"),
+                1,
+            ),
+        ),
+    ];
+    for (what, text) in &edits {
+        assert_ne!(text, &doc, "{what}");
+        page_trace(
+            what,
+            &compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what),
+        );
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc)],
+            &format!("{what}: revert"),
+        );
+    }
+}
+
+/// AUDIT-PAGES: edits inside what the page builder holds across a restart
+/// point: the text of a footnote split over two pages, a held float's
+/// caption and height, a mark read as the next page's `\topmarks`, a
+/// deferred `\afterpage` body, and the page count changed by one late page
+/// (read by `\pageref` before it).
+#[test]
+fn edits_inside_held_page_material_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pages-held");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let long_fn = format!(
+        "A long footnote {}and ends.",
+        "that goes on and on with words ".repeat(30)
+    );
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for (i, s) in [
+        (2, "See the last page, \\pageref{last}.".to_string()),
+        (26, format!("Text\\footnote{{{long_fn}}} here.")),
+        (
+            30,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{5cm}\\caption{Held caption}\\end{figure}"
+                .to_string(),
+        ),
+        (
+            31,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{9cm}\\caption{Second held}\\end{figure}"
+                .to_string(),
+        ),
+        (34, "\\afterpage{\\noindent DEFERRED TEXT\\par}".to_string()),
+        (37, "\\marks1{the mark}".to_string()),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..90)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{afterpage}}\\usepackage{{fancyhdr}}\\pagestyle{{fancy}}\n\
+         \\fancyhead[C]{{\\topmarks1/\\firstmarks1/\\botmarks1}}\n\
+         \\begin{{document}}\n{body}\\label{{last}}\\end{{document}}\n"
+    );
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+    }
+    let edits = [
+        (
+            "inside a split footnote",
+            doc.replacen(
+                "and ends.",
+                "and ends, with a few more words that add a line to the split.",
+                1,
+            ),
+        ),
+        (
+            "a held float's caption",
+            doc.replacen("Held caption", "Held caption, longer", 1),
+        ),
+        ("a held float's height", doc.replacen("{5cm}", "{7cm}", 1)),
+        (
+            "a mark's text",
+            doc.replacen("the mark", "a changed mark", 1),
+        ),
+        (
+            "a deferred afterpage body",
+            doc.replacen("DEFERRED TEXT", "DEFERRED TEXT, now longer", 1),
+        ),
+        (
+            "one page more at the end",
+            doc.replacen("\\label{last}", "\\clearpage\\null\\label{last}", 1),
+        ),
+    ];
+    for (what, text) in &edits {
+        assert_ne!(text, &doc, "{what}");
+        page_trace(
+            what,
+            &compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what),
+        );
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc)],
+            &format!("{what}: revert"),
+        );
+    }
+}
+
+/// AUDIT-PAGES: a compile preempted at a between-page stop point (a held
+/// segment checkpoint materialised mid-page, DESIGN.md §5.2) with floats
+/// held and a footnote split across the page, then a newer edit before or
+/// after that point, or the revert.
+#[test]
+fn a_preemption_mid_page_with_held_floats_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let long_fn = format!(
+        "A long footnote {}and ends.",
+        "that goes on and on with words ".repeat(30)
+    );
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for (i, s) in [
+        (
+            7,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{6cm}\\caption{One}\\end{figure}".to_string(),
+        ),
+        (
+            8,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{8cm}\\caption{Two}\\end{figure}".to_string(),
+        ),
+        (12, format!("Text\\footnote{{{long_fn}}} here.")),
+        (14, "\\marks1{m14}".to_string()),
+        (
+            21,
+            "\\begin{figure}[p]\\centering\\rule{4cm}{15cm}\\caption{Three}\\end{figure}"
+                .to_string(),
+        ),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..60)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let base = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fancyhdr}}\\pagestyle{{fancy}}\
+         \\fancyhead[C]{{\\topmarks1/\\botmarks1}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let longer = |t: &str, i: usize| {
+        t.replacen(
+            &format!("Paragraph {i} with"),
+            &format!(
+                "Paragraph {i}, now edited and longer so that it takes a line or two more, with"
+            ),
+            1,
+        )
+    };
+    let early = longer(&base, 3);
+    for (k, (at, second)) in [
+        ("1 1 2", longer(&base, 30)),
+        ("1 1 3", base.clone()),
+        ("1 2 2", longer(&early, 20)),
+        ("1 2 4", longer(&base, 10)),
+        ("1 3 2", longer(&early, 45)),
+    ]
+    .iter()
+    .enumerate()
+    {
+        interrupt_then(&e, &format!("preempt-{k}"), &base, &early, at, second);
+    }
+}
