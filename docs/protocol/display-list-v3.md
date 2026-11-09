@@ -706,7 +706,8 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "includeonly", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "includeonly", "diag-v1",
+                  "viewport-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
@@ -813,6 +814,41 @@ keystroke's edit reaches the screen however fast the next one comes (lane
 LIVE-30MS). That `PAGE` comes after the newer `COMPILE` was sent and before
 the superseded compile's `DONE`; a client takes it like any other page. An `export` compile
 is killed as in 3.0.
+
+### 6.3.1 `VIEWPORT` (`viewport-v1`)
+
+Kind `0x09`, client to host, capability-gated: a client sends it only to a
+host whose `HELLO.capabilities` lists `viewport-v1`, and a host that does
+not know the kind ignores it, as it ignores any kind it does not know. It says which
+page the client shows now, between compiles:
+
+```json
+{"page": 412}
+```
+
+`page` is 0-based, as `COMPILE.viewport`. There is no reply, and it never
+starts a compile: the host records the page, and while no `COMPILE` waits it
+makes the engine's restart points around that page dense again (far from
+the last edit the host keeps fewer, lane MEMORY), so that the first keystroke
+there restarts close by. The host starts that work only after about 50 ms
+with nothing else arriving, so a key sent right after the `VIEWPORT` finds
+it not started (it starts 50 ms after that compile instead). A `COMPILE` that arrives while it runs stops it at its next
+stop point and drops it: the pages it typesets again are the ones the client
+holds (they are not sent), so nothing is lost but the restart points. A
+`VIEWPORT` that arrives while a compile is queued or paused, or while the
+external tools run or are due, waits until the host is idle again; the
+idle work never takes a changed input (a `.bbl` a tool wrote): the next
+compile does, and ships its pages and diagnostics. The restart points
+around the last edit stay dense as well, so the next key back there
+restarts as close as it would without the `VIEWPORT` (two dense windows
+at most: a later `VIEWPORT` moves the shown page's). A client sends `VIEWPORT`
+after the `COMPILE`s it queued before it, never ahead of them, and
+when scrolling settles (about 150 ms after the last scroll), and at once
+after a jump (a search result, an outline click, a SyncTeX reveal), so that
+the host hears of the jump before the next key. It is cheap: sending it
+often costs the host a page's typesetting at most.
+
+(Kind `0x08` is the macOS app's `TRIM`, `trim-v1`, which no host here lists.)
 
 ### 6.4 Replies
 

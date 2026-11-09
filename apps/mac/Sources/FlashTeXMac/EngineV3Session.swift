@@ -352,8 +352,19 @@ final class EngineV3Session {
     @ObservationIgnored private var fastAnchors: [String: EngineV3Edits.Anchors] = [:]
     @ObservationIgnored private var fastCheck: [String: (offset: Int, bytes: [UInt8])] = [:]
     @ObservationIgnored private var project: EngineV3Mirror?
-    /// The page the view shows (sent as `viewport`).
-    @ObservationIgnored var visiblePage = 0
+    /// The page the view shows (sent as `viewport`, and as `VIEWPORT` when it
+    /// changes: `DL3ViewportHint`).
+    @ObservationIgnored var visiblePage = 0 {
+        didSet { if visiblePage != oldValue { viewportHint.note(visiblePage) } }
+    }
+    /// Tells a `viewport-v1` host the shown page (spec §6.3.1), so that it
+    /// prepares a far page's restart points before the first key there.
+    @ObservationIgnored private lazy var viewportHint = DL3ViewportHint { [weak self] page in
+        guard let c = self?.connection, c.offersViewport else { return }
+        // On the send queue: after the COMPILEs queued before it, and main
+        // never waits on the connection's write lock (REVIEW-E on #2248).
+        EngineV3Session.sendQueue.async { try? c.setViewport(page: page) }
+    }
     /// A reopen's stored page to scroll to (`EngineV3Snapshot.visiblePage`),
     /// until the view has laid out with a width and scrolled there
     /// (`EngineV3PagesView.relayout`). Until then the compile sends it as

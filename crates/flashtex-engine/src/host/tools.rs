@@ -18,7 +18,9 @@
 //!   `save PATH` (persist S₀), `quit`.
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
 //!   `compile [PAGE]`, `compile-interrupt PASS PAGES [NTH]`,
-//!   `compile-interrupt-at SECONDS`, `finish`, `save`,
+//!   `compile-interrupt-at SECONDS`, `redensify PAGE`,
+//!   `redensify-interrupt PAGE PAGES`, `redensify-write PAGE PAGES FILE TEXT`,
+//!   `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
 //! * `bench` compiles once cold, then `--reps N` times after editing
@@ -329,6 +331,61 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                 Ok(n) => s.compile(Some(n)).map(|r| r.json()),
                 Err(_) => Err(format!("bad page {n}")),
             }
+        } else if let Some(n) = line.strip_prefix("redensify ") {
+            // the client shows page PAGE (0-based; the socket's VIEWPORT,
+            // `Session::redensify`): `null` when there is nothing to do
+            match n.trim().parse::<usize>() {
+                Ok(n) => s
+                    .redensify(n)
+                    .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json())),
+                Err(_) => Err(format!("redensify PAGE, not {n}")),
+            }
+        } else if let Some(a) = line.strip_prefix("redensify-interrupt ") {
+            // a key comes while that run has shipped PAGES pages: it stops
+            // at its next stop point there, and the next compile drops it
+            let v: Vec<usize> = a
+                .split_whitespace()
+                .filter_map(|x| x.parse().ok())
+                .collect();
+            match v[..] {
+                [page, n] => {
+                    s.set_preempt(Some(std::rc::Rc::new(move |_: usize, pages: usize| {
+                        pages >= n
+                    })));
+                    let r = s
+                        .redensify(page)
+                        .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json()));
+                    s.set_preempt(None);
+                    r
+                }
+                _ => Err(format!("redensify-interrupt PAGE PAGES, not {a}")),
+            }
+        } else if let Some(a) = line.strip_prefix("redensify-write ") {
+            // another program writes FILE (the rest of the line, then a
+            // newline) while that run has shipped PAGES pages: nothing stops
+            // the run (REVIEW-2248's MINOR 1)
+            let mut it = a.splitn(4, ' ');
+            let page = it.next().and_then(|x| x.parse::<usize>().ok());
+            let n = it.next().and_then(|x| x.parse::<usize>().ok());
+            let file = it.next().map(str::to_string);
+            let text = it.next().map(|t| format!("{t}\n"));
+            match (page, n, file, text) {
+                (Some(page), Some(n), Some(file), Some(text)) => {
+                    let done = std::cell::Cell::new(false);
+                    s.set_preempt(Some(std::rc::Rc::new(move |_: usize, pages: usize| {
+                        if pages >= n && !done.replace(true) {
+                            let _ = std::fs::write(&file, &text);
+                        }
+                        false
+                    })));
+                    let r = s
+                        .redensify(page)
+                        .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json()));
+                    s.set_preempt(None);
+                    r
+                }
+                _ => Err(format!("redensify-write PAGE PAGES FILE TEXT, not {a}")),
+            }
         } else if line == "finish" {
             s.finish().map(|r| r.json())
         } else if let Some(m) = line.strip_prefix("profile ") {
@@ -412,7 +469,7 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         // as the socket host does after each compile's DONE (and so that
         // the soundness sweeps run through prepared restores);
         // FLASHTEX_NO_PREPARE=1 leaves it out
-        if line.starts_with("compile") && profile.prepare {
+        if (line.starts_with("compile") || line.starts_with("redensify")) && profile.prepare {
             match stop_prepare {
                 None => {
                     s.prepare_next(&mut || false);

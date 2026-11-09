@@ -455,7 +455,9 @@ impl Live {
         // it again. A compile's first delivery of a page is always sent,
         // even when unchanged (the client learns the page is current, and
         // the edited page comes first).
-        let delivered = self.target.as_ref().is_some_and(|t| (i as u32) < t.next);
+        // (no compile: an idle run's page, `Engine::viewport`, the same as
+        // the cache's keeps its version, so a client holding it is not sent it)
+        let delivered = self.target.as_ref().is_none_or(|t| (i as u32) < t.next);
         let changed = self
             .pages
             .get(i)
@@ -647,7 +649,30 @@ impl Engine {
         // up to ~0.1 s on 1,000 pages and cannot be interrupted, so it never
         // runs while keystrokes are coming (review of #1300).
         let mut trim_due = false;
+        // A VIEWPORT's re-densify waits `viewport_grace()` with nothing
+        // coming first: the key that follows a jump at once cancels it before
+        // it starts. Measured (hosted M1, full-1000, lane MEMORY): a key sent
+        // with the VIEWPORT waited 15-24 ms for the re-densify's restore and
+        // start, which cannot stop, then 2-17 ms to abandon it.
+        let mut pending_vp: Option<(Arc<server::Conn>, usize, Instant)> = None;
+        // One that could not run then (a compile queued or paused, the
+        // tools running or due): waits again after the next request
+        // (REVIEW-E's MINOR on #2248: never lost behind COMPILEs).
+        let mut parked_vp: Option<(Arc<server::Conn>, usize)> = None;
+        let grace = viewport_grace();
         loop {
+            if let Some((_, _, at)) = &pending_vp {
+                if at.elapsed() >= grace {
+                    let (conn, page, _) = pending_vp.take().unwrap();
+                    if self.viewport(conn.clone(), page) {
+                        // (what the idle run allocated goes back as after a compile)
+                        trim_due = true;
+                    } else {
+                        parked_vp = Some((conn, page));
+                    }
+                    continue;
+                }
+            }
             let pause = self.cfg.keep_warm_pause;
             let trim_after = self
                 .profile
@@ -681,6 +706,15 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
+                // (a VIEWPORT waiting out its grace: above, at the timeout)
+                _ if pending_vp.is_some() => {
+                    let at = pending_vp.as_ref().map(|v| v.2).unwrap();
+                    match rx.recv_timeout(grace.saturating_sub(at.elapsed())) {
+                        Ok(r) => r,
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
                 // (merged: the profile's idle trim, and #1551's save of an
                 // S₀ a preamble restart took; a profile without the trim
                 // still saves that S₀ after the old 2 s idle wait)
@@ -720,6 +754,7 @@ impl Engine {
                 },
             };
             let compiled = matches!(req, Req::Compile { .. });
+            let viewport_req = matches!(req, Req::Viewport { .. });
             match req {
                 Req::Warm(done) => {
                     let _ = done.send(self.warm());
@@ -739,6 +774,8 @@ impl Engine {
                     }
                 }
                 Req::Compile { conn, req, t0 } => {
+                    // (newer work first: a waiting VIEWPORT's grace starts
+                    // again after it, below)
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     let c = conn.clone();
                     self.compile(conn, req, t0, None);
@@ -761,6 +798,19 @@ impl Engine {
                     id,
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
+                Req::Viewport { conn, page } => {
+                    parked_vp = None;
+                    pending_vp = Some((conn, page, Instant::now()));
+                }
+            }
+            // A VIEWPORT waiting (or parked) starts its grace again once the
+            // request it waited behind is done.
+            if !viewport_req {
+                if let Some((conn, page)) = parked_vp.take() {
+                    pending_vp = Some((conn, page, Instant::now()));
+                } else if let Some(v) = pending_vp.as_mut() {
+                    v.2 = Instant::now();
+                }
             }
             if compiled && self.profile.keep_warm_ms > 0 {
                 hot_until = Some(
@@ -810,6 +860,70 @@ impl Engine {
         let _ = std::fs::remove_dir_all(&dir);
         r?;
         Ok(t.elapsed().as_secs_f64())
+    }
+
+    /// `VIEWPORT` (spec §6.3.1): the client shows `page` now. Far from the
+    /// last edit, retention kept the page checkpoints only (`incr::thin`);
+    /// while nothing waits, the run from a page checkpoint before `page` is
+    /// made again, nothing changed, so that its segment checkpoints around
+    /// `page` exist when a key comes (`incr::Session::redensify`). A
+    /// COMPILE from the client stops it at its next stop point, and that
+    /// compile drops it. Never a compile of its own: no reply, and the
+    /// pages it ships go to the cache only, as they were. `false`: not now
+    /// (a compile queued or paused, the tools running or due, whose `.bbl`
+    /// and later passes are a compile's: REVIEW-E's MINOR on #2248); the
+    /// caller asks again after its next request.
+    fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) -> bool {
+        let debug = std::env::var_os("FLASHTEX_INCR_DEBUG").is_some()
+            || std::env::var_os("FLASHTEX_VIEWPORT_DEBUG").is_some();
+        let Some(d) = self.doc.as_mut() else {
+            return true;
+        };
+        if d.session.is_paused()
+            || conn.queued.load(Ordering::SeqCst) > 0
+            || d.tools.running
+            || d.tools.deferred.is_some()
+        {
+            if debug {
+                eprintln!(
+                    "[host] VIEWPORT {page}: not now (paused {}, queued {}, tools {}/{})",
+                    d.session.is_paused(),
+                    conn.queued.load(Ordering::SeqCst),
+                    d.tools.running,
+                    d.tools.deferred.is_some()
+                );
+            }
+            return false;
+        }
+        let c = conn.clone();
+        d.session
+            .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
+                c.queued.load(Ordering::SeqCst) > 0
+            })));
+        let t = Instant::now();
+        let r = {
+            let _busy = crate::busy::enter(crate::busy::Part::Prepare);
+            d.session.redensify(page)
+        };
+        d.session.set_preempt(None);
+        if debug {
+            eprintln!(
+                "[host] VIEWPORT {page}: {:?}, {:.1} ms",
+                r.as_ref().map(|r| r
+                    .as_ref()
+                    .map(|r| (r.restart_pages, r.converged_at, r.paused))),
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        // The idle run restored elsewhere: the restore prepared for the
+        // last edit's restart point is spent. Prepared again, as after a
+        // compile's DONE (REVIEW-E's MAJOR on #2248).
+        if matches!(&r, Ok(Some(r)) if !r.paused) && self.profile.prepare {
+            let _busy = crate::busy::enter(crate::busy::Part::Prepare);
+            d.session
+                .prepare_next(&mut || conn.queued.load(Ordering::SeqCst) > 0);
+        }
+        true
     }
 
     /// The resident engine's options under the current performance mode.
@@ -2713,6 +2827,17 @@ fn reading(g: &crate::generated::Globals) -> Option<String> {
     }
     let name = g.full_source_filename_stack[level as usize];
     (name > 0).then(|| String::from_utf8_lossy(&g.str_bytes(name)).into_owned())
+}
+
+/// How long a VIEWPORT's re-densify waits with nothing coming before it
+/// starts (50 ms; FLASHTEX_VIEWPORT_GRACE_MS for measurement): a key the
+/// client sends right after a jump finds the engine idle.
+fn viewport_grace() -> std::time::Duration {
+    let ms = std::env::var("FLASHTEX_VIEWPORT_GRACE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    std::time::Duration::from_millis(ms)
 }
 
 #[cfg(test)]
