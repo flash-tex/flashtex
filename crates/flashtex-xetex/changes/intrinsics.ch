@@ -347,6 +347,15 @@ begin restart: repeat intr_weak:=true; get_token; intr_weak:=false;
   if q=null then sa_define(p,null)(p,undefined_cs,null)
 @z
 
+@x xetex.web - \.{\\sfcode} keeps the character's \.{\\XeTeXcharclass}: it reads the code
+    if p>=sf_code_base then begin
+      n:=equiv(p) div @"10000;
+@y
+    if p>=sf_code_base then begin
+      if intr_rec_on then flashtex_intr_read(p);
+      n:=equiv(p) div @"10000;
+@z
+
 @x xetex.web - \.{\\advance}, \.{\\multiply} and \.{\\divide} read the register
 @<Compute the register location |l| and its type |p|; but |return| if invalid@>;
 if q=register then scan_optional_equals
