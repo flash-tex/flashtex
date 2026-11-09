@@ -2400,3 +2400,107 @@ fn a_font_installed_after_a_lookup_in_the_body_is_found() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A picture replaced in place between compiles (#2444): the resident
+/// host's next compile sends what a compile in a process of its own sends
+/// (`FLASHTEX_UNICODE_INPROCESS=0`, the oracle), its `IMAGE` key included.
+/// The picture is on page 3 and the new one has the same size, so nothing
+/// but the file says it changed: a page checkpoint after it stood for the
+/// compile while the picture was not in the read journal, and the preview
+/// kept the old picture's key.
+#[test]
+fn a_picture_replaced_in_place_is_sent_again() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-picture-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=4 {
+        body.push_str(&format!("\\section{{Part {i}}}\n"));
+        if i == 3 {
+            body.push_str("\\includegraphics[width=.3\\linewidth]{fig.pdf}\n\n");
+        }
+        for _ in 0..7 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\usepackage{{graphicx}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let pic = |n: &str| {
+        std::fs::read(
+            flashtex_engine::system::find_file(n, flashtex_engine::resolver::Format::Pict)
+                .expect("mwe's example images (TeX Live)"),
+        )
+        .unwrap()
+    };
+    let (a, b) = (pic("example-image-a.pdf"), pic("example-image-b.pdf"));
+    // (each compile's start, IMAGE messages and pages)
+    type Out = (String, Vec<String>, Vec<Vec<u8>>);
+    let run = |envs: &[(&str, &str)]| -> Vec<Out> {
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, &doc);
+        let mut e = vec![("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, fig) in [&a, &a, &b].into_iter().enumerate() {
+            // the same modification time in both runs (the key holds it)
+            let f = proj.join("fig.pdf");
+            std::fs::write(&f, fig).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&f)
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::UNIX_EPOCH
+                        + Duration::from_secs(1_700_000_000 + 60 * i as u64),
+                )
+                .unwrap();
+            let id = i as i64 + 1;
+            c.compile(&request(id, &proj, &out)).unwrap();
+            let (ev, done) = events(&mut c, id);
+            assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .and_then(|s| s.first())
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string();
+            let images = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Image(j) => Some(format!("{j:?}")),
+                    _ => None,
+                })
+                .collect();
+            let pages = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Page(p) => Some(p.encode()),
+                    _ => None,
+                })
+                .collect();
+            outs.push((starts, images, pages));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run(&[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run(&[]);
+    assert_ne!(own[1].1, own[2].1, "the oracle sends the new picture's key");
+    for (i, (g, o)) in got.iter().zip(&own).enumerate() {
+        assert_eq!(g.1, o.1, "compile {} ({}): the IMAGE messages", i + 1, g.0);
+        assert!(g.2 == o.2, "compile {} ({}): the pages differ", i + 1, g.0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
