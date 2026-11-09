@@ -400,6 +400,32 @@ fn long_token_lists_are_never_keys() {
 }
 
 #[test]
+fn long_bodies_and_arguments_miss_as_long() {
+    // (lane PERF-IMPACT) `bm_k1` stops at the first list longer than
+    // `MAX_LIST` instead of K1 being searched for its `-2` afterwards: a
+    // body (the `\\edef`'s, two lists one `\\kern.1pt` apart) and an
+    // argument that long still never make a key, each such offer a `Long`
+    // miss, and a short call between them still replays
+    let s = check(
+        "long-k1",
+        &[
+            LONG_PRELUDE,
+            "\\edef\\measure#1{\\begingroup\\setbox0\\hbox{\\the\\toks0}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\measure{a}\\show\\measure{a}\\show\n\
+             \\edef\\measure#1{\\begingroup\\setbox0\\hbox{\\the\\toks0\\kern.1pt}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\measure{a}\\show\\measure{a}\\show\n\
+             \\def\\measure#1{\\begingroup\\setbox0\\hbox{#1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\measure{a}\\show\\measure{a}\\show\n\
+             \\edef\\go{\\noexpand\\measure{\\the\\toks0}}\\go\\show\\go\\show\
+             \\edef\\go{\\noexpand\\measure{\\the\\toks0\\kern.1pt}}\\go\\show\\go\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "Long"), 8, "{s}");
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+}
+
+#[test]
 fn long_shapes_are_never_keys() {
     // (#2194) the same for a shape in K2: e-TeX's `\\widowpenalties` with
     // 65,541 entries, whose first one the penalty between a two-line

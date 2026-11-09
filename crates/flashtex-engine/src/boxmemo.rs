@@ -1402,20 +1402,22 @@ impl Globals {
         true
     }
 
-    /// A token list value (its reference count node `e`), by its tokens.
-    fn bm_push_list(&self, e: i32, out: &mut Vec<i32>) {
+    /// A token list value (its reference count node `e`), by its tokens;
+    /// `-2` for one longer than `MAX_LIST`, and then `false`.
+    fn bm_push_list(&self, e: i32, out: &mut Vec<i32>) -> bool {
         if e == 0 {
             out.push(-1);
-            return;
+            return true;
         }
         let at = out.len();
         out.push(0);
         if !self.bm_tokens(self.bm_link(e), out) {
             out.truncate(at);
             out.push(-2);
-            return;
+            return false;
         }
         out[at] = (out.len() - at - 1) as i32;
+        true
     }
 
     fn bm_glue_fields(&self, e: i32) -> [i32; 5] {
@@ -1804,7 +1806,9 @@ impl Globals {
                             v.extend_from_slice(&self.bm_glue_fields(q));
                         }
                     }
-                    _ => self.bm_push_list(if e == 0 { 0 } else { self.bm_link(e + 1) }, &mut v),
+                    _ => {
+                        self.bm_push_list(if e == 0 { 0 } else { self.bm_link(e + 1) }, &mut v);
+                    }
                 }
             }
         }
@@ -2034,24 +2038,30 @@ impl Globals {
         (1..GLUE_BASE).contains(&p) || p > EQTB_SIZE
     }
 
-    fn bm_k1(&self, cs: i32, n: i32) -> Vec<i32> {
+    /// K1: the macro's meaning and its arguments, by their tokens; `None`
+    /// when the body or an argument is longer than `MAX_LIST` (#2194). Only
+    /// such a list would put `-2` into K1 (no token or length is negative,
+    /// and the markers are `-1` and `-3`), so `None` is exactly the old
+    /// `k1.contains(&-2)`, found while K1 is built instead of by a second
+    /// pass over it (and the rest of K1 is not built).
+    fn bm_k1(&self, cs: i32, n: i32) -> Option<Vec<i32>> {
         let mut v = vec![];
         let w = self.bm_eq(cs).hh();
         v.push(w.b0());
-        self.bm_push_list(w.rh(), &mut v);
+        if !self.bm_push_list(w.rh(), &mut v) {
+            return None;
+        }
         for i in 0..n {
             let l = self.param_stack[(self.param_ptr - n + i) as usize];
             v.push(-3);
             let at = v.len();
             v.push(0);
             if !self.bm_tokens(l, &mut v) {
-                v.truncate(at);
-                v.push(-2);
-                continue;
+                return None;
             }
             v[at] = (v.len() - at - 1) as i32;
         }
-        v
+        Some(v)
     }
 
     fn bm_ctx(&self, scanner: i32) -> Context {
@@ -2488,13 +2498,13 @@ impl Globals {
         if globaldefs != 0 || self.after_token != 0 {
             return self.bm_miss("Preconditions");
         }
-        let k1 = self.bm_k1(cs, n);
-        // the body or an argument longer than `MAX_LIST` is `-2` (no token,
-        // length or other marker is), which every other such list would
-        // match: such a call is never a key, and is not recorded (#2194)
-        if k1.contains(&-2) || self.bm_long_shape() {
+        // the body or an argument longer than `MAX_LIST` would be `-2`
+        // (no token, length or other marker is), which every other such
+        // list would match: such a call is never a key, and is not recorded
+        // (#2194)
+        let Some(k1) = self.bm_k1(cs, n).filter(|_| !self.bm_long_shape()) else {
             return self.bm_miss("Long");
-        }
+        };
         let ctx = self.bm_ctx(scanner);
         // K1 and the context select the variants (by their hash, then in
         // full); K2 and the rest are compared in place, without a copy of
