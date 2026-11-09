@@ -437,6 +437,7 @@ impl Why {
             2 => Why::TokenCopy,
             3 => Why::Sparse,
             4 => Why::Checkpoint,
+            5 => Why::Error,
             _ => Why::State,
         }
     }
