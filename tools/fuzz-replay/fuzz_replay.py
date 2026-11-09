@@ -29,7 +29,7 @@ import gen  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_POOL = os.path.join(REPO, "crates", "flashtex-engine", "pdftex.pool")
-TIMEOUT = 20
+TIMEOUT = 10
 
 # subsystem -> (mode variable, names variable, stats variable, the other's mode variable)
 SUBSYSTEMS = {
@@ -57,6 +57,7 @@ def parse_stats(text):
 
 def run_one(engine, pool, d, sub, mode, timeout=TIMEOUT):
     var, names, stats_var, other = SUBSYSTEMS[sub]
+    d = os.path.abspath(d)  # the engine runs in d: the statistics path must not be relative
     stats = os.path.join(d, f"stats-{sub}-{mode}.txt")
     for f in ("t.log", "t.dvi", "t.pdf", stats):
         try:
@@ -96,13 +97,36 @@ def run_one(engine, pool, d, sub, mode, timeout=TIMEOUT):
         except FileNotFoundError:
             return None
     st = rd(stats)
+    st = st.decode("utf-8", "replace") if st else ""
+    # the verifier's own words: its stderr lines, then the statistics'
+    # `verify_details` (where "normal path not pure after the guard passed"
+    # goes, with no stderr line of its own)
+    msgs = [l for l in err.splitlines() if "verify" in l.lower()]
+    msgs += [f"verify detail: {d}" for d in verify_details(st)]
     return {
         "exit": code,
         "log": rd("t.log"),
         "out": (rd("t.dvi"), rd("t.pdf")),
-        "stats": parse_stats(st.decode("utf-8", "replace")) if st else {},
-        "verify_msgs": [l for l in err.splitlines() if "verify" in l.lower()],
+        "stats": parse_stats(st) if st else {},
+        "verify_msgs": msgs,
     }
+
+
+def verify_details(text):
+    """The strings of a statistics dump's `verify_details: [...]` list."""
+    out, inside = [], False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("verify_details: ["):
+            inside = not s.endswith("],")
+            continue
+        if inside:
+            if s.startswith("]"):
+                break
+            m = re.match(r'^"(.*)",?$', s)
+            if m:
+                out.append(m.group(1).replace('\\\\', '\\'))
+    return out
 
 
 def first_diff(a, b):
@@ -120,6 +144,11 @@ def verify_field(msgs):
     for m in msgs:
         if "FLASHTEX_BOXMEMO_VERIFY_FAIL is set" in m:
             continue
+        # a call the guard admitted whose normal path then abandoned its
+        # recording: "normal path not pure after the guard passed: Level"
+        f = re.search(r"not pure after the guard passed: (\w+)", m)
+        if f:
+            return "impure_" + f.group(1)
         # BOX-MEMO's whole-state check: "... comparison reads: param_ptr: 0x0 -> 0x1"
         f = re.search(r"comparison reads: ([A-Za-z_][A-Za-z_0-9]*)(\[\d+\])?", m)
         if f:
@@ -171,7 +200,13 @@ def check_dir(engine, pool, d, subs=("bm", "d9")):
     """Run the case in `d` under each subsystem; {sub: (kinds, details, hits)}."""
     out = {}
     for sub in subs:
-        res = {m: run_one(engine, pool, d, sub, m) for m in MODES}
+        off = run_one(engine, pool, d, sub, "off")
+        if off["exit"] == "timeout":
+            # the case itself loops (an error that recurs for ever, say):
+            # with nothing to compare against it is no finding
+            out[sub] = ([], {"invalid": "timeout-off"}, 0)
+            continue
+        res = {"off": off, **{m: run_one(engine, pool, d, sub, m) for m in MODES[1:]}}
         kinds, det = compare(res)
         hits = res["on"]["stats"].get("hits", res["on"]["stats"].get("replays", 0))
         out[sub] = (kinds, det, hits)
@@ -243,7 +278,8 @@ def cmd_run(a):
     work = tempfile.mkdtemp(prefix="fr-work-", dir=a.work or None)
     seeds = parse_seeds(a.seeds)
     sigs = {}
-    totals = {"cases": 0, "hits_bm": 0, "hits_d9": 0, "cases_hit_bm": 0, "cases_hit_d9": 0}
+    totals = {"cases": 0, "hits_bm": 0, "hits_d9": 0, "cases_hit_bm": 0, "cases_hit_d9": 0,
+              "invalid": 0}
     try:
         with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
             futs = [ex.submit(fuzz_seed, a.engine, a.pool, s, fonts, tfms, work)
@@ -251,6 +287,7 @@ def cmd_run(a):
             for fu in concurrent.futures.as_completed(futs):
                 seed, files, res = fu.result()
                 totals["cases"] += 1
+                totals["invalid"] += any("invalid" in r[1] for r in res.values())
                 for sub, (kinds, det, hits) in res.items():
                     totals[f"hits_{sub}"] += hits
                     totals[f"cases_hit_{sub}"] += 1 if hits else 0
@@ -271,16 +308,28 @@ def cmd_run(a):
         write_case(d, ent["example"]["files"], tfms if fonts else ())
         with open(os.path.join(d, "finding.json"), "w") as f:
             json.dump({"signature": sig, "seeds": sorted(ent["seeds"]),
-                       "fonts": fonts, **{k: v for k, v in ent["example"].items() if k != "files"}},
+                       "fonts": fonts, "grammar": gen.GRAMMAR, **{k: v for k, v in ent["example"].items() if k != "files"}},
                       f, indent=1)
-    summary = {"totals": totals,
-               "signatures": {s: sorted(e["seeds"]) for s, e in sigs.items()}}
+    known = load_known()
+    summary = {"grammar": gen.GRAMMAR, "totals": totals,
+               "signatures": {s: sorted(e["seeds"]) for s, e in sigs.items()},
+               "known": {s: known[s]["issue"] for s in sigs if s in known}}
     with open(os.path.join(a.out, "summary.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print(json.dumps(summary["totals"]))
     for s, e in sorted(sigs.items()):
-        print(f"{len(e['seeds']):5d}  {s}  (e.g. seed {e['example']['seed']})")
+        tag = f"known #{known[s]['issue']}" if s in known else "NEW"
+        print(f"{len(e['seeds']):5d}  {s}  (e.g. seed {e['example']['seed']}; {tag})")
     return 1 if sigs else 0
+
+
+def load_known():
+    """known.json: the signatures already filed, {signature: {issue, ...}}."""
+    try:
+        with open(os.path.join(HERE, "known.json")) as f:
+            return {e["signature"]: e for e in json.load(f)["findings"]}
+    except FileNotFoundError:
+        return {}
 
 
 def cmd_check(a):

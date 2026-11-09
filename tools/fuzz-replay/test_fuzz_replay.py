@@ -21,8 +21,9 @@ import gen  # noqa: E402
 import minimize  # noqa: E402
 
 ENGINE = os.environ.get("FUZZ_REPLAY_ENGINE")
-# A fixed seed set: clean (no finding under either system) on main.
-FIXED_SEEDS = "0-149"
+# A fixed seed set, clean (no finding under either system) on main ca202f597
+# (grammar 3): seed 5 meets #2198 there, which #2209 fixes.
+FIXED_SEEDS = "6-205"
 
 
 class GenTest(unittest.TestCase):
@@ -79,6 +80,32 @@ class LogicTest(unittest.TestCase):
         self.assertEqual(
             fr.signature("bm", ["on-log", "verify-log", "verify-exit3"], det),
             "bm:on-log+verify-exit3:param_ptr")
+        # the node walk's difference, and a call the guard should not have admitted
+        walk = [r"boxmemo verify (full state): \measure: structures differ: box "
+                "dimension differs (903 vs 962) (walking Some((List, 949, 1008)))"]
+        self.assertEqual(fr.verify_field(walk), "box_dimension_differs")
+        stats = ("Stats {\n    verify_differences: 1,\n    verify_details: [\n"
+                 "        \"normal path not pure after the guard passed: Error\",\n"
+                 "    ],\n    entries: 1,\n}\n")
+        details = fr.verify_details(stats)
+        self.assertEqual(details, ["normal path not pure after the guard passed: Error"])
+        self.assertEqual(fr.verify_field(details), "impure_Error")
+
+    def test_known(self):
+        known = fr.load_known()
+        self.assertIn("bm:verify-diff+verify-exit3:box_dimension_differs", known)
+        for sig, e in known.items():
+            self.assertRegex(sig, r"^(bm|d9):[a-z0-9+-]+:\w*$")
+            self.assertIsInstance(e["issue"], int)
+
+    def test_minimize_budget(self):
+        # a spent budget stops the passes with the smallest case that held
+        m = minimize.Minimizer.__new__(minimize.Minimizer)
+        m.files = {"t.tex": "a\nb\nc\n"}
+        m.cache, m.runs, m.max_checks = {}, 0, 0
+        m.deadline = time.monotonic() + 60
+        m.sub, m.sig = "bm", "x"
+        self.assertEqual(m.run(), {"t.tex": "a\nb\nc\n"})
 
     def test_seeds(self):
         self.assertEqual(fr.parse_seeds("1-3,7"), [1, 2, 3, 7])

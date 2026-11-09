@@ -22,6 +22,10 @@ import re
 SHOW = (r"\def\show{\message{[\the\count1/\the\dimen1/\the\count3/"
         r"\the\wd4/\the\toks4/\meaning\z]}}%")
 
+# The grammar's version: a change that renumbers the cases bumps it, and
+# summary.json and finding.json name it, so a seed is found again.
+GRAMMAR = 3
+
 PRELUDE = [
     r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \catcode`\&=4 "
     r"\catcode`\^=7 \catcode`\$=3 \catcode`\~=13 \catcode`\^^I=10 \scrollmode",
@@ -261,7 +265,55 @@ class Gen:
         return self.c(r"\interlinepenalties", r"\clubpenalties",
                       r"\widowpenalties") + " 2 " + self.c("50", "60") + " 70%"
 
+    def extra_item(self, pure=False):
+        r"""Body items of the second grammar round: e-TeX's \scantokens,
+        case changes, terminal and log output, errors, \lastbox and the
+        \un... commands, whatsits, marks and inserts, interaction modes.
+        `pure`: only those that make no box (D9's kind)."""
+        k = self.r.choice((0, 1, 2, 3, 4, 6, 7, 8, 13, 14)) if pure else self.r.randint(0, 19)
+        if k == 0:
+            return r"\scantokens{\global\advance\count1 by 1 }"
+        if k == 1:
+            return r"\everyeof{\noexpand}\edef\tmp{\scantokens{\the\count2}}\global\toks4=\expandafter{\tmp}"
+        if k == 2:
+            return r"\uppercase{\global\toks4={aBc}}"
+        if k == 3:
+            return r"\message{[in \the\count2]}"
+        if k == 4:
+            return r"\immediate\write" + self.c("16", "-1") + r"{w\the\count2}"
+        if k == 5:
+            return r"\setbox0\hbox{\write3{x\the\count2}\special{s}\vrule width1pt}\global\dimen1=\wd0 "
+        if k == 6:
+            return r"\global\count1=\relax "
+        if k == 7:
+            return r"\errmessage{e\the\count2}"
+        if k == 8:
+            return r"\showthe\count2 "
+        if k == 9:
+            return r"\setbox0\vbox{\hbox{\vrule}\hbox{\kern2pt}\setbox6\lastbox\global\dimen1=\wd6}"
+        if k == 10:
+            return r"\setbox0\hbox{\vrule width1pt\kern2pt\unkern\penalty5\unpenalty\hskip3pt\unskip}\global\dimen1=\wd0 "
+        if k == 11:
+            return r"\setbox0\hbox{\mark{m\the\count2}}"
+        if k == 12:
+            return r"\setbox0\vbox{\insert100{\kern1pt}\kern2pt}\global\dimen1=\ht0 "
+        if k == 13:
+            return r"\ifodd\count2 \nonstopmode\else\scrollmode\fi "
+        if k == 14:
+            return r"\begingroup\escapechar=-1 \xdef\z{\string\inner}\endgroup "
+        if k == 15:
+            return r"\setbox0\hbox{\vrule width2pt}\setbox0\hbox{\unhbox0 \unhbox0}\global\dimen1=\wd0 "
+        if k == 16:
+            return r"\showbox0 "
+        if k == 17:
+            return r"\setbox0\hbox{\pdfliteral{0 0 m}\pdfsavepos\vrule width1pt}\global\dimen1=\wd0 "
+        if k == 18:
+            return r"\setbox0\vbox{\noindent\vrule width 30pt\par\global\dimen1=\prevdepth}"
+        return r"\setbox0\hbox{\vrule width1pt\global\count1=\spacefactor}"
+
     def box_item(self):
+        if self.r.random() < 0.12:
+            return self.extra_item()
         if self.r.random() < 0.3:
             return self.typeset_item()
         k = self.r.randint(0, 25)
@@ -341,6 +393,8 @@ class Gen:
         return r"\gdef\z{" + self.c("a", r"\inner", r"\x") + "}"
 
     def pure_item(self):
+        if self.style == "pure" and self.r.random() < 0.1:
+            return self.extra_item(pure=True)
         k = self.r.randint(0, 22)
         if k <= 1:
             return self.pure_item_simple()
@@ -449,8 +503,10 @@ class Gen:
         tail = self.c("", "", "", " ", r"\relax", r"7\relax", "8\\relax",
                       " plus 1pt\\relax", " by 2\\relax", "\\par", "\\x", "a",
                       r"\inner", "{}")
-        k = self.r.randint(0, 9)
         core = r"\measure" + args
+        if self.r.random() < 0.15:
+            return self.extra_call(args, tail)
+        k = self.r.randint(0, 9)
         if k == 0:
             return r"\setbox4\hbox{" + core + tail + "}" + r"\show%"
         if k == 1:
@@ -471,8 +527,47 @@ class Gen:
             return r"\setbox4\vbox{\halign{#\cr " + core + tail + r"\cr}}\show%"
         return core + tail + r"\show%"
 
+    def extra_call(self, args, tail):
+        r"""Call forms of the second grammar round: in a paragraph, in an
+        output routine, from \everypar, \aftergroup and \afterassignment,
+        through \csname and \scantokens."""
+        core = r"\measure" + args
+        k = self.r.randint(0, 7)
+        if k == 0:
+            return r"\setbox4\vbox{\noindent\vrule width2pt " + core + tail + r"\par}\show%"
+        if k == 1:
+            return (r"\output={\setbox4\vbox{" + core + tail
+                    + r"}\global\setbox9\box255 \deadcycles=0 }\hbox{}\penalty-10000 \show%")
+        if k == 2:
+            return (r"\everypar{" + core + r"}\setbox4\vbox{\indent\vrule\par}"
+                    + r"\everypar{}\show%")
+        if k == 3 and self.arity == 0:
+            return r"\setbox4\hbox{\begingroup\aftergroup\measure\endgroup" + tail + r"}\show%"
+        if k == 4 and self.arity == 0:
+            return r"\setbox4\hbox{\afterassignment\measure\count5=1 " + tail + r"}\show%"
+        if k == 5:
+            return r"\setbox4\hbox{\csname measure\endcsname" + args + tail + r"}\show%"
+        if k == 6:
+            return r"\setbox4\hbox{\scantokens{" + core + r"}" + tail + r"}\show%"
+        return r"\setbox4\vtop{\hsize=30pt \noindent " + core + tail + r"\par}\show%"
+
+    def extra_mutation(self):
+        k = self.r.randint(0, 5)
+        if k == 0:
+            return self.c(r"\batchmode", r"\nonstopmode", r"\scrollmode") + "%"
+        if k == 1:
+            # \measure defined again with the same text: another macro, equal tokens
+            return r"\def\measure" + self.ptext + "{" + "".join(self.body_items) + "}%"
+        if k == 2:
+            return r"\everypar{" + self.c("", r"\kern1pt", r"\inner") + "}%"
+        if k == 3:
+            return r"\global\setbox0\hbox{\vrule width" + self.dim() + "}%"
+        if k == 4:
+            return r"\hbox{}\penalty-10000 %"
+        return r"\deadcycles=0 \output={\global\setbox9\box255 \deadcycles=0 }%"
+
     def long_mutation(self):
-        r"""A long token list: \toks2 doubled to 40, 81,920 or 163,840 tokens
+        r"""A long token list: \toks2 doubled to 40, 40,960, 81,920 or 163,840 tokens
         (BOX-MEMO's key keeps lists up to 65,536), sometimes with a token
         changed at its end, and copied into \inner or a call's argument."""
         n = self.c("3", "13", "14", "15")
@@ -487,6 +582,8 @@ class Gen:
         return out + "%"
 
     def mutation(self):
+        if self.r.random() < 0.08:
+            return self.extra_mutation()
         if self.r.random() < 0.06:
             return self.long_mutation()
         if self.r.random() < 0.3:
@@ -587,6 +684,7 @@ class Gen:
         else:
             ptext = "".join(f"#{i}" for i in range(1, self.arity + 1))
         body = self.body()
+        self.ptext, self.body_items = ptext, body
         lines.append(r"\def\measure" + ptext + "{%")
         lines.extend(b + "%" for b in body)
         lines.append("}%")

@@ -619,6 +619,8 @@ jobs:
           python3 -m unittest discover -s tools/web2rust -p 'test_*.py'
           python3 -m unittest discover -s tools/font-census -p 'test_*.py'
           python3 -m unittest discover -s tools/rewrite -p 'test_*.py'
+          # the replay fuzzer (its engine tests run in engine-parity.sh's replay step)
+          python3 -m unittest discover -s tools/fuzz-replay -p 'test_*.py'
           scripts/tests/p5-pick-t4.test.sh
       # RQ5: the vocabulary generated from measured package support (pdflatex is the
       # oracle; the probe itself is the supported-latex workflow's), and the two
@@ -784,7 +786,7 @@ jobs:
       matrix:
         include:
           # Lockstep cases are ~one core each and small: 8 at a time.
-          - {shard: lockstep, id: lockstep, steps: build lockstep, jobs: 8}
+          - {shard: lockstep, id: lockstep, steps: build lockstep replay, jobs: 8}
           # -j 4, not 8: each parity worker holds up to ~2 GB while it
           # compares a \tracingall log, and each runner instance is a systemd
           # service with MemoryHigh=9G. At -j 8 the cgroup sat at its limit
@@ -843,7 +845,7 @@ jobs:
           # is split in two (engine-parity.sh --shard K/N). `cache` names the
           # Rust cache the shard shares: the three `build` shards compile the
           # same flashtex-initex.
-          - {shard: lockstep, id: lockstep, steps: build lockstep, jobs: 4, slice: '', cache: build}
+          - {shard: lockstep, id: lockstep, steps: build lockstep replay, jobs: 4, slice: '', cache: build}
           - {shard: P-T fixtures 1/2, id: fixtures-0, steps: build parity, jobs: 4, slice: 0/2, cache: build}
           - {shard: P-T fixtures 2/2, id: fixtures-1, steps: build parity, jobs: 4, slice: 1/2, cache: build}
           - {shard: engine tests 1/2, id: tests-0, steps: tests, jobs: 4, slice: 0/2, cache: tests}

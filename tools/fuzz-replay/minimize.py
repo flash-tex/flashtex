@@ -13,11 +13,13 @@ nothing changes.
 Stdlib only.
 """
 import argparse
+import hashlib
 import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -66,9 +68,15 @@ def balanced(text):
     return depth == 0
 
 
+class Budget(Exception):
+    """The check budget is spent: the passes stop with the smallest case so far."""
+
+
 class Minimizer:
-    def __init__(self, engine, pool, case_dir, sub=None):
+    def __init__(self, engine, pool, case_dir, sub=None, max_checks=2000, max_seconds=600):
         self.engine, self.pool = engine, pool
+        self.max_checks, self.deadline = max_checks, time.monotonic() + max_seconds
+        self.cache = {}
         self.files = {}
         self.extra = []
         for n in sorted(os.listdir(case_dir)):
@@ -99,8 +107,17 @@ class Minimizer:
     def holds(self, files):
         if not balanced(files.get("t.tex", "")):
             return False
+        key = hashlib.sha1(repr(sorted(files.items())).encode()).hexdigest()
+        if key in self.cache:
+            return self.cache[key]
+        if self.runs >= self.max_checks or time.monotonic() > self.deadline:
+            raise Budget()
         kinds, det, _ = self.check(files)[self.sub]
-        return bool(kinds) and fr.signature(self.sub, kinds, det) == self.sig
+        ok = bool(kinds) and fr.signature(self.sub, kinds, det) == self.sig
+        self.cache[key] = ok
+        if ok:
+            self.best = dict(files)
+        return ok
 
     def lines_pass(self, name):
         if name not in self.files:
@@ -133,12 +150,21 @@ class Minimizer:
         return changed
 
     def run(self):
-        while True:
-            c = self.lines_pass("t.tex")
-            c |= self.lines_pass("u.tex")
-            c |= self.tokens_pass()
-            if not c:
-                break
+        self.best = dict(self.files)
+        try:
+            while True:
+                c = self.lines_pass("t.tex")
+                c |= self.lines_pass("u.tex")
+                c |= self.tokens_pass()
+                if not c:
+                    break
+        except Budget:
+            # the smallest case that kept the signature
+            self.files = min((self.best, self.files),
+                             key=lambda f: sum(len(v) for v in f.values()))
+            print(f"budget spent after {self.runs} checks: the case is not 1-minimal",
+                  flush=True)
+            return self.files
         # drop u.tex when the repro no longer needs it
         if "u.tex" in self.files:
             without = {k: v for k, v in self.files.items() if k != "u.tex"}
@@ -155,10 +181,13 @@ def main(argv=None):
     ap.add_argument("--engine", required=True)
     ap.add_argument("--pool", default=fr.DEFAULT_POOL)
     ap.add_argument("--sub", choices=("bm", "d9"))
+    ap.add_argument("--max-checks", type=int, default=2000,
+                    help="stop after this many checks (each is three runs)")
+    ap.add_argument("--max-seconds", type=int, default=600)
     ap.add_argument("case")
     ap.add_argument("out")
     a = ap.parse_args(argv)
-    m = Minimizer(a.engine, a.pool, a.case, a.sub)
+    m = Minimizer(a.engine, a.pool, a.case, a.sub, a.max_checks, a.max_seconds)
     try:
         print(f"signature {m.sig}", flush=True)
         files = m.run()
