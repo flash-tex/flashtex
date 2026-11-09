@@ -6778,3 +6778,37 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// One edit whose changed bytes run from a comment on page 1 to a word on
+/// page 8, of the same length: the pages between are equal, but the old
+/// run read the old bytes after them. The run converges only after the
+/// last changed byte (DESIGN.md §5.3, `Edit::old_end`), so the word is the
+/// new one.
+#[test]
+fn an_edit_from_one_page_to_another_converges_after_its_end() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("conv-edit-end");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = lines_doc("", 120, &[(3, "% note A")]);
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let edited = doc.replacen("% note A", "% note B", 1).replacen(
+        "Paragraph 100 with the word lorem",
+        "Paragraph 100 with the word lorex",
+        1,
+    );
+    assert_eq!(edited.len(), doc.len());
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit from page 1 to page 8",
+    );
+    assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
