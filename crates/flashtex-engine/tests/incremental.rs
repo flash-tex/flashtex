@@ -3347,6 +3347,91 @@ fn a_late_barrier_keeps_the_pages_before_it() {
     }
 }
 
+/// AUDIT-CKPT: the old run's external effects come back with the old run.
+/// A pass whose `.aux` changed re-reads the `.aux` alone from the `.aux`
+/// point and goes back to the old run (`Session::aux_patch`: a restore,
+/// then `reattach_pending`). The restore cut the external effects list to
+/// the `.aux` point's count, and the reattach did not put the old run's
+/// later ones back, so the pass, which converged before the `\write18`,
+/// and the next compile took the old run to have made fewer external
+/// effects than it had (`old_effects_end`). That compile's edit, before
+/// the command, converged before it too, and kept the old run's pages past
+/// it: a barrier (DESIGN.md §5.3) not seen. The command (makeindex) makes
+/// `t.ind` from the `t.idx` the edited paragraph writes, and a later page
+/// reads it, so a page kept past the command shows the old word.
+#[test]
+fn a_barrier_after_an_aux_patch_still_blocks_reuse() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("fx-after-aux");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str, val: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\newwrite\\tw\n\
+             \\renewenvironment{theindex}{\\def\\item{Item: }}{}\n\\begin{document}\n",
+        );
+        for i in 0..200 {
+            s.push_str(&para(i, if i == 60 { word } else { "lorem" }));
+            match i {
+                // a value from the `.aux`, used once and then forgotten: the
+                // `.aux` pass after it changes converges pages before the
+                // command
+                5 => s.push_str("Aux: [\\csname auxval\\endcsname]\\gdef\\auxval{}\n\n"),
+                // the edited word goes to `t.idx`, which a restricted
+                // `\write18` (makeindex) makes `t.ind` of, read pages later
+                60 => s.push_str(&format!(
+                    "\\immediate\\openout\\tw=t.idx \
+                     \\immediate\\write\\tw{{\\string\\indexentry{{{word}}}{{1}}}}\
+                     \\immediate\\closeout\\tw\n\n"
+                )),
+                150 => s.push_str("\\immediate\\write18{makeindex -q -o t.ind t.idx}\n\n"),
+                152 => s.push_str("Index: \\input{t.ind}\n\n"),
+                195 => s.push_str(&format!(
+                    "\\makeatletter\\immediate\\write\\@auxout{{\\gdef\\string\\auxval{{{val}}}}}\
+                     \\makeatother\n\n"
+                )),
+                _ => {}
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorem", "1"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // the value written to the `.aux` near the end changes: the next pass
+    // re-reads the `.aux` alone (the patch) and converges after its use
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("lorem", "2"))],
+        "an .aux value",
+    );
+    // an edit before the command converges before it: the command is a
+    // barrier still, so it runs again on the new `t.idx`
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("lorme", "2"))],
+        "an edit before the command",
+    );
+}
+
 /// A file written through the body and read back at the end, opened at
 /// `\begin{document}` (*Infinite Descent*'s hints and solutions: `\hint`s
 /// written to `\jobname.hnt` in every chapter, `\input` in the appendix).

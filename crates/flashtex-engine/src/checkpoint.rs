@@ -458,6 +458,11 @@ pub struct Pending {
     opens_tail: (usize, Vec<String>, Vec<Option<system::Instance>>),
     /// The read-set of the old run (at its latest state).
     rs_old: crate::readset::ReadSet,
+    /// The old run's external effects (`\write18`, pipes) from the
+    /// target's count on, which the restore cuts and a reattach puts back:
+    /// the next compile's barrier test counts them (`incr`'s
+    /// `old_effects_end`).
+    effects_tail: (usize, Vec<system::ExternalEffect>),
 }
 
 /// The anchor's bookkeeping `Globals::forget_anchor` clears
@@ -1328,6 +1333,10 @@ impl Globals {
             term.get(rec.terminal_len..).unwrap_or(&[]).to_vec(),
         );
         let notes_tail = (rec.notes, crate::diag::notes_from(rec.notes));
+        let effects_tail = (
+            rec.effects_len,
+            system::external_effects_since(rec.effects_len),
+        );
         let rs_old = self.layer().rs.clone();
         self.spill_scalars();
         let t_pre = t0.elapsed();
@@ -1350,6 +1359,7 @@ impl Globals {
             records,
             rs_old,
             opens_tail,
+            effects_tail,
         });
         let r = self
             .restore_ext(&rec)
@@ -1487,6 +1497,7 @@ impl Globals {
             records,
             rs_old,
             opens_tail,
+            effects_tail,
         } = p;
         self.spill_scalars();
         if lazy {
@@ -1577,6 +1588,8 @@ impl Globals {
         crate::diag::append(&notes_tail.1, 0);
         system::truncate_opens(opens_tail.0);
         system::append_opens_kept(&opens_tail.1, &opens_tail.2);
+        system::truncate_external_effects(effects_tail.0);
+        system::append_external_effects(&effects_tail.1);
         let r = self.restore_ext(&live);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
             let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
@@ -1726,6 +1739,7 @@ impl Globals {
             records,
             rs_old,
             opens_tail,
+            effects_tail,
         } = p;
         system::guard_outputs(vec![]);
         let at_id: ExtRecord = if branch.ids().first() == Some(&id) {
@@ -1999,6 +2013,11 @@ impl Globals {
             .to_vec();
         system::truncate_opens(now.opens);
         system::append_opens_kept(&old_after, &old_kept);
+        // The external effects likewise: the new run's, then the old run's
+        // after `id` (the convergence test has their counts equal at `id`).
+        system::truncate_external_effects(now.effects_len);
+        let eskip = at_id.effects_len.saturating_sub(effects_tail.0);
+        system::append_external_effects(effects_tail.1.get(eskip..).unwrap_or(&[]));
         system::truncate_terminal(now.terminal_len);
         let skip = at_id.terminal_len.saturating_sub(terminal_tail.0);
         system::append_terminal(terminal_tail.1.get(skip..).unwrap_or(&[]));
