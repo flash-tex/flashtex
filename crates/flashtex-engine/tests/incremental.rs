@@ -6812,3 +6812,40 @@ fn an_edit_from_one_page_to_another_converges_after_its_end() {
     assert!(r.contains("\"mode\":\"incremental\""), "{r}");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
 }
+
+/// The first page checkpoint after a lookup whose answer changed, with
+/// that lookup the last one before it, has consumed the lookup and is no
+/// restart point: `extra-probe.tex` appears, and nothing else changes. The
+/// run restarts before the `\openin` (one lookup; LaTeX's `\IfFileExists`
+/// makes more), and its page says FOUND.
+#[test]
+fn a_checkpoint_just_after_a_changed_lookup_is_no_restart_point() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("rs-after-lookup");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for i in 0..120 {
+        doc.push_str(&para(i, "lorem"));
+        if i == 40 {
+            doc.push_str(
+                "\\openin5=extra-probe.tex \\ifeof5 MISSING\\else FOUND\\closein5\\fi\n\n",
+            );
+        }
+    }
+    doc.push_str("\\end{document}\n");
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("extra-probe.tex", "The extra file.\n")],
+        "a file a page looks for appears",
+    );
+    std::fs::remove_file(dir.join("extra-probe.tex")).unwrap();
+    compile_and_check(&e, &mut h, &dir, &[], "and goes again");
+}
