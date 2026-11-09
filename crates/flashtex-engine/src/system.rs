@@ -1897,6 +1897,13 @@ pub fn texmf_var(var: &str) -> Option<String> {
         .ok()
 }
 
+/// kpathsea's `kpse_out_name_ok_silent` on the run's own kpathsea
+/// instance (texmf.cnf's `openout_any`), for the XeTeX engine, which
+/// prints the refusal under its own `argv[0]` (#2453).
+pub fn out_name_ok_silent(name: &str) -> bool {
+    with_resolver(|r| r.name_ok_silent(name, true))
+}
+
 /// texmf.cnf's yes/no settings as web2c's `texmf_yesno` reads them: true
 /// if the value starts with `1`, `y` or `t`.
 pub fn texmf_yesno(var: &str) -> bool {
