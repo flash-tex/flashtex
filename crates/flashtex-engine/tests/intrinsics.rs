@@ -231,6 +231,26 @@ fn register_arithmetic_is_a_dependency() {
     assert_eq!(stat(&s, "replays"), 2, "{s}");
 }
 
+/// An e-TeX sparse register (`\countdef` above 255) is a node, and a watch
+/// record compares a meaning's node by its address. Here `\a`'s register
+/// node is freed (`\let\a\relax`) and the next `\countdef\a` makes count302
+/// in the same node, so `\a` held its recorded value again and the hook
+/// kept replaying `\count300` for `\meaning\a`. A sparse register let go
+/// of is never taken back.
+#[test]
+fn a_sparse_register_let_go_of_is_not_taken_back() {
+    let s = check_etex(
+        "sparse",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\\countdef\\b=301 \\countdef\\a=300\n\
+         \\def\\hook{\\edef\\w{\\meaning\\a}}\n\
+         \\hook\\hook\\message{[\\meaning\\w]}\\let\\a\\relax \\countdef\\a=302\n\
+         \\hook\\message{[\\meaning\\w]}\\hook\\message{[\\meaning\\w]}\\end\n",
+    );
+    // calls 2 and 4 replay; call 3 records count302's meaning afresh
+    assert_eq!(stat(&s, "replays"), 2, "{s}");
+    assert_eq!(stat(&s, "Deps"), 1, "{s}");
+}
+
 #[test]
 fn verify_all_on_the_test_file() {
     // every parameterless macro big_switch expands is a candidate
