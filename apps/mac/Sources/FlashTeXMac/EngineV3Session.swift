@@ -1313,7 +1313,9 @@ final class EngineV3Session {
         }
         trustPrompt = prompt
         let rootPath = root.map { EngineV3Trust.canonical($0).path }, mainPath = main.map { EngineV3Trust.canonical($0).path }
-        let extra = prompt?.need.filter { $0.path != rootPath && $0.path != mainPath }.count ?? 0
+        let extra = prompt?.need.filter {
+            $0.path != rootPath && $0.path != mainPath && !$0.path.hasSuffix(EngineV3Trust.incompleteSuffix)
+        }.count ?? 0
         if trustOtherCount != extra { trustOtherCount = extra }
         if projectTrusted != trusted { projectTrusted = trusted }
     }
@@ -1351,7 +1353,9 @@ final class EngineV3Session {
             let shared = root.map(EngineV3Trust.isShared) ?? false
             let walk = project.sync(except: editorPaths, quarantine: !shared)
             let t1 = MonotonicClock.nowNs()
-            let decision = root.map { EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined) }
+            let decision = root.map {
+                EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined, walkTruncated: walk.truncated)
+            }
             let t2 = MonotonicClock.nowNs()
             let ms = String(format: "%.1f (walk %.1f, trust %.1f)", Double(t2 &- t0) / 1e6, Double(t1 &- t0) / 1e6, Double(t2 &- t1) / 1e6)
             EngineV3Session.onMain {
@@ -3425,7 +3429,8 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// into the copy. Bounded: 20,000 entries, hidden directories skipped.
     /// Returns what it saw: the input files (EngineV3Snapshot.inputs(root:),
     /// nil when it could not list them all) and the quarantined files (trust).
-    struct Walk { var inputs: [String: String]?; var quarantined: [URL] }
+    /// `truncated`: the walk stopped before seeing every entry (`sync`).
+    struct Walk { var inputs: [String: String]?; var quarantined: [URL]; var truncated = false }
 
     /// `fingerprints`/`quarantine`: whether to collect the input files and
     /// the quarantined files (each costs a syscall per file).
@@ -3543,17 +3548,39 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         return out
     }
 
-    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
+    /// `bound`: most entries linked and fingerprinted (tests use a small
+    /// one). Past it, when `quarantine` is set, the walk goes on looking
+    /// only for quarantined files, up to `quarantineBound` entries (ten
+    /// times `bound` by default): trust must see a file downloaded or
+    /// unpacked there later, even into a project it already trusted (#2060).
+    /// `truncated` only when that look stopped short too.
+    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true,
+              bound: Int = EngineV3Snapshot.maxEntries, quarantineBound: Int? = nil) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
         guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return Walk(inputs: nil, quarantined: []) }
         var n = 0
         var inputs: [String: String]? = fingerprints ? [:] : nil
         var quarantined: [URL] = []
+        var truncated = false
+        var linking = true
+        let lookBound = quarantineBound ?? bound * 10
         let prefix = source.standardizedFileURL.path + "/"
         for case let url as URL in e {
             n += 1
-            if n > EngineV3Snapshot.maxEntries { inputs = nil; break }
+            if linking, n > bound {
+                inputs = nil
+                linking = false
+                if !quarantine { truncated = true; break }
+            }
+            if !linking {
+                // A getxattr per file, nothing written: the copy stays bounded.
+                if n > lookBound { truncated = true; break }
+                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true, EngineV3Trust.isQuarantined(url) {
+                    quarantined.append(url)
+                }
+                continue
+            }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(prefix) else { continue }
             let rel = String(path.dropFirst(prefix.count))
@@ -3578,7 +3605,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
                 try? fm.createSymbolicLink(at: dst, withDestinationURL: url)
             }
         }
-        return Walk(inputs: inputs, quarantined: quarantined)
+        return Walk(inputs: inputs, quarantined: quarantined, truncated: truncated)
     }
 }
 
