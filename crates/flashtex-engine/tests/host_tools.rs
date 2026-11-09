@@ -797,3 +797,64 @@ fn a_confined_host_does_not_read_an_outside_bib_file() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A project `.bib` that is a symbolic link to a file outside the allowed
+/// roots is outside too (#2163's review): a confined host follows the link
+/// (`system::tool_input_ok` canonicalizes) and neither reads nor hashes
+/// nor gives bibtex the file, as for an absolute `\bibdata` outside, and
+/// notes the refusal with the file's real place. The name rule passes
+/// (`refs`, in the project), so only the path rule can refuse it.
+/// Unconfined, the same document runs bibtex. (Unix: symbolic links.)
+#[cfg(unix)]
+#[test]
+fn a_confined_host_does_not_follow_a_project_bib_link_outside() {
+    if tex_bin().is_none() {
+        eprintln!("skipped: no TeX Live with bibtex");
+        return;
+    }
+    let d = scratch("confined-bib-link");
+    let outside = d.join("outside");
+    let proj = d.join("proj");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("refs.bib"), BIB).unwrap();
+    let real = std::fs::canonicalize(outside.join("refs.bib")).unwrap();
+    let refused = d.join("refused");
+    for confine in [false, true] {
+        let _ = std::fs::remove_dir_all(&proj);
+        std::fs::create_dir_all(proj.join("out")).unwrap();
+        std::os::unix::fs::symlink(&real, proj.join("refs.bib")).unwrap();
+        std::fs::write(proj.join("main.tex"), aux_only_doc("refs")).unwrap();
+        let env: Vec<(&str, &str)> = if confine {
+            vec![
+                ("FLASHTEX_CONFINE_READS", "1"),
+                ("FLASHTEX_CONFINE_ROOTS", proj.to_str().unwrap()),
+                ("FLASHTEX_CONFINE_REFUSED", refused.to_str().unwrap()),
+            ]
+        } else {
+            vec![]
+        };
+        let host = start_host_env("confined-bib-link", &[], &env);
+        let mut c = Client::connect(&host.1).unwrap();
+        let cy = cycle(&mut c, &req(1, &proj, "auto"));
+        if confine {
+            assert!(cy.events("run").is_empty(), "{cy:?}");
+            assert!(
+                cy.events("skip").iter().any(|s| s
+                    .str_field("reason")
+                    .is_some_and(|r| r.contains("not found") && r.contains("refs"))),
+                "{cy:?}"
+            );
+            let lines = std::fs::read_to_string(&refused).unwrap_or_default();
+            let want = format!("refs\t{}", real.display());
+            assert!(
+                lines.lines().any(|l| l == want),
+                "the refusal is noted with the real place: {lines:?}"
+            );
+        } else {
+            let runs = cy.events("run");
+            assert_eq!(runs.len(), 1, "{cy:?}");
+            assert_eq!(runs[0].str_field("tool"), Some("bibtex"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
