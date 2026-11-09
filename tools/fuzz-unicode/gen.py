@@ -517,9 +517,34 @@ class Gen:
         L.append("\\newfontfamily\\arabicfont{Amiri-Regular.ttf}[Script=Arabic]")
         if self.chance(0.5):
             L.append("\\usepackage{unicode-math}\\setmathfont{%s}" % self.pick(MATH_FONTS))
+        siunitx = self.chance(0.4)
+        if siunitx:
+            L.append("\\usepackage{siunitx}")
+        # hyperref: every \pdfstringdef (bookmarks, page labels, anchors)
+        # runs \pdfstringdefPreHook, XeTeX's guarded intrinsic (fuzz.py
+        # --replay).
+        hyper = self.chance(0.6)
+        if hyper:
+            L.append("\\usepackage[%s]{hyperref}" % self.pick(["", "bookmarks", "pdfencoding=auto",
+                                                              "unicode,bookmarksnumbered", "colorlinks"]))
         L.append("\\begin{document}")
         for _ in range(r.randint(3, 8)):
             k = r.random()
+            if hyper and k < 0.15:
+                title = self.pick([
+                    lambda: " ".join(self.word("latn") for _ in range(r.randint(1, 4))),
+                    lambda: "{\\hebrewfont %s}" % self.word("hebr"),
+                    lambda: "Über \\texorpdfstring{$x^2$}{x2} café",
+                    lambda: "\\qty{3.5}{\\kilo\\metre} and \\num{12345}" if siunitx else "Größe ½",
+                    lambda: "\\textbf{Bold} \\emph{ēmph} — “q”",
+                ])()
+                L.append("\\%s{%s}\\label{s%d}" % (self.pick(["section", "subsection", "section*"]), title, self.n))
+                self.n += 1
+                if self.chance(0.4):
+                    L.append("See \\ref{s%d}, \\pageref{s%d}, \\href{https://example.org/ü}{link ü}." % (self.n - 1, self.n - 1))
+                if self.chance(0.3):
+                    L.append("\\newpage")
+                continue
             if k < 0.3:
                 L.append(self.text(r.randint(10, 60), fonts=False) + "\n")
             elif k < 0.45:

@@ -271,7 +271,7 @@ def fuzz_latex_seed(seed, args):
     try:
         _, ok, msgs, _, info = L.run_case(
             name, {"reference": args.oracle, "candidate": args.candidate}, args.fmts,
-            os.path.join(work, "run"), args.timeout, src=src, keep=False)
+            os.path.join(work, "run"), args.timeout, src=src, keep=args.keep)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -285,6 +285,98 @@ def fuzz_latex_seed(seed, args):
                       "crash" if "panicked" in first else "rc")
     res.update(cls=cls, sig=signature(cls, " | ".join(m.strip() for m in msgs[:3])), detail=msgs[:12])
     d = os.path.join(args.out, cls, str(seed))
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "doc.tex"), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    with open(os.path.join(d, "result.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=str)
+    return res
+
+
+REPLAY_MODES = ("off", "on", "verify")
+
+
+def parse_stats(path):
+    out = {}
+    try:
+        with open(path) as fh:
+            for ln in fh:
+                k, _, v = ln.partition(":")
+                out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def fuzz_replay_seed(seed, args):
+    """The replay axis: one gen.py xelatex document through the candidate
+    three times, FLASHTEX_INTRINSICS=off|on|verify (XeTeX's guarded
+    intrinsics, \\pdfstringdefPreHook), two untraced passes each (so the
+    .aux and .out files are read back). "off" is the reference: the log,
+    exit status and XDV of "on" and "verify" must equal it, verify must not
+    exit 3 (FLASHTEX_INTRINSICS_VERIFY_FAIL=1) nor count a differing check."""
+    L = latex_mod()
+    text = gen.generate(seed, latex=True).render()
+    work = tempfile.mkdtemp(prefix="fzur-%d-" % seed, dir=args.tmp)
+    runs = {}
+    try:
+        for mode in REPLAY_MODES:
+            d = os.path.join(work, mode)
+            os.makedirs(d)
+            with open(os.path.join(d, "doc.tex"), "w", encoding="utf-8") as fh:
+                fh.write(text)
+            exe = L.link(args.candidate, os.path.join(d, ".bin"), "xelatex")
+            env = L.env_for(args.fmts["candidate"])
+            stats = os.path.join(d, ".stats")
+            env.update(FLASHTEX_INTRINSICS=mode, FLASHTEX_INTRINSICS_VERIFY_FAIL="1",
+                       FLASHTEX_INTRINSICS_STATS=stats)
+            code = None
+            for _ in range(2):
+                try:
+                    r = subprocess.run([exe] + L.RUN_ARGS + ["doc.tex"], cwd=d, env=env,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                       timeout=args.timeout)
+                    code = r.returncode
+                    err = r.stderr.decode("utf-8", "replace")
+                except subprocess.TimeoutExpired:
+                    code, err = "timeout", ""
+                    break
+            try:
+                with open(os.path.join(d, "doc.log"), encoding="utf-8", errors="surrogateescape") as fh:
+                    log = fh.read()
+            except OSError:
+                log = ""
+            lines, _ = LS.split_accounting(XL.normalise(log, d).split("\n"))
+            xdv = open(os.path.join(d, "doc.xdv"), "rb").read() if os.path.exists(os.path.join(d, "doc.xdv")) else None
+            runs[mode] = {"rc": code, "lines": lines, "xdv": xdv, "stats": parse_stats(stats), "stderr": err[-2000:]}
+    finally:
+        if not args.keep:
+            shutil.rmtree(work, ignore_errors=True)
+    off = runs["off"]
+    res = {"seed": seed, "replayed": runs["on"]["stats"].get("replayed", "0"),
+           "checked": runs["verify"]["stats"].get("verify.checked", "0")}
+    kinds, detail = [], {}
+    for mode in ("on", "verify"):
+        r = runs[mode]
+        if r["rc"] != off["rc"]:
+            kinds.append("%s-rc" % mode)
+            detail[mode + "-rc"] = [off["rc"], r["rc"], r["stderr"][-500:]]
+        d = first_diff(off["lines"], r["lines"])
+        if d is not None:
+            kinds.append("%s-log" % mode)
+            detail[mode + "-log"] = {"line": d[0] + 1, "off": d[1], mode: d[2]}
+        if (off["xdv"] is None) != (r["xdv"] is None) or (
+                off["xdv"] is not None and XL.compare_xdv_bytes(off["xdv"], r["xdv"]) is not None):
+            kinds.append("%s-xdv" % mode)
+    vs = runs["verify"]["stats"]
+    if vs.get("verify.differing", "0") not in ("0", ""):
+        kinds.append("verify-diff")
+        detail["verify-stats"] = {k: v for k, v in vs.items() if k.startswith("verify.")}
+    if not kinds:
+        res["cls"] = "equal"
+        return res
+    res.update(cls="replay", sig="replay:" + ",".join(kinds), detail=detail)
+    d = os.path.join(args.out, "replay", str(seed))
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "doc.tex"), "w", encoding="utf-8") as fh:
         fh.write(text)
@@ -315,16 +407,18 @@ def main(argv=None):
                     help="xelatex/fontspec documents instead of xetex -ini ones")
     ap.add_argument("--formats", default=None,
                     help="with --latex: dir for the two xelatex.fmt files (default OUT/fmt)")
+    ap.add_argument("--replay", action="store_true",
+                    help="the replay axis: xelatex documents, candidate only, FLASHTEX_INTRINSICS off/on/verify")
     args = ap.parse_args(argv)
     args.oracle = shutil.which(args.oracle) or args.oracle
     args.candidate = os.path.abspath(args.candidate)
     cap_output()
     os.makedirs(args.out, exist_ok=True)
     one = fuzz_seed
-    if args.latex:
+    if args.latex or args.replay:
         args.formats = os.path.abspath(args.formats or os.path.join(args.out, "fmt"))
         args.fmts = build_formats(args)
-        one = fuzz_latex_seed
+        one = fuzz_replay_seed if args.replay else fuzz_latex_seed
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(args.workers, 2))) as ex:
         for r in ex.map(lambda s: one(s, args), parse_seeds(args.seeds)):
@@ -340,6 +434,11 @@ def main(argv=None):
         json.dump({"counts": counts, "signatures": sigs}, fh, indent=1)
     print("%d seeds: %s; %d distinct signatures" % (
         len(results), ", ".join("%s %d" % kv for kv in sorted(counts.items())), len(sigs)))
+    if args.replay:
+        rep = sum(int(r.get("replayed") or 0) for r in results)
+        chk = sum(int(r.get("checked") or 0) for r in results)
+        print("replay: %d replayed calls (on), %d checked calls (verify); %d seeds with a replay" % (
+            rep, chk, sum(1 for r in results if int(r.get("replayed") or 0) > 0)))
     return 0 if sum(counts.get(c, 0) for c in NEUTRAL) == len(results) else 1
 
 

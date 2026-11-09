@@ -45,6 +45,25 @@ picture files of `tools/xetex-lockstep/pictures`.
 engine builds its own `xelatex.fmt` once (`OUT/fmt`, about a minute each),
 then each document runs untraced and then traced to its box dumps.
 
+## The replay axis (`--replay`)
+
+`--replay` needs no oracle: "off" is the reference. Each `gen.py --latex`
+document (60% of them load hyperref, whose every `\pdfstringdef` runs
+`\pdfstringdefPreHook`, XeTeX's guarded intrinsic; 40% siunitx, which fills
+it) runs through the candidate three times, `FLASHTEX_INTRINSICS=off`,
+`on` and `verify` (with `FLASHTEX_INTRINSICS_VERIFY_FAIL=1` and
+`FLASHTEX_INTRINSICS_STATS`), two untraced passes each so the `.aux` and
+`.out` files are read back. A finding (class `replay`) is a log, exit
+status or XDV of `on` or `verify` that differs from `off`, a verify exit 3
+or a `verify.differing` count. The run prints how many calls were replayed
+and checked, so a run that never reaches a replay is visible. The
+candidate must be a build with XeTeX intrinsics (#2134, #2140, #2251, not
+yet on main); it builds its own `xelatex.fmt`.
+
+```sh
+python3 tools/fuzz-unicode/fuzz.py --candidate <intrinsics build> --replay --seeds 0:100 --out /tmp/fzr
+```
+
 ## What is compared (P-T1, and the XDV rule of docs/design/xetex/PLAN.md §3.5)
 
 In order; the first difference names the class:
