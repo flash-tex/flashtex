@@ -13,7 +13,9 @@
 //! The C file keeps its state in file-level statics; here they are the
 //! fields of [`Ttf`], alive for one call, except the `cmap` tables read so
 //! far (`ttf_cmap_tree`), which pdfTeX keeps for the whole run
-//! (`writefont::State::ttf_cmaps`).
+//! (`writefont::State::ttf_cmaps`), and `upem`, which an OpenType font
+//! without a `head` table reads from the font before it
+//! (`writefont::State::ttf_upem`).
 
 use super::cfile::{CFile, Whence};
 use super::fonts::{Fonts, NOTDEF};
@@ -1570,7 +1572,7 @@ impl Globals {
             fb,
             fb_pos,
             ntabs: 0,
-            upem: 0,
+            upem: st.wf.ttf_upem,
             post_format: 0,
             loca_format: 0,
             last_glyf_offset: 0,
@@ -1676,6 +1678,7 @@ impl Globals {
             t.copy_font();
         }
         let ttf_length = t.offset() as i32;
+        st.wf.ttf_upem = t.upem;
         let mut fb = std::mem::take(&mut t.fb);
         fb.truncate(t.fb_pos); // fb_flush writes up to fb_ptr
         drop(t);
@@ -1725,6 +1728,7 @@ impl Globals {
         for _ in 0..t.dir_tab[tab].length {
             t.copy_char();
         }
+        st.wf.ttf_upem = t.upem;
         let fb = std::mem::take(&mut t.fb);
         drop(t);
         super::with_state(|s| s.out.fb = fb);
