@@ -284,6 +284,8 @@ pub struct Host {
     pub brk_locale_str_num: i32,
     /// READ-TRACK (`crate::dormant`): the run's counts, never restored.
     pub dorm: flashtex_engine::dormant::Counts,
+    /// Verification-only macro observations; never affects TeX execution.
+    pub intrinsics: crate::intrinsics::Report,
     /// The iterator's text, as the boundaries `ubrk_next` returns for it, and
     /// how many it has returned. `do_locale_linebreaks` reads them all
     /// within one command, so a checkpoint does not save them.
