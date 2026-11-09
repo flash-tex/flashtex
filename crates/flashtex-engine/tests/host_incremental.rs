@@ -5478,30 +5478,19 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     fsize(limit);
     let r = req(2, &proj, &out, "main.tex");
     eprintln!("{:?}: compile 2 (the disk is full)", t0.elapsed());
-    c.compile(&r).unwrap();
-    let mut diags = vec![];
-    let done = loop {
-        match c.next_event().unwrap().expect("host closed the connection") {
-            Event::Diagnostic(j) => diags.push(j),
-            Event::Done(d) if d.int_field("id") == Some(2) => break d,
-            Event::Error(e) => panic!("host error: {e}"),
-            _ => {}
-        }
-    };
-    eprintln!("{:?}: DONE {done:?}", t0.elapsed());
-    assert_ne!(done.str_field("status"), Some("ok"), "{done:?}");
-    // the failure is the PDF's write: pdfTeX's `fwrite() failed` (utils.c,
-    // `pdftex/output.rs`), an error diagnostic and in the log
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.str_field("severity") == Some("error")
-                && d.str_field("message")
-                    .is_some_and(|m| m.contains("fwrite() failed"))),
-        "no fwrite() error diagnostic: {diags:?}"
-    );
+    let full = compile(&mut c, &mut view, &r);
+    eprintln!("{:?}: DONE {:?}", t0.elapsed(), full.done);
+    assert_ne!(full.done.str_field("status"), Some("ok"), "{:?}", full.done);
+    // the failure is the PDF's write: the log, which fits, ends with
+    // pdfTeX's error for it (`pdftex_fail("fwrite() failed")`, utils.c;
+    // `pdftex/output.rs`). (The Classic host sends no diagnostic for it,
+    // #2218, so the log is where it shows.)
     let log = std::fs::read_to_string(out.join("main.log")).unwrap();
-    assert!(log.contains("fwrite() failed"), "{log}");
+    assert!(
+        log.lines()
+            .any(|l| l.starts_with("!pdfTeX error:") && l.ends_with("fwrite() failed")),
+        "the PDF's write is not what failed:\n{log}"
+    );
     // the disk has room again: the next COMPILE is served
     fsize(libc::RLIM64_INFINITY);
     let pdf = out.join("main.pdf");
