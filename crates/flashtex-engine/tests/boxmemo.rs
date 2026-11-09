@@ -263,6 +263,26 @@ fn a_tail_that_reads_past_the_call_never_replays() {
     assert_eq!(stat(&s, "hits"), 0, "{s}");
 }
 
+#[test]
+fn line_breaks_pass_scalars_are_dead_between_commands() {
+    // (#2447, lane FUZZ-ALIGN) the call's paragraph needs the second pass
+    // and the one between the calls does not: the normal path leaves
+    // `second_pass` true, the replay leaves it false, and `line_break`
+    // sets it again before any read. The full verifier compared it
+    let s = check(
+        "dead-pass",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16000pt \\pretolerance=100 \\tolerance=10000\n\
+         \\def\\measure{\\begingroup\\setbox0\\vbox{\\hsize=20pt \\noindent\\vrule width 15pt\
+         \\hskip 0pt plus 1pt\\vrule width 15pt\\par}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         \\setbox1\\vbox{\\hsize=100pt \\parfillskip=0pt plus 1fil \\noindent\\vrule\\par}\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         \\end\n",
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
