@@ -512,7 +512,7 @@ impl<M: Metrics> Builder<'_, M> {
                         .diag(format!("pdf:bann without a dictionary: `{}'", lossy(r)));
                     return;
                 };
-                let d = self.fixup_dict(d);
+                let d = self.fixup_dict(text_strings(d));
                 if self.doc.tracking.is_some() {
                     self.doc.diag("pdf:bann inside another pdf:bann".into());
                     self.break_annot();
@@ -562,7 +562,7 @@ impl<M: Metrics> Builder<'_, M> {
                         .diag(format!("pdf:outline without a dictionary: `{}'", lossy(r)));
                     return;
                 };
-                let d = self.fixup_dict(d);
+                let d = self.fixup_dict(text_strings(d));
                 self.doc.outlines.push(Outline {
                     level,
                     open,
@@ -571,13 +571,13 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"docinfo" => {
                 if let Some(Obj::Dict(d)) = p.object() {
-                    let d = self.fixup_dict(d);
+                    let d = self.fixup_dict(text_strings(d));
                     self.doc.docinfo.merge(&d);
                 }
             }
             b"docview" => {
                 if let Some(Obj::Dict(d)) = p.object() {
-                    let d = self.fixup_dict(d);
+                    let d = self.fixup_dict(text_strings(d));
                     self.doc.catalog.merge(&d);
                 }
             }
@@ -744,7 +744,7 @@ impl<M: Metrics> Builder<'_, M> {
             self.doc.diag("pdf:ann without a dictionary".into());
             return;
         };
-        let d = self.fixup_dict(d);
+        let d = self.fixup_dict(text_strings(d));
         let (x, y) = self.stream_point_device();
         let (x, y) = (x.to_f64(), y.to_f64());
         let r = match t.bbox {
@@ -1104,9 +1104,176 @@ fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
+/// The keys whose string values dvipdfmx takes for text strings
+/// (`spc_handler_pdfm__init`'s `default_taintkeys`, `spc_pdfm.c`).
+const TAINT_KEYS: [&[u8]; 11] = [
+    b"Title",
+    b"Author",
+    b"Subject",
+    b"Keywords",
+    b"Creator",
+    b"Producer",
+    b"Contents",
+    b"Subj",
+    b"TU",
+    b"T",
+    b"TM",
+];
+
+/// `parse_pdf_dict_with_tounicode` in XDV mode, for the dictionary of a
+/// `pdf:ann`, `pdf:bann`, `pdf:outline`, `pdf:docinfo` or `pdf:docview`:
+/// its text strings from UTF-8 to UTF-16BE (`modify_strings` on each
+/// entry, stopping at the first string that is not UTF-8, as
+/// `pdf_foreach_dict` stops). `pdf:tounicode`'s CMaps and extra keys are
+/// not read (the special is ignored).
+fn text_strings(mut d: Dict) -> Dict {
+    let _ = modify_dict(&mut d);
+    d
+}
+
+fn modify_dict(d: &mut Dict) -> Result<(), ()> {
+    for (k, v) in d.0.iter_mut() {
+        modify_strings(k, v)?;
+    }
+    Ok(())
+}
+
+/// `modify_strings`: a string under a text-string key (also in an array
+/// under one) that is not UTF-16BE already (`need_reencode`) re-encoded; a
+/// dictionary's entries by their own keys.
+fn modify_strings(k: &[u8], v: &mut Obj) -> Result<(), ()> {
+    match v {
+        Obj::Str(s) => {
+            if TAINT_KEYS.contains(&k) && !s.starts_with(&[0xFE, 0xFF]) {
+                if let Some(t) = utf8_to_utf16be(s)? {
+                    *s = t;
+                }
+            }
+            Ok(())
+        }
+        Obj::Array(a) => {
+            for o in a.iter_mut() {
+                modify_strings(k, o)?;
+            }
+            Ok(())
+        }
+        Obj::Dict(d) => modify_dict(d),
+        _ => Ok(()),
+    }
+}
+
+/// `reencode_string_from_utf8_to_utf16be`: `None` for an ASCII string
+/// (left as it is), an error for one that is not UTF-8 (`UC_UTF8_*`).
+fn utf8_to_utf16be(s: &[u8]) -> Result<Option<Vec<u8>>, ()> {
+    if s.iter().all(|&b| b <= 127) {
+        return Ok(None);
+    }
+    let mut out = vec![0xFE, 0xFF];
+    let mut p = 0;
+    while p < s.len() {
+        let u = utf8_decode_char(s, &mut p).ok_or(())?;
+        if !(0..=0x10FFFF).contains(&u) || (0xD800..=0xDFFF).contains(&u) {
+            return Err(()); // UC_is_valid
+        }
+        if u <= 0xFFFF {
+            out.extend_from_slice(&(u as u16).to_be_bytes());
+        } else {
+            let v = u - 0x10000;
+            out.extend_from_slice(&(0xD800 + (v >> 10) as u16).to_be_bytes());
+            out.extend_from_slice(&(0xDC00 + (v & 0x3FF) as u16).to_be_bytes());
+        }
+    }
+    Ok(Some(out))
+}
+
+/// `UC_UTF8_decode_char`: up to six bytes, overlong forms accepted.
+fn utf8_decode_char(s: &[u8], p: &mut usize) -> Option<i32> {
+    let c = s[*p];
+    let (mut u, n) = match c {
+        0..=0x7F => (c as i32, 0),
+        _ if c & 0xE0 == 0xC0 => ((c & 31) as i32, 1),
+        _ if c & 0xF0 == 0xE0 => ((c & 0x0F) as i32, 2),
+        _ if c & 0xF8 == 0xF0 => ((c & 0x07) as i32, 3),
+        _ if c & 0xFC == 0xF8 => ((c & 0x03) as i32, 4),
+        _ if c & 0xFE == 0xFC => ((c & 0x01) as i32, 5),
+        _ => return None,
+    };
+    if *p + 1 + n > s.len() {
+        return None;
+    }
+    for k in 0..n {
+        let b = s[*p + 1 + k];
+        if b & 0xC0 != 0x80 {
+            return None;
+        }
+        u = (u << 6) | (b & 0x3F) as i32;
+    }
+    *p += 1 + n;
+    Some(u)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// xdvipdfmx 20260317's strings (TeX Live 2026 `xetex`, `qpdf --qdf`)
+    /// for `pdf:docinfo <</Title (Café ∑) /Author (plain) /Foo (Café)>>`
+    /// and `pdf:ann … <</Contents (naïve) /NM (naïve)>>`.
+    #[test]
+    fn text_strings_are_utf16be() {
+        let d = Dict(vec![
+            (b"Title".to_vec(), Obj::Str("Café ∑".as_bytes().to_vec())),
+            (b"Author".to_vec(), Obj::Str(b"plain".to_vec())),
+            (b"Foo".to_vec(), Obj::Str("Café".as_bytes().to_vec())),
+            (b"Contents".to_vec(), Obj::Str("naïve".as_bytes().to_vec())),
+            (b"NM".to_vec(), Obj::Str("naïve".as_bytes().to_vec())),
+        ]);
+        let d = text_strings(d);
+        let s = |k: &[u8]| match d.get(k) {
+            Some(Obj::Str(s)) => s.clone(),
+            _ => panic!(),
+        };
+        let hex = |h: &str| -> Vec<u8> {
+            (0..h.len() / 2)
+                .map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap())
+                .collect()
+        };
+        assert_eq!(s(b"Title"), hex("feff00430061006600e900202211"));
+        assert_eq!(s(b"Author"), b"plain");
+        assert_eq!(s(b"Foo"), hex("436166c3a9"));
+        assert_eq!(s(b"Contents"), hex("feff006e006100ef00760065"));
+        assert_eq!(s(b"NM"), hex("6e61c3af7665"));
+        // nested: an array under a key, a dictionary's own keys; a
+        // non-BMP character as a surrogate pair; UTF-16BE already, kept
+        let mut d = Dict(vec![
+            (
+                b"T".to_vec(),
+                Obj::Array(vec![Obj::Str("𝐀".as_bytes().to_vec())]),
+            ),
+            (
+                b"A".to_vec(),
+                Obj::Dict(Dict(vec![(
+                    b"TU".to_vec(),
+                    Obj::Str("é".as_bytes().to_vec()),
+                )])),
+            ),
+            (b"Subj".to_vec(), Obj::Str(vec![0xFE, 0xFF, 0xC3, 0xA9])),
+        ]);
+        d = text_strings(d);
+        assert_eq!(d.0[0].1, Obj::Array(vec![Obj::Str(hex("feffd835dc00"))]));
+        assert_eq!(
+            d.0[1].1,
+            Obj::Dict(Dict(vec![(b"TU".to_vec(), Obj::Str(hex("feff00e9")))]))
+        );
+        assert_eq!(d.0[2].1, Obj::Str(vec![0xFE, 0xFF, 0xC3, 0xA9]));
+        // not UTF-8: left, and the dictionary's later entries with it
+        let d = text_strings(Dict(vec![
+            (b"Title".to_vec(), Obj::Str(vec![0xE9])),
+            (b"Contents".to_vec(), Obj::Str("é".as_bytes().to_vec())),
+        ]));
+        assert_eq!(d.0[0].1, Obj::Str(vec![0xE9]));
+        assert_eq!(d.0[1].1, Obj::Str("é".as_bytes().to_vec()));
+    }
 
     #[test]
     fn paper_specials() {
