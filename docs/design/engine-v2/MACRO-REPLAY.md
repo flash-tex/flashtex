@@ -10,6 +10,10 @@ decision D9, as built in `src/intrinsics.rs`, `src/intrinsics_verify.rs`, `chang
 from macros *without* parameters to macros *with* them. DESIGN.md stays the source of truth;
 where this document and DESIGN.md disagree, DESIGN.md wins and this document is wrong.
 
+The D9 and XeTeX intrinsics holes found on 2026-11-08, with their guards and tests, are classed in
+BOX-MEMO.md's [Soundness hole classes](BOX-MEMO.md#soundness-hole-classes-2026-11-08), together with
+its checklist for a new replay or recording site.
+
 **The rule that governs everything below:** a replay must leave the engine in a state that no
 later computation can tell from the state the real expansion leaves, except for memory addresses
 and memory-usage statistics (which P-T1 normalises, DESIGN.md §1.1). When anything a guard cannot
