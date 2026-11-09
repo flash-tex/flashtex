@@ -703,8 +703,14 @@ pub fn otf_to_unicode(
         .unwrap_or(0) as usize;
     let (map_base, map_sub) = inverse_cmap(cmap, fmt, off, num_glyphs);
     // a CFF font: its charset (GIDToCIDMap of a CID-keyed one, names of one
-    // that is not)
-    let cff = table(data, index, b"CFF ").and_then(|t| flashtex_pdf::cff::CffFont::parse(t).ok());
+    // that is not). `create_ToUnicode_cmap` opens the `CFF ` table only of
+    // an `OTTO` file (`SFNT_TYPE_POSTSCRIPT`): for a CFF face of a TTC the
+    // map is the identity and the names are the `post` table's alone.
+    let cff = if data.get(0..4) == Some(b"OTTO") {
+        table(data, index, b"CFF ").and_then(|t| flashtex_pdf::cff::CffFont::parse(t).ok())
+    } else {
+        None
+    };
     let is_cid = cff.as_ref().is_some_and(|c| c.is_cid_keyed());
     let g2c: Vec<u16> = (0..num_glyphs as u32)
         .map(|g| {
@@ -968,6 +974,35 @@ mod tests {
         // the 0xFFFF segment maps to glyph 0 (idDelta 1): a code point the
         // writer then refuses for want of a used glyph 0, or writes
         assert_eq!(base[0], 0xFFFF);
+    }
+
+    /// A CFF face of a TTC: xdvipdfmx 20260317 (TeX Live 2026 `xetex`,
+    /// every glyph of Kohinoor Devanagari drawn with `\XeTeXglyph`) maps
+    /// 699 of its 1442 glyphs; the CFF charset's names (`uni0919094D`, …)
+    /// are not read.
+    #[test]
+    #[ignore = "needs macOS 26's /System/Library/Fonts/Kohinoor.ttc"]
+    fn ttc_cff_face_has_no_charset_names() {
+        let data = std::fs::read("/System/Library/Fonts/Kohinoor.ttc").expect("Kohinoor.ttc");
+        let used: BTreeSet<u16> = (0..1442).collect();
+        let got = otf_to_unicode(&data, 0, &used, &Agl::load()).unwrap();
+        let got: Vec<String> = got
+            .iter()
+            .map(|(code, chars)| {
+                let mut s = format!("{code:04X} ");
+                for ch in chars {
+                    let mut b = [0u16; 2];
+                    for u in ch.encode_utf16(&mut b) {
+                        s.push_str(&format!("{u:04X}"));
+                    }
+                }
+                s
+            })
+            .collect();
+        let want: Vec<&str> = include_str!("testdata/tounicode-kohinoor-devanagari.txt")
+            .lines()
+            .collect();
+        assert_eq!(got, want);
     }
 
     #[test]
