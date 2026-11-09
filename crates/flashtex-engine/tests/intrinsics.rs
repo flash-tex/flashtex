@@ -353,3 +353,36 @@ fn a_changed_par_token_falls_back() {
     assert!(stat(&s, "replays") >= 1, "{s}");
     assert_eq!(stat(&s, "ParToken"), 1, "{s}");
 }
+
+/// `\escapechar` is the first integer pair a recording keeps (the guard
+/// checks it with the macro's own meaning): a hook that prints a control
+/// sequence's name gives another name once `\escapechar` changes.
+#[test]
+fn a_changed_escapechar_falls_back() {
+    let s = check(
+        "escape",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\hook{\\edef\\w{\\string\\relax}}\n\
+         \\hook\\hook\\hook\\message{[\\meaning\\w]}\n\
+         \\escapechar=`\\/ \\hook\\message{[\\meaning\\w]}\\hook\\message{[\\meaning\\w]}\\end\n",
+    );
+    assert!(stat(&s, "replays") >= 2, "{s}");
+    assert!(stat(&s, "WordDeps") >= 1, "{s}");
+}
+
+/// `align_state` is part of the guard: recorded in a paragraph, a hook
+/// whose body holds an alignment tab is called again in an `\halign` cell,
+/// where the normal path's `&` ends the cell (tex.web §342) and a replay
+/// would only `\let`.
+#[test]
+fn a_changed_align_state_falls_back() {
+    let s = check(
+        "align",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\&=4 \\scrollmode\n\
+         \\def\\hook{\\let\\z=&}\n\
+         \\indent\\hook\\hook\\hook\\message{[\\meaning\\z]}\\par\n\
+         \\halign{#\\cr\\relax\\hook\\message{[\\meaning\\z]}\\cr}\\message{[\\meaning\\z]}\\end\n",
+    );
+    assert!(stat(&s, "replays") >= 1, "{s}");
+    assert!(stat(&s, "Align") >= 1, "{s}");
+}
