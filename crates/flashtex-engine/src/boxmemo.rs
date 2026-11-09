@@ -3526,6 +3526,21 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
+        } else if (c == k::spacer || c == k::ex_space)
+            && self.nest_ptr == outer
+            && self.cur_list.mode_field.abs() == k::hmode
+            && self
+                .bm_eq(INT_BASE + k::pdf_adjust_interword_glue_code)
+                .int()
+                > 0
+        {
+            // `append_normal_space` widens the glue by the code of the
+            // character at `tail` (or before an auto kern, through
+            // `save_tail`). While the tail is still the one from before the
+            // call, neither that node nor its kind is in the key, so even a
+            // recording whose tail is no character would replay wrongly
+            // after one (`\\pdfadjustinterwordglue` itself is in K2)
+            self.bm_with_rec(|r| r.start.tail) != Some(self.cur_list.tail_field)
         } else if c == k::make_box {
             if chr == k::vsplit_code {
                 false
