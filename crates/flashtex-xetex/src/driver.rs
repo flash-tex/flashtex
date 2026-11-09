@@ -86,7 +86,7 @@ pub fn run(argv: Vec<String>) -> ! {
     }
     flashtex_engine::system::configure(c.options);
     let mut g = crate::Globals::new();
-    g.intr_verify_on = crate::intrinsics::enabled();
+    g.set_intrinsics_verify(crate::intrinsics::enabled());
     #[cfg(unix)]
     {
         g.host.spare_go = child_env.go;

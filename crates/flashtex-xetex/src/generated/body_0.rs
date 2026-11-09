@@ -3268,6 +3268,9 @@ impl Globals {
         self.mem[crate::ix::U((p) as usize)].set_hh_rh((268435455i32).wrapping_neg());
         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
         self.dl_new_node(p);
+        if self.intr_verify_on {
+            self.flashtex_intr_cell(p, 1i32);
+        }
         get_avail = p;
         get_avail
     }

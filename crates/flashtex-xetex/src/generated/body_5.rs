@@ -3120,11 +3120,17 @@ impl Globals {
     pub fn pop_alignment(&mut self) {
         let mut p: halfword = 0; // §820
         {
+            if self.intr_verify_on {
+                self.flashtex_intr_cell(self.cur_head, 1i32);
+            }
             { let __ix824 = self.cur_head; let __v825 = self.avail; self.mem[crate::ix::U((__ix824) as usize)].set_hh_rh(__v825); }
             self.avail = self.cur_head;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
         {
+            if self.intr_verify_on {
+                self.flashtex_intr_cell(self.cur_pre_head, 1i32);
+            }
             { let __ix826 = self.cur_pre_head; let __v827 = self.avail; self.mem[crate::ix::U((__ix826) as usize)].set_hh_rh(__v827); }
             self.avail = self.cur_pre_head;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -5296,6 +5302,9 @@ impl Globals {
                                                             self.temp_ptr = LR_ptr;
                                                             LR_ptr = self.mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                                             {
+                                                                if self.intr_verify_on {
+                                                                    self.flashtex_intr_cell(self.temp_ptr, 1i32);
+                                                                }
                                                                 { let __ix1026 = self.temp_ptr; let __v1027 = self.avail; self.mem[crate::ix::U((__ix1026) as usize)].set_hh_rh(__v1027); }
                                                                 self.avail = self.temp_ptr;
                                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -5409,6 +5418,9 @@ impl Globals {
                                                                     self.temp_ptr = LR_ptr;
                                                                     LR_ptr = self.mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                                                     {
+                                                                        if self.intr_verify_on {
+                                                                            self.flashtex_intr_cell(self.temp_ptr, 1i32);
+                                                                        }
                                                                         { let __ix1034 = self.temp_ptr; let __v1035 = self.avail; self.mem[crate::ix::U((__ix1034) as usize)].set_hh_rh(__v1035); }
                                                                         self.avail = self.temp_ptr;
                                                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -5670,6 +5682,9 @@ impl Globals {
                                                                 self.temp_ptr = LR_ptr;
                                                                 LR_ptr = self.mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                                                 {
+                                                                    if self.intr_verify_on {
+                                                                        self.flashtex_intr_cell(self.temp_ptr, 1i32);
+                                                                    }
                                                                     { let __ix1048 = self.temp_ptr; let __v1049 = self.avail; self.mem[crate::ix::U((__ix1048) as usize)].set_hh_rh(__v1049); }
                                                                     self.avail = self.temp_ptr;
                                                                     self.dyn_used = (self.dyn_used).wrapping_sub(1i32);

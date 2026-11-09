@@ -52,6 +52,7 @@ pub mod generated;
 #[cfg(unix)]
 pub mod host;
 pub mod intrinsics;
+mod intrinsics_verify;
 pub mod iso;
 pub mod native;
 pub mod out;

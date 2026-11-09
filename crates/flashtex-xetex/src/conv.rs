@@ -1124,7 +1124,7 @@ fn iso_covers(g: &Globals, w: &WordDiff) -> bool {
 type FreeSets = (Option<Vec<u64>>, Option<Vec<u64>>);
 
 /// The free cells of a state (the pdfTeX engine's `free_cells`).
-fn free_cells(
+pub(crate) fn free_cells(
     word: &dyn Fn(usize) -> u64,
     avail: i32,
     rover: i32,
