@@ -780,3 +780,54 @@ fn a_reopened_document_after_its_fonts_changed() {
     ];
     check("reopen-fonts", &steps);
 }
+
+/// The same font changes with the document open (one host throughout):
+/// the preamble's lookup by name must see the font file rewritten in place.
+#[test]
+fn the_main_font_rewritten_in_place_while_open() {
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\setmainfont{{TeX Gyre Prob3x}}\n\\begin{{document}}\n\\section{{One}}\n{}See this.\n\\end{{document}}\n",
+        filler("A", 8)
+    );
+    let cursor = bundled_font("texgyrecursor-regular.otf");
+    let x = renamed_font(&cursor, "Cursor", "Prob3x");
+    let y = renamed_font(&cursor, "Cursor", "Prob3y");
+    let t = renamed_font(&bundled_font("texgyretermes-regular.otf"), "Termes", "Prob3x");
+    let steps = vec![
+        step(vec![w("main.tex", &doc), w("@fonts/prob3x.otf", &x)]),
+        step(vec![w("main.tex", doc.replace("See this", "Look at this"))]),
+        step(vec![w("@fonts/prob3x.otf", &t)]),
+        step(vec![w("@fonts/prob3x.otf", &x)]),
+        step(vec![Op::WriteKeepTime("@fonts/prob3x.otf".into(), y)]),
+        step(vec![w("main.tex", &doc)]),
+        step(vec![Op::WriteKeepTime("@fonts/prob3x.otf".into(), x)]),
+    ];
+    check("open-fonts", &steps);
+}
+
+/// A font looked up by name in the body (after S₀, on page three) whose
+/// file is rewritten in place with other glyphs under the same family
+/// name, with edits after it: the page checkpoints after the lookup must
+/// not stand.
+#[test]
+fn a_body_font_found_by_name_rewritten_in_place() {
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n\\section{{One}}\n{}\\section{{Two}}\n{}{{\\fontspec{{TeX Gyre Prob3x}}Found by name on page three.}}\n{}\\section{{Three}}\n{}See this.\n\\end{{document}}\n",
+        filler("A", 8),
+        filler("B", 8),
+        filler("C", 6),
+        filler("D", 6)
+    );
+    let x = renamed_font(&bundled_font("texgyrecursor-regular.otf"), "Cursor", "Prob3x");
+    let t = renamed_font(&bundled_font("texgyretermes-regular.otf"), "Termes", "Prob3x");
+    let steps = vec![
+        step(vec![w("main.tex", &doc), w("@fonts/prob3x.otf", &x)]),
+        step(vec![w("main.tex", doc.replace("See this", "Look at this"))]),
+        step(vec![w("@fonts/prob3x.otf", &t)]),
+        step(vec![w("main.tex", doc.replace("See this", "See that"))]),
+        step(vec![Op::WriteKeepTime("@fonts/prob3x.otf".into(), x.clone())]),
+        step(vec![w("main.tex", doc.replacen("D 2.", "D 2, edited,", 1))]),
+        step(vec![w("main.tex", &doc)]),
+    ];
+    check("body-font", &steps);
+}
