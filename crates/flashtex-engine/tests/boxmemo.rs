@@ -539,7 +539,7 @@ fn an_active_math_character_is_part_of_the_key() {
             "\\mathcode`\\!=\"8000 \\mathcode`\\?=\"8000\n\
              {\\catcode`\\!=13 \\gdef!{x}\\catcode`\\?=13 \\gdef?{y}}\n\
              \\def\\measure{\\begingroup\\setbox0\\hbox{$a!b^?$}\\global\\dimen1=\\wd0 \\endgroup}\n\
-             \\def\\one{\\measure\\message{[\\the\\dimen1]}}\n\
+             \\def\\one{\\global\\dimen1=0pt \\measure\\message{[\\the\\dimen1]}}\n\
              \\one\\one\\one {\\catcode`\\!=13 \\gdef!{xxxx}}\\one\\one\n\
              {\\catcode`\\?=13 \\gdef?{yyyy}}\\one\\one\\end\n",
         ]
