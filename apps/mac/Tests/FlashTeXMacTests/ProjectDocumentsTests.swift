@@ -475,6 +475,48 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(chrome.closure.paths, ["chapter.tex"])
     }
 
+    /// Opening the window and opening a tab change the document set: the
+    /// model's own refreshes make that closure off the main thread too (it
+    /// reads every unopened include from disk: 144 ms of main thread per
+    /// tab opened in a 1,152-page book, lane APP-LAG-AUDIT). Only a direct
+    /// refresh makes it on main.
+    func testOpeningATabMakesTheClosureOffTheMainThread() async throws {
+        let project = try TempProject(main: "\\input{chapter}\n\\input{appendix}\n", chapter: "Chapter.\n",
+                                      extra: ["appendix.tex": "Appendix.\n"])
+        defer { project.remove() }
+        let model = ShellModel()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        let chrome = model.chrome
+        func settle(_ what: String, _ cond: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(15)
+            while !cond() {
+                guard Date() < deadline else { XCTFail("timed out waiting for \(what)"); return }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        try await settle("the open's closure") { chrome.closure.paths == ["chapter.tex", "appendix.tex"] }
+        XCTAssertEqual(chrome.closuresMadeOnMain, 0, "the window's first closure is made off the main thread")
+        let offMain = chrome.closuresMadeOffMain
+        XCTAssertGreaterThan(offMain, 0)
+
+        // A tab opens: the document set changes, the closure follows (the
+        // chapter's node is now open), still made off the main thread.
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        try await settle("the opened tab's closure") {
+            chrome.closure.nodes.first { $0.resolvedPath == "chapter.tex" }?.state == .open
+        }
+        XCTAssertEqual(chrome.closuresMadeOnMain, 0, "a tab opened makes its closure off the main thread")
+        XCTAssertGreaterThan(chrome.closuresMadeOffMain, offMain)
+        XCTAssertEqual(chrome.closure, model.project.discoverClosure())
+
+        // A direct refresh (tests, `flushChrome`) still makes it here.
+        model.updateActiveText("\\input{chapter}\n")
+        model.flushChrome()
+        XCTAssertEqual(chrome.closuresMadeOnMain, 1)
+        XCTAssertEqual(chrome.closure.paths, ["chapter.tex"])
+    }
+
     func testClosureDepthIsBounded() throws {
         var extra: [String: String] = [:]
         for i in 1...10 { extra["d\(i).tex"] = i < 10 ? "\\input{d\(i + 1)}\n" : "leaf\n" }
