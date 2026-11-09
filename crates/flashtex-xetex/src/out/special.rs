@@ -629,6 +629,73 @@ impl<M: Metrics> Builder<'_, M> {
         )
     }
 
+    /// `pdf:put @resources <<...>>` (spc_pdfm.c's safeputresdict): each
+    /// category's entries join the ones there, and an entry already there
+    /// keeps its value ("Object ... already defined in dict! (ignored)");
+    /// a category given by name (`/ExtGState @gs`) takes the entries there
+    /// into that dictionary and replaces them by the name. A category that
+    /// is neither a dictionary nor a name stops the special.
+    fn put_resources(&mut self, d: Dict) {
+        let lossy_k = |k: &[u8]| String::from_utf8_lossy(k).into_owned();
+        for (cat, v) in d.0 {
+            let old = self.cur_ref().sup.resources.get(&cat).cloned();
+            // the entries of `from` that `into` lacks, added to it
+            let join = |this: &mut Self, into: &mut Dict, from: Dict| {
+                for (k, v) in from.0 {
+                    if into.get(&k).is_some() {
+                        this.doc.diag(format!(
+                            "Object \"{}\" already defined in dict! (ignored)",
+                            lossy_k(&k)
+                        ));
+                    } else {
+                        into.0.push((k, v));
+                    }
+                }
+            };
+            match v {
+                Obj::Dict(new) => match old {
+                    Some(Obj::Dict(mut o)) => {
+                        join(self, &mut o, new);
+                        self.cur().sup.resources.set(&cat, Obj::Dict(o));
+                    }
+                    Some(Obj::Named(n)) => {
+                        let mut o = self.doc.named_dict(&n).cloned().unwrap_or_default();
+                        join(self, &mut o, new);
+                        if let Some(Named::Obj(Obj::Dict(d))) = self.doc.named.get_mut(&n) {
+                            *d = o;
+                        }
+                    }
+                    _ => self.cur().sup.resources.set(&cat, Obj::Dict(new)),
+                },
+                Obj::Named(n) => {
+                    if old.as_ref() == Some(&Obj::Named(n.clone())) {
+                        continue;
+                    }
+                    let from = match old {
+                        Some(Obj::Dict(o)) => Some(o),
+                        Some(Obj::Named(m)) => self.doc.named_dict(&m).cloned(),
+                        _ => None,
+                    };
+                    if let Some(from) = from {
+                        let mut o = self.doc.named_dict(&n).cloned().unwrap_or_default();
+                        join(self, &mut o, from);
+                        if let Some(Named::Obj(Obj::Dict(d))) = self.doc.named.get_mut(&n) {
+                            *d = o;
+                        }
+                    }
+                    self.cur().sup.resources.set(&cat, Obj::Named(n));
+                }
+                _ => {
+                    self.doc.diag(format!(
+                        "Invalid type (not DICT) for page/form resource dict entry: key=\"{}\"",
+                        lossy_k(&cat)
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
     fn put(&mut self, p: &mut Parser) {
         let Some(Obj::Named(name)) = p.object() else {
             self.doc.diag("pdf:put without a name".into());
@@ -642,7 +709,7 @@ impl<M: Metrics> Builder<'_, M> {
         match name.as_slice() {
             b"resources" => {
                 if let Some(d) = first_dict() {
-                    self.cur().sup.resources.merge(&d);
+                    self.put_resources(d);
                 }
             }
             b"thispage" => {
