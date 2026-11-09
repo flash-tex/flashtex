@@ -14,7 +14,10 @@ Usage:
 
 TSV columns (tab-separated, '#' starts a comment line):
   pr  pinned_head_sha  needs  deadline
-  needs:    none | sweeps:<name>[,<name>...] | after:<PR>   ('+' joins several)
+  needs:    none | sweeps:<name>[,<name>...] | after:<PR> | afterq:<PR>   ('+' joins several)
+            after:  #PR must have merged (several allowed);
+            afterq: #PR must be in the merge queue or merged, so the queue keeps the order
+                    (for clean pairs and cumulative chains only, never for a conflicting pair)
   deadline: ISO-8601 UTC (2026-11-10T03:45:00Z) or '-' for none.
 
 Every --interval seconds (default 300) it makes ONE GraphQL query covering
@@ -30,7 +33,8 @@ daniel-parent's login starting with MERGE-AFTER-FIXES or CORRECTION posted after
 the lander started. A red `CI required`, a draft, a conflict with main or a red
 sweep holds the PR without stopping it, so a rerun on the same head still lands.
 The TSV is re-read when it changes; a stop is per (PR, pin), so re-pinning a
-row puts the PR back under watch. `after:<N>` enables a PR only once #N has merged. Enabling uses GraphQL
+row puts the PR back under watch. `after:<N>` enables a PR only once #N has merged;
+`afterq:<N>` once #N is queued or merged. Enabling uses GraphQL
 enablePullRequestAutoMerge with expectedHeadOid = the pin, so GitHub itself
 refuses if the head moved in between. The lander never posts comments.
 """
@@ -71,6 +75,8 @@ class Row:
     pr: int
     sha: str
     after: int | None = None
+    afterq: tuple[int, ...] = ()
+    after_more: tuple[int, ...] = ()
     sweeps: tuple[str, ...] = ()
     deadline: dt.datetime | None = None
 
@@ -100,7 +106,12 @@ def parse_tsv(text: str) -> list[Row]:
                 continue
             kind, _, val = need.partition(":")
             if kind == "after":
-                row.after = int(val)
+                if row.after is None:
+                    row.after = int(val)
+                else:
+                    row.after_more += (int(val),)
+            elif kind == "afterq":
+                row.afterq += (int(val),)
             elif kind == "sweeps":
                 row.sweeps = tuple(s for s in val.split(",") if s)
             else:
@@ -169,12 +180,18 @@ def decide(row: Row, snap: dict | None, snaps: dict[int, dict | None],
         return Decision(WAIT, "conflicts with main; holding")
     if row.deadline and now >= row.deadline:
         return Decision(EXPIRED, f"deadline {row.deadline.isoformat()} passed")
-    if row.after is not None:
-        pre = snaps.get(row.after)
+    for a in ((row.after,) if row.after is not None else ()) + row.after_more:
+        pre = snaps.get(a)
         if pre is None:
-            return Decision(WAIT, f"no data for predecessor #{row.after}; retry later")
+            return Decision(WAIT, f"no data for predecessor #{a}; retry later")
         if not pre.get("merged"):
-            return Decision(WAIT, f"waiting for #{row.after} to merge")
+            return Decision(WAIT, f"waiting for #{a} to merge")
+    for a in row.afterq:
+        pre = snaps.get(a)
+        if pre is None:
+            return Decision(WAIT, f"no data for predecessor #{a}; retry later")
+        if not (pre.get("merged") or pre.get("in_queue")):
+            return Decision(WAIT, f"waiting for #{a} to enter the merge queue")
     if snap.get("base") != "main":
         return Decision(WAIT, f"base is {snap.get('base')!r}, not main (auto-merge "
                         "on a feature base merges at once)")
@@ -382,7 +399,8 @@ def run(args) -> int:
         if not live and not args.keep_running:
             log("every PR is done, stopped or expired; exiting")
             break
-        watch = sorted({r.pr for r in live} | {r.after for r in live if r.after})
+        watch = sorted({r.pr for r in live} | {r.after for r in live if r.after}
+                       | {a for r in live for a in r.after_more + r.afterq})
         source = "graphql"
         try:
             snaps, rate = fetch_graphql(watch) if watch else ({}, {})

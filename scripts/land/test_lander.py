@@ -168,5 +168,25 @@ class Parse(unittest.TestCase):
         self.assertIn("rateLimit", q)
 
 
+class AfterQ(unittest.TestCase):
+    def test_afterq_waits_for_queue_or_merge(self):
+        row = lander.parse_tsv(f"2\t{PIN}\tafterq:1\t-\n")[0]
+        me = snap()
+        d = lambda pre: lander.decide(row, me, {1: pre, 2: me}, ME, NOW)
+        self.assertEqual(d(snap()).kind, lander.WAIT)
+        self.assertEqual(d(None).kind, lander.WAIT)
+        self.assertEqual(d(snap(in_queue=True)).kind, lander.ENABLE)
+        self.assertEqual(d(snap(merged=True)).kind, lander.ENABLE)
+
+    def test_several_afters_all_must_merge(self):
+        row = lander.parse_tsv(f"3\t{PIN}\tafter:1+after:2\t-\n")[0]
+        self.assertEqual((row.after, row.after_more), (1, (2,)))
+        me = snap()
+        snaps = {1: snap(merged=True), 2: snap(in_queue=True), 3: me}
+        self.assertEqual(lander.decide(row, me, snaps, ME, NOW).kind, lander.WAIT)
+        snaps[2] = snap(merged=True)
+        self.assertEqual(lander.decide(row, me, snaps, ME, NOW).kind, lander.ENABLE)
+
+
 if __name__ == "__main__":
     unittest.main()
