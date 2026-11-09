@@ -141,7 +141,10 @@ enum HtmlTag {
 /// spc_html.c's read_html_tag: `<name key="value" key='value' ...>`,
 /// `</name>`, `<name .../>`; the name and keys lowercased. An attribute
 /// without a quoted value is an error (the whole tag is not read).
-fn html_tag(r: &[u8]) -> Option<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>, HtmlTag)> {
+/// A tag's name, its attributes (key, value) and its kind.
+type HtmlTagParts = (Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>, HtmlTag);
+
+fn html_tag(r: &[u8]) -> Option<HtmlTagParts> {
     let sp = |c: u8| c.is_ascii_whitespace() || c == 0x0b;
     let mut i = 0;
     let skip = |i: &mut usize| {
