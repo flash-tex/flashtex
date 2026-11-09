@@ -2688,8 +2688,214 @@ fn a_replayed_call_enters_its_new_control_sequences_again() {
     }
     // offers, hits, recordings, control sequences entered
     assert!(
-        last.len() == 4 && last[1] > 0 && last[3] > 0,
+        last.len() >= 4 && last[1] > 0 && last[3] > 0,
         "no replay entered a control sequence: {last:?}"
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// (lane REVIEW-BOXMEMO) One host compiles `docs` in turn, each `(main
+/// file, text)` in a project of its own, with BOX-MEMO on and offering
+/// `\pgf@parsefunc` (which it records anywhere, cold runs included). The
+/// host's engine thread keeps one BOX-MEMO store for every document it
+/// serves, and documents from the same format start from the same fonts'
+/// version, so the calls one document recorded are offered in the next.
+/// Every document's pages must equal a scratch compile's (a host with
+/// BOX-MEMO off). Returns the hits of each document's compiles.
+fn boxmemo_documents_in_one_host(tag: &str, docs: &[(&str, String)]) -> Vec<i64> {
+    let base = common::fresh_dir(&format!("flashtex-host-bmdocs-{tag}"));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let env = [
+        ("FLASHTEX_BOXMEMO", "on"),
+        ("FLASHTEX_BOXMEMO_NAMES", "pgf@parsefunc"),
+    ];
+    let host = start_host_env(&format!("bm{tag}"), &env);
+    let scratch = start_host_env(&format!("bms{tag}"), &[("FLASHTEX_BOXMEMO", "off")]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let hits = |o: &Outcome| -> i64 {
+        o.done
+            .get("stages")
+            .and_then(|s| s.get("boxmemo"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.get(1).and_then(|n| n.as_i64()))
+            .unwrap_or(0)
+    };
+    let (mut id, mut before, mut out_hits) = (0, 0, vec![]);
+    for (k, (main, text)) in docs.iter().enumerate() {
+        let (proj, out) = (base.join(format!("proj{k}")), base.join(format!("out{k}")));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join(main), text).unwrap();
+        let mut view = View::default();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("s{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("{tag}: document {k} ({main})"),
+        );
+        let now = hits(&o);
+        out_hits.push(now - before);
+        before = now;
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+    out_hits
+}
+
+/// The document of `boxmemo_documents_in_one_host`'s tests: two fonts loaded
+/// in the order `fonts` gives, the second selected, and a call that
+/// measures text in the current font and keeps the job name.
+fn boxmemo_font_doc(fonts: &str) -> String {
+    format!(
+        "\\documentclass{{article}}\n\
+         {fonts}\n\
+         \\makeatletter\n\
+         \\def\\pgf@parsefunc{{\\begingroup\\setbox0\\hbox{{MMMM}}\\global\\dimen1=\\wd0 \\xdef\\jn{{\\jobname}}\\endgroup}}\n\
+         \\makeatother\n\
+         \\begin{{document}}\n\
+         \\fb\\makeatletter\\pgf@parsefunc\\makeatother[\\the\\dimen1] [\\jn]\n\
+         \\end{{document}}\n"
+    )
+}
+
+#[test]
+fn a_replay_in_another_document_names_its_fonts_by_what_they_are() {
+    // (lane REVIEW-BOXMEMO) The fonts' version named the changes to their
+    // parameters, not which font a number holds. Document 0 loads cmbx12
+    // then cmr12 and measures in cmr12; document 1 loads cmr12 then cmbx12
+    // and measures in cmbx12, whose number there is cmr12's in document 0:
+    // the same `cur_font` and the same version, and the call replayed
+    // cmr12's width. (The same happens in one document after a restore that
+    // loads fonts in another order.) Document 2 is document 0 again: it hits
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let a = boxmemo_font_doc("\\font\\fa=cmbx12 \\font\\fb=cmr12 ");
+    let b = boxmemo_font_doc("\\font\\fa=cmr12 \\font\\fb=cmbx12 ");
+    let hits = boxmemo_documents_in_one_host(
+        "fonts",
+        &[("doc.tex", a.clone()), ("doc.tex", b), ("doc.tex", a)],
+    );
+    assert!(hits[2] > 0, "the same document did not replay: {hits:?}");
+}
+
+#[test]
+fn a_replay_in_another_document_keys_the_job_name() {
+    // (lane REVIEW-BOXMEMO) `\jobname` is a run's constant, so a recording
+    // could expand it unkeyed; but the host serves several documents on
+    // one thread, which share the store. Document 1 is document 0 under
+    // another name: the call replayed document 0's job name. Document 2 is
+    // document 0 again: it hits
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let a = boxmemo_font_doc("\\font\\fa=cmr12 \\font\\fb=cmbx12 ");
+    let hits = boxmemo_documents_in_one_host(
+        "jobname",
+        &[
+            ("one.tex", a.clone()),
+            ("two.tex", a.clone()),
+            ("one.tex", a),
+        ],
+    );
+    assert!(hits[2] > 0, "the same document did not replay: {hits:?}");
+}
+
+#[test]
+fn a_replay_keys_the_names_it_prints() {
+    // (lane REVIEW-BOXMEMO) A token is a location in the hash, and the key
+    // compares tokens by location. A name entered after the restore point
+    // takes the location its hash and the order of entry give it (tex.web
+    // §259-260, web2c's `hash_extra`), so after the restore another new name
+    // can take the same location: `\qqXa` and `\qqaO` hash alike (1629 for
+    // hash_prime 8501). The edit renames the call's argument; its token,
+    // the location, is the same, and so is its meaning (undefined), and the
+    // call replayed `\string` of the old name
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-bmnames");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    let text = "\\documentclass{article}\n\
+        \\makeatletter\n\
+        \\def\\pgf@parsefunc#1{\\begingroup\\xdef\\jn{\\string#1}\\endgroup}\n\
+        \\makeatother\n\
+        \\begin{document}\n\
+        Page one.\\newpage\n\
+        Page two \\makeatletter\\pgf@parsefunc{\\qqXa}\\makeatother[\\jn].\n\
+        \\end{document}\n";
+    std::fs::write(proj.join(main), text).unwrap();
+    let env = [
+        ("FLASHTEX_BOXMEMO", "on"),
+        ("FLASHTEX_BOXMEMO_NAMES", "pgf@parsefunc"),
+    ];
+    let host = start_host_env("bmn", &env);
+    let scratch = start_host_env("bmns", &[("FLASHTEX_BOXMEMO", "off")]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let at = text.find("qqXa").unwrap() as u64;
+    let mut hits = vec![];
+    for (k, name) in ["qqaO", "qqXa", "qqaO"].iter().enumerate() {
+        id += 1;
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at,
+            delete: 4,
+            insert: (*name).into(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("n{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("rename {k} to \\{name}"),
+        );
+        let now = o
+            .done
+            .get("stages")
+            .and_then(|s| s.get("boxmemo"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.get(1).and_then(|n| n.as_i64()))
+            .unwrap_or(0);
+        hits.push(now);
+    }
+    // each name's recording is replayed when the name comes back
+    assert!(
+        hits[2] > hits[1],
+        "no replay after the second rename: {hits:?}"
     );
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);

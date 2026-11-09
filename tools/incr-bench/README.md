@@ -43,6 +43,7 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000, and the beamer decks beamer-5 and beamer-30 of `genbeamer.py`, which give their edit lines in `t7.json`; the books `infdesc` and `infdesc-x2` when named in `--docs`), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join (edits.py's), continuous typing every 50, 60, 80, 100 and 150 ms (each keystroke must get its own page), a preamble edit, and a reopen from the persisted S₀ (report-only); p50/p95/max against §1.2's targets (edited page: the host's ≤ 11 ms share), the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
 | `test_t7.py`, `test_edits.py` | unit tests (`python3 -m unittest discover -s tools/incr-bench -p 'test_*.py'`); `testdata/t7-summary-trim.json` is a trimmed real summary |
 | `gates.sh [GATE...]` | the engine gates a lane runs before landing (parity, lockstep, trip, etrip, drift, display-list positions, cargo tests, soundness A/C/D, `gate.sh pr`), for a Linux runner with TeX Live 2026. Its sweeps now run on GitHub-hosted runners: see [Sweeps on hosted runners](#sweeps-on-hosted-runners) |
+| `xdoc.py ENGINE [--docs D,..] [--rounds R] [--edits N]` | **several documents, one host** (sweeps' `sound-xdoc`, lane REVIEW-BOXMEMO): one socket host, so one BOX-MEMO store, serves the documents in turn, R times round (an open, then N edits each compiled and reverted, as the app sends them); every compile's files are compared byte for byte with from-scratch CLI runs (BOX-MEMO off); reports BOX-MEMO's replays and those of another document's entries (`xdoc_hits`). Documents: `docs/` names, `rw:FIXTURE`, or `xdoc:fonts-ab` and `xdoc:fonts-ba`, a pair it writes itself that loads two fonts in the two orders |
 | `sweeps.py {gates,plan,run,summary,costs}` | gates.sh's sweeps cut into shards for `.github/workflows/sweeps.yml`; `sweeps-costs.json` is each unit's measured seconds |
 | `unicode.py HOST SRC [--keys N] [--trials N] [--verify]` | **Unicode mode** (`flashtex-host-unicode`, lane XETEX-INCR): a cold compile, then keystrokes (`--keys`, at `--at end|mid|FRAC`) or random edits and reverts (`--trials`, edits.py's kinds); each compile's first page, edited page, `DONE` and the host's instructions; `--verify` compares every compile (output files byte for byte, every frame) with a from-scratch compile by a second host whose runs are processes of their own |
 | `unicode_sweep.py HOST [-j 2]` | `unicode.py --verify` over `unicode-corpus/` (the four keystroke benchmarks, polyglossia, xeCJK, beamer with fontspec), the PDF parity cases (`tools/xetex-pdfparity/cases`) and the lockstep's LaTeX cases; exit 1 on any mismatch |
@@ -85,9 +86,11 @@ shard's raw records (soundness.py's JSONL, each unit's output, and for a failed 
 stderr as `.diag`) are `result-<side>-<k>`.
 
 The gates (`sweeps.py gates`): `sound-a sound-budget sound-budget-d sound-timed sound-vol
-sound-lookup sound-lines span readers sound-c sound-d sound-pre`, with gates.sh's trials, kinds, host
-options and documents. `readers` runs only when the tree under test has `readers.py` (#1613);
-otherwise its row says `n/a`. `sound-book` (the owner's book, not in the repository) and the
+sound-lookup sound-lines span readers sound-c sound-d sound-pre sound-first sound-xdoc`, with gates.sh's
+trials, kinds, host options and documents. `readers` runs only when the tree under test has `readers.py`
+(#1613); otherwise its row says `n/a`. `sound-xdoc` (`xdoc.py`, one unit) is the only sweep in which
+one host serves several documents, so the only one in which a BOX-MEMO replay may take an entry
+another document recorded; a tree from before `xdoc.py` is driven by the harness's copy. `sound-book` (the owner's book, not in the repository) and the
 non-sweep gates (parity, lockstep, trip, etrip, drift, positions, tests, `gate.sh pr`) are not
 here: `ci.yml` runs parity, lockstep and the engine's tests on every pull request.
 

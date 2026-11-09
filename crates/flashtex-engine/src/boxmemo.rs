@@ -165,6 +165,10 @@ pub struct Stats {
     pub full_differences: u64,
     /// Control sequences a replay entered again (`Op::NewCs`, §12.3).
     pub entered: u64,
+    /// Hits of an entry another document recorded (`set_document`: the
+    /// host serves documents one after another on one thread, with one
+    /// store); in verify mode, the calls checked against such an entry.
+    pub xdoc_hits: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
     /// entries answered, and the times the entries were emptied.
     pub meanings_walked: u64,
@@ -488,6 +492,17 @@ struct Entry {
     voids: Vec<i32>,
     /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
     line: Option<i32>,
+    /// The job name when the recording expanded `\jobname`: one run's
+    /// constant, but a host serves several documents on one thread, which
+    /// share the store and, from the same format, the fonts' first version.
+    job: Option<Vec<i32>>,
+    /// e-TeX's discarded items the call took (`\pagediscards`,
+    /// `\splitdiscards`: `disc_ptr[c]`, by `c`), and whether there were
+    /// none when it took them (some: a refusal's key).
+    discs: Vec<(i32, bool)>,
+    /// The names the call printed that a location does not always hold
+    /// (`flashtex_bm_print_cs`): location, name.
+    names: Vec<(i32, Vec<i32>)>,
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
@@ -528,6 +543,8 @@ struct Entry {
     last_badness: Option<i32>,
     last_used: u64,
     hits: u64,
+    /// The document that recorded it (`set_document`).
+    doc: u32,
     bytes: usize,
 }
 
@@ -589,6 +606,11 @@ struct Rec {
     /// after that, they hold what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
+    /// The call expanded `\jobname` (`Entry::job`).
+    job_read: bool,
+    discs: Vec<(i32, bool)>,
+    names: Vec<(i32, Vec<i32>)>,
+    names_seen: HashSet<i32>,
     /// The box registers that hold a box the call put there (or made void
     /// by moving its box out): read, they are the call's own, not inputs.
     boxes: HashSet<i32>,
@@ -725,15 +747,19 @@ fn debug() -> bool {
 }
 
 /// Counts over the session, for the host's `DONE` (`stages.boxmemo`):
-/// offers, hits, recordings committed, control sequences a replay entered.
-pub fn counts() -> [u64; 4] {
+/// offers, hits, recordings committed, control sequences a replay entered,
+/// hits of another document's entries. In verify mode a hit is a call
+/// checked against its entry (`verified`): it runs normally and is compared
+/// with the replay.
+pub fn counts() -> [u64; 5] {
     ST.with(|s| {
         let s = s.borrow();
         [
             s.stats.offers,
-            s.stats.hits,
+            s.stats.hits + s.stats.verified,
             s.stats.committed,
             s.stats.entered,
+            s.stats.xdoc_hits,
         ]
     })
 }
@@ -846,6 +872,41 @@ fn next_version(parent: i32, change: [i32; 4]) -> i32 {
         .or_insert_with(fresh_version)
 }
 
+/// The fonts' versions and the fonts each accounts for: a version names
+/// fonts `0..=count` (`set_font_count`), and the fonts after them are named
+/// by their contents when a call is next offered (`bm_sync_fonts`).
+static FONT_COUNTS: std::sync::Mutex<Option<HashMap<i32, i32>>> = std::sync::Mutex::new(None);
+
+fn font_count(v: i32) -> i32 {
+    FONT_COUNTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&v).copied())
+        .unwrap_or(0)
+}
+
+fn set_font_count(v: i32, n: i32) {
+    FONT_COUNTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(v, n);
+}
+
+/// The fonts' version after `parent` and the next font it does not account
+/// for, which is as `font` describes it ([`Globals::bm_font_identity`]):
+/// the same number for the same parent and font, a fresh one otherwise.
+fn next_font_version(parent: i32, font: Vec<i32>) -> i32 {
+    use std::sync::Mutex;
+    type Versions = HashMap<(i32, Vec<i32>), i32>;
+    static TABLE: Mutex<Option<Versions>> = Mutex::new(None);
+    let mut t = TABLE.lock().unwrap_or_else(|e| e.into_inner());
+    *t.get_or_insert_with(HashMap::new)
+        .entry((parent, font))
+        .or_insert_with(fresh_version)
+}
+
 thread_local! {
     /// Where BOX-MEMO may record (replays are allowed everywhere): `None`
     /// (the command line) anywhere; in the host, only in an edit's window,
@@ -859,6 +920,29 @@ thread_local! {
 /// The host: an edit's window opens (`true`) or closes.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+}
+
+thread_local! {
+    /// The document the thread's engine runs (`set_document`), as a
+    /// number, and the numbers given: 0 until the host names one (the
+    /// command line's one document).
+    static DOC: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static DOCS: RefCell<HashMap<String, u32>> = RefCell::new(HashMap::new());
+}
+
+/// The host: the document it makes resident (its root, main file and job,
+/// as `key` says), the same number for the same key.
+pub fn set_document(key: &str) {
+    let n = DOCS.with(|d| {
+        let mut d = d.borrow_mut();
+        let next = d.len() as u32 + 1;
+        *d.entry(key.to_string()).or_insert(next)
+    });
+    DOC.with(|c| c.set(n));
+}
+
+fn document() -> u32 {
+    DOC.with(|c| c.get())
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -2129,6 +2213,8 @@ impl Globals {
         let v = format_version(self.fmt_file.path());
         self.bm_font_version = v;
         self.bm_hyph_version = v;
+        // (the format's fonts are the format's)
+        set_font_count(v, self.font_ptr);
         let names = with_config(|c| c.names.clone());
         for p in 1..=k::eqtb_top {
             if !Self::bm_is_cs(p) || p < k::hash_base {
@@ -2421,13 +2507,115 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_font_set(&mut self, n: i32, a: i32, b: i32, v: i32) {
-        self.bm_font_version = next_version(self.bm_font_version, [n, a, b, v]);
+        let parent = self.bm_font_version;
+        self.bm_font_version = next_version(parent, [n, a, b, v]);
+        set_font_count(self.bm_font_version, font_count(parent));
     }
 
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_font_changed(&mut self) {
+        // (a fresh version names this state alone, its fonts included)
         self.bm_font_version = fresh_version();
+        set_font_count(self.bm_font_version, self.font_ptr);
+    }
+
+    /// The fonts made since the fonts' version was last named (`font_ptr`
+    /// past its count) join it, each by what it is. A version used to name
+    /// only the changes to the fonts' parameters, not which font a number
+    /// holds: after a restore that loads fonts in another order, or in
+    /// another document the host serves from the same format, font `f` is
+    /// another font under the same version, and a call keyed on `\font`'s
+    /// number (`cur_font`, a font identifier's meaning) replayed what the
+    /// old font gave. Run before each offer; while a call records, no font
+    /// is made (`Fonts`).
+    fn bm_sync_fonts(&mut self) {
+        let mut v = self.bm_font_version;
+        let mut n = font_count(v);
+        if n == self.font_ptr {
+            return;
+        }
+        if n > self.font_ptr {
+            // (not reached: a restore takes the version back with the fonts)
+            v = fresh_version();
+            set_font_count(v, self.font_ptr);
+            self.bm_font_version = v;
+            return;
+        }
+        while n < self.font_ptr {
+            n += 1;
+            v = next_font_version(v, self.bm_font_identity(n));
+            set_font_count(v, n);
+        }
+        self.bm_font_version = v;
+    }
+
+    /// What font `f` is, for its version (`bm_sync_fonts`): its names (the
+    /// file's, its area's, its identifier's), its sizes, its TFM's
+    /// checksum, its pdfTeX kind and expansion, the defaults it took
+    /// (`\hyphenchar`, `\skewchar`), its arrays' places, and its words in
+    /// `font_info`: the character infos to the last parameter, which a TFM
+    /// load (`read_font_info`) and `\pdfcopyfont` lay out in one block. An
+    /// expanded font (`auto_expand_font`, `pdf_font_blink` its base) shares
+    /// its base's block but its widths, italic corrections and kerns, which
+    /// the base (an earlier font, which the version already names) and the
+    /// ratio determine.
+    fn bm_font_identity(&self, f: i32) -> Vec<i32> {
+        let u = f as usize;
+        let mut v = vec![f];
+        v.extend(self.bm_str(self.font_name[u]));
+        v.push(-2);
+        v.extend(self.bm_str(self.font_area[u]));
+        v.push(-2);
+        v.extend(self.bm_text_of(k::font_id_base + f));
+        v.push(-2);
+        let check = self.font_check[u];
+        v.extend([
+            self.font_size[u],
+            self.font_dsize[u],
+            check.b0(),
+            check.b1(),
+            check.b2(),
+            check.b3(),
+            self.font_params[u],
+            self.hyphen_char[u],
+            self.skew_char[u],
+            self.font_bchar[u],
+            self.font_false_bchar[u],
+            self.font_bc[u],
+            self.font_ec[u],
+            self.bchar_label[u],
+            self.char_base[u],
+            self.width_base[u],
+            self.height_base[u],
+            self.depth_base[u],
+            self.italic_base[u],
+            self.lig_kern_base[u],
+            self.kern_base[u],
+            self.exten_base[u],
+            self.param_base[u],
+            self.pdf_font_type[u],
+            self.pdf_font_blink[u],
+            self.pdf_font_expand_ratio[u],
+            self.pdf_font_step[u],
+            i32::from(self.pdf_font_auto_expand[u]),
+        ]);
+        if self.pdf_font_blink[u] != k::null_font {
+            return v;
+        }
+        let (a, b) = (
+            self.char_base[u] + self.font_bc[u],
+            self.param_base[u] + self.font_params[u],
+        );
+        if a < 0 || b < a || b as usize >= self.font_info.len() || b - a > 1 << 22 {
+            v.push(fresh_version());
+            return v;
+        }
+        for w in &self.font_info[a as usize..=b as usize] {
+            v.push(w.0 as i32);
+            v.push((w.0 >> 32) as i32);
+        }
+        v
     }
 
     #[cold]
@@ -2461,6 +2649,7 @@ impl Globals {
         if globaldefs != 0 || self.after_token != 0 {
             return self.bm_miss("Preconditions");
         }
+        self.bm_sync_fonts();
         let k1 = self.bm_k1(cs, n);
         let ctx = self.bm_ctx(scanner);
         // K1 and the context select the variants (by their hash, then in
@@ -2500,6 +2689,12 @@ impl Globals {
                     || e.ctx != ctx
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
+                    || !e
+                        .discs
+                        .iter()
+                        .all(|&(c, none)| (self.bm_disc(c) == 0) == none)
+                    || !e.job.as_ref().is_none_or(|j| *j == self.bm_job_name())
+                    || !e.names.iter().all(|(p, t)| self.bm_text_is(*p, t))
                 {
                     continue;
                 }
@@ -2677,6 +2872,10 @@ impl Globals {
             kr: vec![],
             gwritten: HashSet::new(),
             line_read: false,
+            job_read: false,
+            discs: vec![],
+            names: vec![],
+            names_seen: HashSet::new(),
             boxes: HashSet::new(),
             box_stack: vec![],
             gboxes: vec![],
@@ -2792,6 +2991,9 @@ impl Globals {
                     trailer: None,
                     voids: rec.voids,
                     line: rec.line_read.then_some(self.line),
+                    job: rec.job_read.then(|| self.bm_job_name()),
+                    discs: rec.discs,
+                    names: rec.names,
                     fast: vec![],
                     new_cs: vec![],
                     last_link: None,
@@ -2803,6 +3005,7 @@ impl Globals {
                     last_badness: None,
                     last_used: now,
                     hits: 0,
+                    doc: document(),
                     bytes,
                 };
                 insert_entry(&mut s, rec.cs, entry);
@@ -2901,6 +3104,44 @@ impl Globals {
             }
             self.bm_note_cs(self.cur_cs);
         }
+    }
+
+    /// `print_cs` or `sprint_cs` prints control sequence `p` during a
+    /// recording (`\string`, `\meaning`, `\detokenize`, `\pdfstrcmp`'s
+    /// operands): its name joins the key. A token is a location, and the
+    /// key compares tokens by location, but the name there is not always
+    /// the same:
+    /// - a name entered after a restore point takes the location its hash
+    ///   and the order of entry give it (tex.web §259-260, web2c's
+    ///   `hash_extra`), so after the restore another new name can be there
+    ///   with the same meaning (`\qqXa` and `\qqaO` hash alike);
+    /// - a font identifier's name (`font_id_text`) is what the last `\font`
+    ///   of that font called it.
+    ///
+    /// A name the format entered is the same in every run from the format
+    /// (no restore goes before it, and the format names the fonts' first
+    /// version), and the call's own new names are `Op::NewCs`'s.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_print_cs(&mut self, p: i32) {
+        if p < k::hash_base
+            || (k::undefined_control_sequence..=k::eqtb_size).contains(&p)
+            || p > k::eqtb_top
+            || (k::prim_eqtb_base..k::frozen_null_font).contains(&p)
+        {
+            return;
+        }
+        let font_id = (k::font_id_base..=k::font_id_base + k::font_max).contains(&p);
+        let t = self.hash[(p - k::hash_base) as usize].rh();
+        if !font_id && (0..self.init_str_ptr).contains(&t) {
+            return;
+        }
+        let name = self.bm_text_of(p);
+        self.bm_with_rec(|r| {
+            if !r.created.contains(&p) && r.names_seen.insert(p) {
+                r.names.push((p, name));
+            }
+        });
     }
 
     /// `\csname` and `\ifcsname` looked `p` up.
@@ -3362,6 +3603,49 @@ impl Globals {
         }
     }
 
+    /// e-TeX's discarded items `disc_ptr[c]` (`c`: `last_box_code` for
+    /// `\pagediscards`, `vsplit_code` for `\splitdiscards`).
+    fn bm_disc(&self, c: i32) -> i32 {
+        self.disc_ptr[(c - 1) as usize]
+    }
+
+    /// The characters of string `s` (`[-1]` for no string).
+    fn bm_str(&self, s: i32) -> Vec<i32> {
+        if s < 0 || s >= self.str_ptr {
+            return vec![-1];
+        }
+        let (a, b) = (
+            self.str_start[s as usize] as usize,
+            self.str_start[s as usize + 1] as usize,
+        );
+        self.str_pool[a..b].to_vec()
+    }
+
+    /// The job name, as `\jobname` prints it.
+    fn bm_job_name(&self) -> Vec<i32> {
+        self.bm_str(self.job_name)
+    }
+
+    /// The name (`text`) of the control sequence at `p`, as `\string`
+    /// prints it.
+    fn bm_text_of(&self, p: i32) -> Vec<i32> {
+        self.bm_str(self.hash[(p - k::hash_base) as usize].rh())
+    }
+
+    /// Whether the name at `p` is `want` ([`bm_text_of`](Self::bm_text_of)
+    /// compared in place).
+    fn bm_text_is(&self, p: i32, want: &[i32]) -> bool {
+        let s = self.hash[(p - k::hash_base) as usize].rh();
+        if s < 0 || s >= self.str_ptr {
+            return want == [-1];
+        }
+        let (a, b) = (
+            self.str_start[s as usize] as usize,
+            self.str_start[s as usize + 1] as usize,
+        );
+        self.str_pool[a..b] == *want
+    }
+
     /// `box(n)` (a sparse one looked up without creating anything).
     fn bm_box_value(&self, n: i32) -> i32 {
         if n < 256 {
@@ -3421,7 +3705,10 @@ impl Globals {
             _ => false,
         };
         if !ok {
-            self.bm_abort("Expandable");
+            return self.bm_abort("Expandable");
+        }
+        if c == k::convert && chr == k::job_name_code {
+            self.bm_with_rec(|r| r.job_read = true);
         }
     }
 
@@ -3518,10 +3805,31 @@ impl Globals {
             k::set_page_dimen,
             k::set_page_int,
             k::set_prev_graf,
+            // `\font` loads a font, or renames a loaded one: `new_font`
+            // writes the identifier's name (`font_id_text`) and its `eqtb`
+            // word itself, not through `eq_define`, so no operation of the
+            // log would make them again. `\letterspacefont` and
+            // `\pdfcopyfont` likewise (and make a font)
+            k::def_font,
+            k::letterspace_font,
+            k::pdf_copy_font,
         ]
         .contains(&c)
         {
             false
+        } else if c == k::un_vbox && chr > k::copy_code {
+            // `\pagediscards`, `\splitdiscards`: the items the last page
+            // break or `\vsplit` discarded, moved into the current list and
+            // forgotten. Whether there are any is part of the key; taking
+            // some (nodes the call did not make) refuses the call, and
+            // the refusal's key says there were some
+            let none = self.bm_disc(chr) == 0;
+            self.bm_with_rec(|r| {
+                if !r.discs.iter().any(|&(c, _)| c == chr) {
+                    r.discs.push((chr, none));
+                }
+            });
+            none
         } else if c == k::leader_ship {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
@@ -3893,6 +4201,9 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
+                job: rec.job_read.then(|| self.bm_job_name()),
+                discs: rec.discs,
+                names: rec.names,
                 fast: compress_groups(&rec.ops),
                 new_cs: rec
                     .ops
@@ -3913,6 +4224,7 @@ impl Globals {
                 last_badness,
                 last_used: now,
                 hits: 0,
+                doc: document(),
                 bytes,
             };
             if let Some(n) = &name {
@@ -3965,6 +4277,7 @@ impl Globals {
             let Some(e) = s.store.get(&rec.cs).and_then(|v| v.get(i)) else {
                 return;
             };
+            let other = e.doc != document();
             let mut diffs = vec![];
             if e.ops.len() != rec.ops.len() {
                 diffs.push(format!(
@@ -4004,6 +4317,7 @@ impl Globals {
             if diffs.is_empty() && debug() {
                 eprintln!("boxmemo: verified \\{name}");
             }
+            s.stats.xdoc_hits += u64::from(other);
             if !diffs.is_empty() {
                 s.stats.verify_differences += 1;
                 eprintln!("boxmemo verify: \\{name}: {diffs:?}");
@@ -4332,11 +4646,14 @@ impl Globals {
         let n = ops.len() as u64;
         ST.with(|s| {
             let mut s = s.borrow_mut();
+            let mut other = false;
             if let Some(e) = s.store.get_mut(&cs).and_then(|v| v.get_mut(i)) {
                 e.fast = ops;
                 e.rs_locs = rs_locs;
+                other = e.doc != document();
             }
             s.stats.hits += 1;
+            s.stats.xdoc_hits += u64::from(other);
             s.stats.replayed_ops += n;
         });
         if debug() {

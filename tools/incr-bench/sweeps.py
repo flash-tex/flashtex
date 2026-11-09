@@ -54,6 +54,12 @@ REFS = ('refs-30', 'refs-120', 'full-100')
 BOOK = ('book-inc',)
 EDIT = {'book-inc': 'ch03.tex'}
 VOL = ('vol-closed', 'vol-open')
+# sound-xdoc's documents, in the order one host serves them (xdoc.py: a docs/ name, rw:FIXTURE or
+# xdoc:NAME): a pair that loads two fonts in the two orders (a font number is another face in each:
+# with fonts keyed by number the gate fails, measured), a T7 subset, the beamer decks and the
+# fixtures whose calls BOX-MEMO replays
+XDOC = ('xdoc:fonts-ab', 'xdoc:fonts-ba', 'plain-10', 'full-10', 'full-100', 'beamer-5', 'beamer-30', 'rw:beamer-madrid', 'rw:beamer-overlays',
+        'rw:beamer-blocks-columns', 'rw:framed-tikz-theorems', 'rw:tikzcd-shaded-notes', 'rw:siunitx-tables')
 # the preamble kinds (edits.py: PREAMBLE-FAST's restarts before S0, PREAMBLE-MIDLINE's in the middle
 # of the line after a package)
 PRE = ('pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nopackage,pre_option,'
@@ -66,6 +72,12 @@ def S(tag, trials, extras=(), fixtures=True, kinds=None, interleave=False, host=
     return dict(tool='soundness', tag=tag, trials=trials, extras=list(extras), fixtures=fixtures,
                 kinds=kinds, interleave=interleave, host=host, toggle=toggle,
                 allow_no_trials=allow_no_trials, first_open=first_open, env=env or {})
+
+
+def X(tag, docs, rounds=2, edits=2, estimate=300):
+    """One xdoc.py run: one host serves DOCS in turn, ROUNDS times round, EDITS edits (and their
+    reverts) a visit, every compile against from-scratch runs; ESTIMATE: seconds, until measured."""
+    return dict(tool='xdoc', tag=tag, docs=list(docs), rounds=rounds, edits=edits, estimate=estimate)
 
 
 def SPAN(doc, edits, seed, frac=None, kinds=None, eol=None):
@@ -109,6 +121,10 @@ GATES = {
                     allow_no_trials=True)],
     'sound-first': [S('first', 10, ('refs-30', 'full-100'), kinds='replace,insert,sentence,section,label,ref',
                       interleave=True, first_open=True)],
+    # lane REVIEW-BOXMEMO: one host, so one BOX-MEMO store, serves several documents in turn, twice
+    # round: a key part that held for one document and not for the next (a font by its number, the
+    # job name, a name a recording prints) gives a wrong page only here (xdoc.py)
+    'sound-xdoc': [X('xdoc', XDOC)],
 }
 
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
@@ -165,6 +181,8 @@ def estimate(u, costs):
         return 30 + u['edits'] * SPAN_PER_EDIT.get(u['doc'], 20)
     if u['tool'] == 'readers':
         return 600
+    if u['tool'] == 'xdoc':
+        return u['estimate']
     t = PER_TRIAL.get(u['doc'], 3.5 if u['doc'].startswith('beamer') else 1) * u['trials'] * (2 if u['interleave'] else 1)
     return 5 + t
 
@@ -253,6 +271,8 @@ def run_unit(tree, bench, out, u, timeout):
         pats = [f"{bench}/dlspan/{doc}-{ENGINE}-{u['eol'] or 'lf'}-s{u['seed']}/*/h.{x}" for x in ('err', 'out')]
     elif u['tool'] == 'soundness':
         pats = [f"{bench}/sound-{tag}/{doc}.jsonl.host-stderr"]
+    elif u['tool'] == 'xdoc':
+        pats = [f"{out}/raw/{tag}.{doc}.jsonl.host-stderr"]
     else:
         pats = []
     with open(f"{out}/raw/{tag}.{doc}.diag", 'w') as f:
@@ -289,6 +309,11 @@ def _run_unit(tree, bench, out, u, timeout):
             cmd += ['--allow-no-trials']
         if u.get('first_open'):
             cmd += ['--first-open']
+    elif u['tool'] == 'xdoc':
+        # (a tree from before xdoc.py: the harness's own, which drives the host's protocol only)
+        x = f'{ib}/xdoc.py' if os.path.exists(f'{ib}/xdoc.py') else os.path.join(HERE, 'xdoc.py')
+        cmd = [sys.executable, x, ENGINE, '--docs', ','.join(u['docs']), '--rounds', str(u['rounds']),
+               '--edits', str(u['edits']), '--fixtures', os.path.join(tree, 'fixtures'), '--out', f'{stem}.jsonl']
     elif u['tool'] == 'span':
         cmd = [sys.executable, f'{ib}/dlspan.py', ENGINE, u['doc'], '--edits', str(u['edits']), '--seed', str(u['seed']),
                '--timeout', '7000']
@@ -305,8 +330,9 @@ def _run_unit(tree, bench, out, u, timeout):
         cmd = [sys.executable, f'{ib}/readers.py', f'{bench}/{ENGINE}', f'{out}/raw/readers']
     r['cmd'] = ' '.join(cmd)
     t0 = time.monotonic()
+    run_env = dict(env(), INCR_BENCH_DIR=bench, **u.get('env', {}))
     try:
-        p = subprocess.run(cmd, cwd=tree, env=dict(env(), INCR_BENCH_DIR=bench, **u.get('env', {})),
+        p = subprocess.run(cmd, cwd=tree, env=run_env,
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, text=True, errors='replace', timeout=timeout)
         code, so, se = p.returncode, p.stdout, p.stderr
@@ -315,20 +341,31 @@ def _run_unit(tree, bench, out, u, timeout):
         code, se = 'timeout', f'timed out after {timeout} s'
     r['seconds'] = round(time.monotonic() - t0, 1)
     r['exit'] = code
-    open(f'{stem}.out', 'w').write(so + ('\n--- stderr\n' + se if se else ''))
-    if u['tool'] == 'soundness':
+    with open(f'{stem}.out', 'w') as f:
+        f.write(so + ('\n--- stderr\n' + se if se else ''))
+    if u['tool'] in ('soundness', 'xdoc'):
         tot = last_json(so, lambda x: 'compiles' in x and 'ok' in x)
         if tot is None:
             r.update(status='error', note=(se or so)[-600:])
             return r
         for k in ('compiles', 'ok', 'bad', 'conv', 'err', 'interrupted', 'skipped'):
             r[k] = tot.get(k, 0)
+        if u['tool'] == 'xdoc':
+            # BOX-MEMO's replays, and those of another document's entries (None: an engine from
+            # before that count, which cannot pass this gate)
+            r['hits'], r['xdoc_hits'] = tot.get('hits'), tot.get('xdoc_hits')
         if tot['err'] or tot['bad'] or code != 0:
             r['status'] = 'bad' if tot['bad'] else 'error'
-            r['note'] = '\n'.join(l for l in so.splitlines() if 'ERROR' in l or 'mismatches' in l)[-600:]
-        elif tot['compiles'] == 0 and not tot['skipped']:
-            # no such document in the tree: soundness.py and fixtures() above disagree
-            r.update(status='error', note=f'soundness.py ran no document named {doc}')
+            r['note'] = '\n'.join(l for l in so.splitlines() if 'ERROR' in l or 'mismatches' in l
+                                  or 'sound-xdoc:' in l)[-600:]
+        elif tot['compiles'] == 0 and (u['tool'] == 'xdoc' or not tot['skipped']):
+            # no such document in the tree, or no xdoc work was requested
+            r.update(status='error', note=f'{u["tool"]} ran no document named {doc}')
+        elif u['tool'] == 'xdoc' and run_env.get('FLASHTEX_BOXMEMO') == 'off':
+            r.update(status='absent', note='not exercised (BOX-MEMO off)')
+        elif u['tool'] == 'xdoc' and not tot.get('xdoc_hits'):
+            r.update(status='error', note=('cross-document replay count not measured'
+                                          if tot.get('xdoc_hits') is None else 'no cross-document replays'))
         else:
             r['status'] = 'ok'
     elif u['tool'] == 'span':
@@ -380,7 +417,9 @@ def cmd_run(a):
                 r = dict(key=u['key'], tool=u['tool'], status='error', note=repr(e), seconds=0)
             results.append(r)
             print(f"{r['status']:6} {r.get('seconds', 0):7.0f}s {r['key']}"
-                  + (f"  {r.get('compiles', '')} compiles, {r.get('bad', 0)} bad" if r['tool'] == 'soundness' else '')
+                  + (f"  {r.get('compiles', '')} compiles, {r.get('bad', 0)} bad" if r['tool'] in ('soundness', 'xdoc') else '')
+                  + (f", {r.get('xdoc_hits')} of {r.get('hits')} replays another document's"
+                     if r['tool'] == 'xdoc' else '')
                   + (f"  {r.get('edits', '')} edits, {r.get('wrong', 0)} wrong" if r['tool'] == 'span' else ''),
                   flush=True)
             if r['status'] not in ('ok', 'absent') and r.get('note'):
