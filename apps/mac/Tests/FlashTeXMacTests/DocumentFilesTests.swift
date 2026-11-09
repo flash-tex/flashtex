@@ -740,6 +740,105 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.lateReplies, [])
     }
 
+    /// REVIEW-E (#2277): the unsaved-edit checks (the quit question, Open,
+    /// Reload, restore) settle an autosave in flight before they look. They
+    /// used to count the edits it was writing as unsaved: ⌘Q asked to save
+    /// them, and Don't Save answered while the autosave wrote them anyway.
+    /// Edits typed while it was out stay unsaved, and are the only ones asked about.
+    func testUnsavedChecksSettleTheAutosaveInFlight() async throws {
+        let dir = try tempDir("bg-autosave-dirty")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let originalAutosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        addTeardownBlock { @MainActor in EditorPreferences.shared.autosave = originalAutosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        // 1. Quitting while the autosave is out: nothing is unsaved once it lands.
+        model.updateActiveText("edited\n")
+        model.flushPendingAutosave(inBackground: true)
+        XCTAssertTrue(model.files.backgroundSavesInFlight)
+        XCTAssertFalse(AppDelegate.quitNeedsAsking(model), "the quit question counted the edits the autosave was writing")
+        XCTAssertFalse(model.files.backgroundSavesInFlight)
+        XCTAssertEqual(try disk(url), "edited\n")
+        XCTAssertEqual(model.savedText, "edited\n")
+
+        // 2. Open/Reload's check, the same way.
+        model.updateActiveText("edited twice\n")
+        model.flushPendingAutosave(inBackground: true)
+        XCTAssertTrue(model.files.backgroundSavesInFlight)
+        XCTAssertFalse(model.hasUnsavedDocuments, "Open/Reload counted the edits the autosave was writing")
+        XCTAssertEqual(try disk(url), "edited twice\n")
+
+        // 3. Typed on while it was out: those edits (only) are unsaved.
+        model.updateActiveText("edited thrice\n")
+        model.flushPendingAutosave(inBackground: true)
+        model.updateActiveText("edited four times\n")
+        XCTAssertTrue(AppDelegate.quitNeedsAsking(model))
+        XCTAssertEqual(model.savedText, "edited thrice\n")
+        XCTAssertEqual(try disk(url), "edited thrice\n")
+        XCTAssertTrue(model.hasUnsavedDocuments)
+        XCTAssertNil(model.files.conflict)
+    }
+
+    /// REVIEW-E (#2277): a ⌘S made while the autosave chain's first save is
+    /// out waits for that save only, and the chain never writes the document
+    /// the ⌘S saved a second time. The settle used to wait for every save
+    /// the chain started meanwhile (the next document's too), and that next
+    /// one was the very member the ⌘S then saved again.
+    func testASaveDuringTheAutosaveChainWaitsForOneSaveAndWritesOnce() async throws {
+        let dir = try tempDir("bg-autosave-chain")
+        let url = dir.appendingPathComponent("paper.tex")
+        let chapterURL = dir.appendingPathComponent("chapter.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        try "chapter\n".write(to: chapterURL, atomically: true, encoding: .utf8)
+        let originalAutosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        addTeardownBlock { @MainActor in EditorPreferences.shared.autosave = originalAutosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        model.documentWatcher.stop()
+        guard case .switched = model.project.switchDocument(to: "chapter.tex") else { return XCTFail("no switch to chapter.tex") }
+        model.updateActiveText("chapter edited\n")
+        guard case .switched = model.project.switchDocument(to: "paper.tex") else { return XCTFail("no switch to paper.tex") }
+        model.updateActiveText("edited\n")
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        // The chain [paper.tex, chapter.tex]: the entry's save goes out first.
+        model.flushPendingAutosave(inBackground: true)
+        XCTAssertEqual(model.files.backgroundSavesSent, 1)
+        XCTAssertTrue(model.files.backgroundSaveInFlight(for: url))
+
+        // ⌘S on the member: settles the entry's save, then saves the member itself.
+        guard case .saved = model.project.saveDocumentNow("chapter.tex") else {
+            return XCTFail("the member's ⌘S failed: \(model.captureNote ?? "nil")")
+        }
+        XCTAssertEqual(model.files.backgroundSavesSent, 1, "the ⌘S waited for the chain's next save (the member it then saved again)")
+        XCTAssertFalse(model.files.backgroundSavesInFlight)
+        XCTAssertEqual(model.savedText, "edited\n")
+        XCTAssertFalse(model.project.isDirty("chapter.tex"))
+
+        // The chain goes on from a later turn and skips the member the ⌘S saved.
+        try await pump(0.5)
+        XCTAssertEqual(model.files.backgroundSavesSent, 1, "the chain wrote the member the ⌘S had saved")
+        XCTAssertFalse(model.files.backgroundSavesInFlight)
+        XCTAssertEqual(try disk(url), "edited\n")
+        XCTAssertEqual(try disk(chapterURL), "chapter edited\n")
+        XCTAssertNil(model.files.conflict)
+        XCTAssertNil(model.project.saveConflict(for: "chapter.tex"))
+    }
+
     func testGarbageReplyIsAProtocolFailureNotASave() throws {
         let dir = try tempDir("garbage")
         let url = dir.appendingPathComponent("paper.tex")
