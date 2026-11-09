@@ -39,9 +39,10 @@
 //! condition stacks (two paths' lists are different nodes). State
 //! outside the word space (`Host`: fonts, native handles, the display
 //! list's source map, open files other than the log's length) is not
-//! compared; the replay neither reads nor writes it. A page checkpoint
-//! taken inside the body (a shipout there) opens a new log, so the real
-//! path's writes before it are not among the chunks compared.
+//! compared; the replay neither reads nor writes it. A checkpoint taken
+//! inside the window (S₀'s arming, a page checkpoint at `big_switch`)
+//! opens a new log, so the real path's writes before it would not be among
+//! the chunks compared: such a call counts as `unverified.checkpoint`.
 
 use crate::generated::consts::{
     backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value,
@@ -124,6 +125,22 @@ impl Globals {
 
     /// The real path is done: compare, count, drop C.
     pub(crate) fn intr_verify_end(&mut self, p: Pending) {
+        if self.arena.checkpoint_ids().last() != Some(&p.ck) {
+            // A checkpoint taken inside the window (S₀'s arming, or a page
+            // checkpoint at `big_switch`, which runs before
+            // `flashtex_intr_switch`) opened a new log: the real path's
+            // writes before it are not among the chunks compared, so the
+            // call is not verified (REVIEW-B on #2140).
+            self.intr_churn_stop();
+            self.drop_checkpoint(p.ck);
+            *self
+                .host
+                .intrinsics
+                .unverified
+                .entry("checkpoint")
+                .or_default() += 1;
+            return;
+        }
         self.intr_pop_used_up();
         let diffs = self.intr_compare(&p);
         self.intr_churn_stop();
