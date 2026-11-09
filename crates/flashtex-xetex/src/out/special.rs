@@ -885,7 +885,7 @@ impl<M: Metrics> Builder<'_, M> {
         let ti = t.info();
         let attr = crate::pic::dpx_form_bounds(f.dl.pdf_box, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
         let (m1, v) = scale_to_fit_f(&ti, attr);
-        let place = Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx)));
+        let place = dev_concat(Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx))));
         if ti.clip {
             let (x, y) = self.user_point();
             let (x, y) = self.rel(x, y);
@@ -998,7 +998,7 @@ impl<M: Metrics> Builder<'_, M> {
             scale_to_fit_f(&ti, img.attr_bbox)
         };
         // image space -> user space with the reference point at (0, 0)
-        let place = Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx)));
+        let place = dev_concat(Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx))));
         // The form's /Matrix is flashtex_pdf's (`from_pdf_page_box`):
         // xdvipdfmx's (`set_transform_matrix`) less (llx, lly) for a
         // rotated page, made up here; the clip and the link box are in
@@ -1028,13 +1028,9 @@ impl<M: Metrics> Builder<'_, M> {
             s.push(Item::Clip(n));
         }
         let m = draw.then(&Mat::translate(x, y)).then(&ctm);
-        if img.kind == super::images::Kind::Bmp {
-            s.unsupported(format!("BMP image {}", img.path), None);
-        } else {
-            let n = s.matrix(m.to_f64());
-            s.use_image(id);
-            s.push(Item::Image { id, matrix: n });
-        }
+        let n = s.matrix(m.to_f64());
+        s.use_image(id);
+        s.push(Item::Image { id, matrix: n });
         if clip {
             s.restore();
         }
@@ -1148,6 +1144,20 @@ impl Dims {
             matrix,
             error,
         }
+    }
+}
+
+/// `pdf_dev_concat`'s check: a matrix whose determinant is below
+/// `OUR_EPSILON` (2.5e-16) is not concatenated ("Transformation matrix not
+/// invertible."), so the image is drawn as if it were the identity
+/// (measured: a picture XeTeX sized to nothing, `pdf:image matrix 0.0 0.0
+/// 0.0 0.0 0.0 0.0`, is drawn as the unit square at the current point).
+fn dev_concat(m: Mat) -> Mat {
+    let [a, b, c, d, _, _] = m.to_f64();
+    if (a * d - b * c).abs() < 2.5e-16 {
+        Mat::IDENTITY
+    } else {
+        m
     }
 }
 
