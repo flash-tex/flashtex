@@ -273,8 +273,13 @@ public final class DL3RenderImage: @unchecked Sendable {
     /// not retain its document: once the document is released the page draws
     /// nothing (every included PDF page was blank in the preview).
     let document: CGPDFDocument?
-    init(key: String, payload: Payload, document: CGPDFDocument? = nil, cost: Int = 0) {
-        self.key = key; self.payload = payload; self.document = document; self.cost = cost
+    /// `.pdf`: pdfTeX's form has a `/Group` (protocol §5.2 `group`; LaTeX's
+    /// pdftex.def gives every included page `/Group <</S/Transparency/K
+    /// false/I false>>`), which Core Graphics paints through a transparency
+    /// layer.
+    let group: Bool
+    init(key: String, payload: Payload, document: CGPDFDocument? = nil, cost: Int = 0, group: Bool = false) {
+        self.key = key; self.payload = payload; self.document = document; self.cost = cost; self.group = group
     }
 
     static func load(_ info: DL3JSON) -> Result<DL3RenderImage, DL3Error> {
@@ -310,7 +315,7 @@ public final class DL3RenderImage: @unchecked Sendable {
             let rotate = Int(info["rotate"]?.int ?? Int64(page.rotationAngle))
             let size = (try? FileManager.default.attributesOfItem(atPath: file)[.size] as? Int) ?? 0
             return .success(DL3RenderImage(key: key, payload: .pdf(page, box: box, matrix: formMatrix(box: box, rotate: rotate)),
-                                           document: doc, cost: size))
+                                           document: doc, cost: size, group: info["group"]?.bool ?? false))
         default:
             return .failure(DL3Error("\(file): image type \(type) is not drawn"))
         }
@@ -972,12 +977,12 @@ public enum DL3Renderer {
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
                     ctx.clip(to: box)
-                    // LaTeX's pdfTeX drivers (pdftex.def, l3backend-pdftex)
-                    // give every included page `/Group <</S/Transparency/K
-                    // false/I false>>`, which Core Graphics paints through
-                    // a transparency layer: drawn straight, its edge pixels
-                    // were 1 level off (pv-pdf-inclusion p1–p8).
-                    if Self.u1Variant.contains("pdf-nolayer") {
+                    // A form with a /Group (LaTeX's pdftex.def gives every
+                    // included page `/Group <</S/Transparency/K false/I
+                    // false>>`) Core Graphics paints through a transparency
+                    // layer: drawn straight, its edge pixels were 1 level
+                    // off (pv-pdf-inclusion p1–p8).
+                    if !img.group || Self.u1Variant.contains("pdf-nolayer") {
                         DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                     } else {
                         if Self.u1Variant.contains("pdf-layer-rect") { ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil) }

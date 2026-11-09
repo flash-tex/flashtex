@@ -2459,7 +2459,7 @@ impl Globals {
                 ImageData::Pdf(p) => (bp(p.box_bp[2]), bp(p.box_bp[3])),
                 _ => (Json::Int(e.width as i64), Json::Int(e.height as i64)),
             };
-            let extra = match &e.data {
+            let mut extra = match &e.data {
                 ImageData::Pdf(p) => vec![
                     ("page".to_string(), Json::Int(p.selected_page as i64)),
                     (
@@ -2478,6 +2478,14 @@ impl Globals {
                 ],
                 _ => vec![],
             };
+            // The form has a /Group (its attr's, or the page's own, which
+            // pdftoepdf copies): sent only then, so that the key of any
+            // other image stays what it was.
+            if let ImageData::Pdf(p) = &e.data {
+                if p.attr_group || e.group_ref != 0 {
+                    extra.push(("group".to_string(), Json::Bool(true)));
+                }
+            }
             let mut kv = vec![
                 ("type".to_string(), js(typ)),
                 (
