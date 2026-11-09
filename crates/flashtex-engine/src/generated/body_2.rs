@@ -988,6 +988,9 @@ impl Globals {
     /// Subroutine `save_for_after` puts a token on the stack for save-keeping.
     // §302
     pub fn save_for_after(&mut self, mut t: halfword) {
+        if self.bm_rec_on {
+            self.flashtex_bm_after(t);
+        }
         if (self.cur_level > level_one) {
             {
                 if (self.save_ptr > self.max_save_stack) {
