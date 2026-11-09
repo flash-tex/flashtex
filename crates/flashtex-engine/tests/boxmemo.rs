@@ -263,6 +263,36 @@ fn a_tail_that_reads_past_the_call_never_replays() {
     assert_eq!(stat(&s, "hits"), 0, "{s}");
 }
 
+#[test]
+fn material_left_at_the_adjust_heads_is_dead() {
+    // (#2264, lane FUZZ-REPLAY) a paragraph's line (tex.web §888), an
+    // `\\hbox` in vertical mode (§1076) and pdfTeX's `\\vadjust pre` move
+    // their `\\vadjust` material to `adjust_head` (`pre_adjust_head`) and
+    // leave its link pointing there; the box is freed later, at other
+    // places on the two paths. The full verifier walked those dead links
+    // and reported `box dimension differs` on a correct replay
+    for (tag, body) in [
+        ("adjust-par", "\\noindent\\vadjust{\\kern3pt}\\par"),
+        ("adjust-pre", "\\noindent\\vadjust pre{\\kern3pt}\\par"),
+        ("adjust-hbox", "\\hbox{\\vadjust{\\kern3pt}}"),
+    ] {
+        let s = check(
+            tag,
+            &[
+                "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+                 \\hsize=100pt \\tolerance=10000 \\parfillskip=0pt plus 1fil\n\
+                 \\def\\measure#1{\\setbox0\\vbox{",
+                body,
+                "}\\global\\dimen1=\\ht0 \\setbox0\\hbox{}}\n\
+                 \\measure{1}\\message{[\\the\\dimen1]}\\measure{1}\\message{[\\the\\dimen1]}\
+                 \\measure{1}\\message{[\\the\\dimen1]}\\end\n",
+            ]
+            .concat(),
+        );
+        assert!(stat(&s, "hits") >= 2, "{tag}: {s}");
+    }
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
