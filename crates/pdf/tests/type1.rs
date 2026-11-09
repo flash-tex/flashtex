@@ -17,6 +17,11 @@ use std::path::{Path, PathBuf};
 /// (Subrs 0–3 as the Flex/hint-replacement convention, plus one used only
 /// by /b through hint replacement and one unused), a seac composite.
 fn synthetic_pfb() -> Vec<u8> {
+    synthetic_pfb_with_matrix("[0.001 0 0 0.001 0 0]")
+}
+
+/// [`synthetic_pfb`] with its clear-text `/FontMatrix` value spelled `matrix`.
+fn synthetic_pfb_with_matrix(matrix: &str) -> Vec<u8> {
     fn cs(plain: &[u8]) -> Vec<u8> {
         encrypt(plain, 4330, &[0, 0, 0, 0])
     }
@@ -64,7 +69,7 @@ fn synthetic_pfb() -> Vec<u8> {
     }
     private.extend_from_slice(b"end end readonly put put\ndup/FontName get exch definefont pop\nmark currentfile closefile\n");
     let binary = encrypt(&private, 55665, &[0, 0, 0, 0]);
-    let clear = b"%!PS-AdobeFont-1.0: Synth 001.000\n/FontName /Synth def\n/FontMatrix[0.001 0 0 0.001 0 0]readonly def\n/FontBBox{-10 -20 600 700}readonly def\n/ItalicAngle 0 def\n/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\ndup 97/a put\ndup 98 /b put\ndup 99/c put\nreadonly def\ncurrentdict end\ncurrentfile eexec\n".to_vec();
+    let clear = format!("%!PS-AdobeFont-1.0: Synth 001.000\n/FontName /Synth def\n/FontMatrix{matrix}readonly def\n/FontBBox{{-10 -20 600 700}}readonly def\n/ItalicAngle 0 def\n/Encoding 256 array\n0 1 255 {{1 index exch /.notdef put}} for\ndup 97/a put\ndup 98 /b put\ndup 99/c put\nreadonly def\ncurrentdict end\ncurrentfile eexec\n").into_bytes();
     let trailer: Vec<u8> = b"0000000000000000\ncleartomark\n".to_vec();
     let mut pfb = Vec::new();
     for (kind, seg) in [(1u8, &clear), (2, &binary), (1, &trailer)] {
@@ -74,6 +79,20 @@ fn synthetic_pfb() -> Vec<u8> {
     }
     pfb.extend_from_slice(&[0x80, 3]);
     pfb
+}
+
+/// #2376/#2401: URW's base-35 programs (utmr8a.pfb, uhvr8a.pfb, ...) write the
+/// default matrix as `[0.001 0.0 0.0 0.001 0.0 0.0]`. dvipdfm-x `t1_load.c`
+/// compares the six numbers by value, so the program must load; any other
+/// matrix is still refused because the width scaling is not implemented.
+#[test]
+fn font_matrix_spelled_with_decimals_is_the_default_matrix() {
+    let urw = Type1Font::parse_pfb(&synthetic_pfb_with_matrix(
+        " [0.001 0.0 0.0 0.001 0.0 0.0] ",
+    ))
+    .expect("URW FontMatrix spelling must load");
+    assert_eq!(urw.advance_width("b").unwrap(), exact::Ratio::int(105));
+    assert!(Type1Font::parse_pfb(&synthetic_pfb_with_matrix("[0.0005 0 0 0.0005 0 0]")).is_err());
 }
 
 #[test]
