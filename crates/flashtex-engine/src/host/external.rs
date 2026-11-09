@@ -304,6 +304,16 @@ impl Snapshot {
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
+
+    /// Every file the snapshot read and hashes for its rules' state, as
+    /// each rule names it (relative to the output directory, or as the
+    /// `.aux` named it), in order (tests check what a confined host read).
+    pub fn files_read(&self) -> Vec<&str> {
+        self.rules
+            .iter()
+            .flat_map(|r| r.files.iter().map(|(n, _)| n.as_str()))
+            .collect()
+    }
 }
 
 /// The largest file a rule reads or hashes (an `.aux`, a `.bib`, an
@@ -345,6 +355,16 @@ fn rel_to(root: &Path, out: &Path, path: &str) -> Option<String> {
 /// The `.aux` lines bibtex reads, and the files it `\@input`s, from `out`.
 /// `\@input` paths are relative to the directory bibtex runs in (the
 /// output directory).
+///
+/// Confined (`FLASHTEX_CONFINE_READS`), each `.aux` passes the engine's
+/// confinement rules for a tool's input (`system::tool_read_ok`) before it
+/// is read or hashed: an `\@input` name that is absolute, starts with `~`,
+/// has `$` or a `..` component, or resolves (links followed) outside the
+/// output directory and the allowed roots is not read, as if missing. So a
+/// document cannot make the host read a file outside the project by
+/// writing its name into the `.aux` (#2057's survey; this runs after every
+/// compile, before the tools' policy is looked at). Unconfined, nothing
+/// changes: bibtex itself (`openin_any = a`) reads such names.
 fn aux_chain(
     out: &Path,
     rel: &str,
@@ -357,7 +377,11 @@ fn aux_chain(
     if depth > 20 || files.iter().any(|(r, _)| r == rel) {
         return;
     }
-    let Some(d) = read(&out.join(rel)) else {
+    let path = out.join(rel);
+    if !crate::system::tool_read_ok(rel, &path, false, Some(out)) {
+        return;
+    }
+    let Some(d) = read(&path) else {
         return;
     };
     // (listed before the files it inputs: a cycle stops here)
