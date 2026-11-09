@@ -44,7 +44,13 @@ fn run(tag: &str, shell: &str) -> (String, String) {
         .env("shell_escape", "p")
         .env("shell_escape_commands", "kpsewhich,bibtex")
         .env_remove("FLASHTEX_CONFINE_READS")
-        .args(["-ini", "-no-pdf", "-interaction=nonstopmode", shell, "t.tex"])
+        .args([
+            "-ini",
+            "-no-pdf",
+            "-interaction=nonstopmode",
+            shell,
+            "t.tex",
+        ])
         .output()
         .expect("run flashtex-xetex");
     let log = std::fs::read_to_string(d.join("t.log")).unwrap();
