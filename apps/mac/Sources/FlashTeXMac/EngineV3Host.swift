@@ -375,6 +375,33 @@ final class EngineV3HostProcess: @unchecked Sendable {
     var pid: Int32 { process.processIdentifier }
     var isRunning: Bool { process.isRunning }
 
+    /// The host runs in Darwin's background state (`PRIO_DARWIN_BG`: the
+    /// lowest CPU priority, efficiency cores, throttled disk I/O): its
+    /// window is not the frontmost project window (ProjectWindows.swift),
+    /// so the window in front finishes its compile first. Reversible: false
+    /// puts it back to normal. A new host (a restart) starts normal: the
+    /// session sets it again (`EngineV3Session.inBackground`).
+    var background = false {
+        didSet { if background != oldValue { applyBackground() } }
+    }
+
+    /// A failed `setpriority` is logged once per app run (the DESIGN §10
+    /// status line describes this as happening; a failure would be silent).
+    private static let backgroundFailureLock = NSLock()
+    nonisolated(unsafe) private static var backgroundFailureSaid = false
+
+    private func applyBackground() {
+        guard process.isRunning else { return }
+        let pid = process.processIdentifier
+        guard setpriority(PRIO_DARWIN_PROCESS, id_t(pid), background ? PRIO_DARWIN_BG : 0) != 0 else { return }
+        let why = String(cString: strerror(errno))
+        Self.backgroundFailureLock.lock()
+        let first = !Self.backgroundFailureSaid
+        Self.backgroundFailureSaid = true
+        Self.backgroundFailureLock.unlock()
+        if first { FlashTeXLog.write("engine-v3: setpriority(PRIO_DARWIN_PROCESS, \(pid), \(background ? "PRIO_DARWIN_BG" : "0")) failed: \(why) (logged once)") }
+    }
+
     /// Ends the host: the caller has said BYE (the host leaves on its own,
     /// its compile cancelled), and SIGTERM follows after `grace` should it
     /// still run. The engine of a Unicode host ends with the host however
