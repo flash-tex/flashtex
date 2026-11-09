@@ -482,14 +482,18 @@ def generate_replay(seed, fonts=False):
     lines.append(r"\output={\shipout\box255}%")
     # box/page: measure calls (BOX-MEMO.md §2); draw: calls that append
     # their nodes to the list they are called in (§10.3)
-    style = a.pick(["box", "box", "page", "draw", "draw"])
+    style = a.pick(["box", "box", "page", "draw", "draw", "cell"])
     arity = a.pick([0, 0, 1])
     a.quiet = True
     body = []
     for _ in range(a.n(1, 4)):
         # a measure call (BOX-MEMO.md §2): local boxes inside a group,
         # results out through \global registers
-        if style == "draw":
+        if style == "cell":
+            # a call inside an alignment's cell, that may itself end the cell
+            body.append(a.pick(["\\kern1pt", "\\vrule width 1pt", "\\hbox{\\kern2pt}",
+                                a.alignment(wrap=True).replace("#", "##")]))
+        elif style == "draw":
             body.append(a.alignment(wrap=True).replace("#", "##"))
             if a.chance(0.3):
                 body.append(a.pick(["\\kern1pt", "\\penalty7", "\\global\\advance\\count9 1 ",
@@ -527,6 +531,21 @@ def generate_replay(seed, fonts=False):
             "\\setbox4\\hbox{\\valign{#\\cr %s\\cr}}" % call,
             "{\\output={\\setbox4\\vbox{%s\\unvbox255}\\shipout\\box4}\\hbox{p}\\penalty-10000}" % call,
             call])
+    if style == "cell":
+        # inside a cell (not at its start, where the \omit look-ahead
+        # expands the call), in a template, in \everycr; the body may end
+        # the cell (& or \span) or the row (\cr)
+        end = a.pick(["", "", "&\\kern2pt", "\\span\\kern3pt", "{&}", "\\amp\\kern1pt",
+                      "\\cr\\noalign{\\kern1pt}\\kern0pt"])
+        body.append(end.replace("#", "##"))
+        call = a.pick([
+            "\\setbox4\\vbox{\\halign{#&#\\cr \\kern0pt %s\\cr \\kern0pt %s&x\\cr}}" % (call, call),
+            "\\setbox4\\vbox{\\halign{\\kern0pt%s#&#\\cr a&b\\cr c&d\\cr}}" % call,
+            "\\setbox4\\vbox{\\halign{#\\kern0pt%s&#\\cr a&b\\cr c\\cr}}" % call,
+            "\\setbox4\\vbox{\\halign{&#\\kern0pt%s\\cr a&b\\cr c\\cr}}" % call,
+            "{\\everycr{\\noalign{\\setbox4\\hbox{%s}}}\\setbox5\\vbox{\\halign{#&#\\cr a&b\\cr c\\cr}}}" % call,
+            "\\setbox4\\vbox{\\tabskip=1pt\\halign to 50pt{#\\tabskip=0pt plus 1fil&#\\cr \\kern0pt%s&\\kern0pt%s\\cr}}"
+            % (call, call)])
     steps = [call + "\\show%", call + "\\show%"]
     for _ in range(a.n(3, 10)):
         x = a.r.random()
