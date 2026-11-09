@@ -659,6 +659,87 @@ final class DocumentFilesTests: XCTestCase {
         model.documentWatcher.stop()
     }
 
+    /// Lane APP-LAG-AUDIT: the timed autosave never holds the main thread
+    /// for the helper. It used to hash the buffer twice, JSON-encode it and
+    /// wait for the helper's compare-and-replace (two fsyncs) on main: tens
+    /// of milliseconds at 3 MB at every typing pause, up to `helperTimeout`
+    /// with a slow helper. Here the fake answers every save 1 s late (well
+    /// inside the wait): the autosave returns at once, its outcome is applied
+    /// when the reply comes, a ⌘S made while it is in flight waits for it and
+    /// finds no conflict with its write, and a member is saved the same way.
+    func testTimedAutosaveWaitsForTheHelperOffTheMainThread() async throws {
+        let dir = try tempDir("bg-autosave")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        try "chapter\n".write(to: dir.appendingPathComponent("chapter.tex"), atomically: true, encoding: .utf8)
+        let originalAutosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        addTeardownBlock { @MainActor in EditorPreferences.shared.autosave = originalAutosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        // The fake's own write fires the watcher, whose probe would go to the
+        // same slow fake; DocumentWatcherTests cover the watcher.
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+        let restartsBefore = model.files.helperRestarts
+
+        // 1. The entry: the autosave returns before the reply.
+        model.updateActiveText("edited\n")
+        var t0 = Date()
+        model.flushPendingAutosave(inBackground: true)
+        var held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "the autosave held the main thread for the helper's reply (\(held) s)")
+        XCTAssertEqual(model.files.backgroundSavesSent, 1)
+        XCTAssertTrue(model.files.backgroundSavesInFlight)
+        XCTAssertTrue(model.isDirty, "saved only once the reply is applied")
+        try await waitUntil("the background save to be applied",
+                            state: { "savedText=\(model.savedText ?? "nil") note=\(model.captureNote ?? "nil") status=\(model.files.status)" }) {
+            model.savedText == "edited\n"
+        }
+        XCTAssertFalse(model.files.backgroundSavesInFlight)
+        XCTAssertFalse(model.isDirty)
+        XCTAssertEqual(try disk(url), "edited\n")
+        XCTAssertEqual(model.captureNote, "Saved paper.tex")
+        XCTAssertNil(model.files.conflict)
+        XCTAssertEqual(model.files.lateReplies, [], "the reply came inside the wait")
+
+        // 2. ⌘S while an autosave is in flight: it waits for that save, then
+        // saves against the baseline it moved (no spurious conflict).
+        model.updateActiveText("edited twice\n")
+        model.flushPendingAutosave(inBackground: true)
+        XCTAssertTrue(model.files.backgroundSavesInFlight)
+        model.updateActiveText("edited thrice\n")
+        XCTAssertTrue(model.saveTex(), "⌘S after the autosave's own write: \(model.captureNote ?? "nil")")
+        XCTAssertFalse(model.files.backgroundSavesInFlight, "the ⌘S settled the autosave first")
+        XCTAssertNil(model.files.conflict)
+        XCTAssertEqual(try disk(url), "edited thrice\n")
+        XCTAssertEqual(model.savedText, "edited thrice\n")
+        XCTAssertFalse(model.isDirty)
+
+        // 3. A member, the same way.
+        guard case .switched = model.project.switchDocument(to: "chapter.tex") else { return XCTFail("no switch to chapter.tex") }
+        model.updateActiveText("chapter edited\n")
+        XCTAssertTrue(model.project.isDirty("chapter.tex"))
+        t0 = Date()
+        model.flushPendingAutosave(inBackground: true)
+        held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "the member's autosave held the main thread (\(held) s)")
+        XCTAssertEqual(model.files.backgroundSavesSent, 3)
+        try await waitUntil("the member's background save to be applied",
+                            state: { "dirty=\(model.project.isDirty("chapter.tex")) status=\(model.files.status)" }) {
+            !model.project.isDirty("chapter.tex")
+        }
+        XCTAssertEqual(try disk(dir.appendingPathComponent("chapter.tex")), "chapter edited\n")
+        XCTAssertNil(model.project.saveConflict(for: "chapter.tex"))
+        XCTAssertEqual(model.files.helperRestarts, restartsBefore + 1, "only the policy switch restarted the helper; no reply was lost")
+        XCTAssertEqual(model.files.lateReplies, [])
+    }
+
     func testGarbageReplyIsAProtocolFailureNotASave() throws {
         let dir = try tempDir("garbage")
         let url = dir.appendingPathComponent("paper.tex")
