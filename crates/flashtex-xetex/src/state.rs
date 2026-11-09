@@ -446,6 +446,10 @@ impl Globals {
         self.host.protrusion = saved.protrusion;
         self.host.handles = saved.handles;
         self.host.dl.restore(&saved.dl);
+        // (as `restore` does: the old run's open iterator, kept, answered
+        // a locale string the new run makes under the same number)
+        self.host.brk_iter = saved.brk_iter;
+        self.host.brk_locale_str_num = saved.brk_locale_str_num;
         Ok(b)
     }
 
