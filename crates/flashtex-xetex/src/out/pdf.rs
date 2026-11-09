@@ -1988,9 +1988,9 @@ fn encoding_differences(encoding: &[Vec<u8>], used: &BTreeSet<u16>) -> (bool, St
     let base = same >= 64;
     let mut diffs = String::new();
     let mut skipping = true;
-    for c in 0..256usize {
+    for (c, win) in WIN_ANSI.iter().enumerate() {
         match glyph(c).filter(|_| used.contains(&(c as u16))) {
-            Some(n) if !(base && n.as_slice() == WIN_ANSI[c].as_bytes()) => {
+            Some(n) if !(base && n.as_slice() == win.as_bytes()) => {
                 if skipping {
                     let _ = write!(diffs, " {c}");
                 }
