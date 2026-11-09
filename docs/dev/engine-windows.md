@@ -7,7 +7,7 @@ the engine and CLI run on macOS, Linux, Windows and maybe WASM (DESIGN.md
 [`docs/evidence/portability-2026-10-03/`](../evidence/portability-2026-10-03/README.md));
 the hardening below is issue #1418 (lane WIN-HARDENING).
 
-Every OS call is in `crates/flashtex-engine/src/os.rs` (DESIGN.md §16 rule 2).
+Every OS call is in `crates/flashtex-runtime/src/os.rs` (DESIGN.md §16 rule 2).
 
 ## `\write18` and pipes: `cmd.exe`
 

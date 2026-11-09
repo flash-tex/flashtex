@@ -120,10 +120,9 @@ def job_text(batch, variant):
     out = [HEAD]
     for tfm, line, ff in batch:
         if variant == "full":
-            if ff.startswith("<<"):
-                continue
-            whole = line.replace(ff, "<<" + ff.lstrip("<["), 1)
-            out.append("\\pdfmapline{=%s}" % whole)
+            if not ff.startswith("<<"):
+                whole = line.replace(ff, "<<" + ff.lstrip("<["), 1)
+                out.append("\\pdfmapline{=%s}" % whole)
         chars = "".join("\\char%d " % c for c in codes(tfm, variant))
         out.append("\\font\\x=%s \\setbox0\\hbox{\\x %s}\\shipout\\box0" % (tfm, chars))
     out.append("\\end")

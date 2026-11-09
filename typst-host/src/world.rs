@@ -91,6 +91,12 @@ impl Fonts {
     }
 }
 
+impl typst_ide::IdeWorld for HostWorld<'_> {
+    fn upcast(&self) -> &dyn World {
+        self
+    }
+}
+
 /// A file id for a path in the project (`/`-separated, relative to the root).
 pub fn project_file(path: &str) -> Result<FileId, String> {
     let vp = VirtualPath::new(path).map_err(|e| format!("{path}: {e}"))?;
@@ -105,7 +111,8 @@ pub struct HostWorld<'f> {
     /// Which font file each loaded `Font` came from (for `FONT.file`).
     loaded: Mutex<HashMap<Font, usize>>,
     /// Parsed sources, kept across compiles so edits reparse incrementally.
-    sources: Mutex<HashMap<FileId, Source>>,
+    /// Parsed sources and the bytes each was last made from.
+    sources: Mutex<HashMap<FileId, (Source, Bytes)>>,
     /// Raw files, read once per compile.
     files: Mutex<HashMap<FileId, FileResult<Bytes>>>,
     /// Where packages come from; `None`: every package is refused.
@@ -313,6 +320,17 @@ impl<'f> HostWorld<'f> {
             file: file.clone(),
         }));
         st.notes = notes;
+    }
+
+    /// The id of a project source this World has read, by its absolute
+    /// path (as SOURCES names it), without interning anything: a path no
+    /// compile read has no id here (LOCATE, spec §11.6).
+    pub fn read_source_by_path(&self, path: &std::path::Path) -> Option<FileId> {
+        let sources = self.sources.lock().unwrap();
+        sources
+            .keys()
+            .copied()
+            .find(|&id| self.path_of(id).is_some_and(|p| p == path))
     }
 
     /// The absolute path of a project file (for `SOURCES` and diagnostics).
@@ -611,20 +629,31 @@ impl World for HostWorld<'_> {
 
     fn source(&self, id: FileId) -> FileResult<Source> {
         let bytes = self.file(id)?;
+        // The same bytes as the source was last made from (the file cache
+        // hands out one `Bytes` per compile): no UTF-8 check, no compare.
+        // Span resolution asks for a file's source once per span, so this
+        // is on the path to the first page (a 650 kB file, hundreds of
+        // spans a page).
+        if let Some((s, b)) = self.sources.lock().unwrap().get(&id) {
+            if b.as_slice().as_ptr() == bytes.as_slice().as_ptr() && b.len() == bytes.len() {
+                return Ok(s.clone());
+            }
+        }
         let text = std::str::from_utf8(&bytes).map_err(|_| FileError::InvalidUtf8)?;
         // Typst reads a leading BOM as text; strip it as typst-cli does.
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut sources = self.sources.lock().unwrap();
         match sources.get_mut(&id) {
-            Some(s) => {
+            Some((s, b)) => {
                 if s.text() != text {
                     s.replace(text);
                 }
+                *b = bytes.clone();
                 Ok(s.clone())
             }
             None => {
                 let s = Source::new(id, text.to_string());
-                sources.insert(id, s.clone());
+                sources.insert(id, (s.clone(), bytes.clone()));
                 Ok(s)
             }
         }
