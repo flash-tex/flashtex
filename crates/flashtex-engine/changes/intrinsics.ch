@@ -152,6 +152,18 @@ exit: if intr_rec_on then flashtex_intr_next;
 end;
 @z
 
+@x pdftex.web l.8527 - ... and so is one that ends an alignment entry (#2183)
+@<If an alignment entry has just ended, take appropriate action@>=
+if cur_cmd<=car_ret then if cur_cmd>=tab_mark then if align_state=0 then
+  @<Insert the \(v)\<v_j> template and |goto restart|@>
+@y
+@<If an alignment entry has just ended, take appropriate action@>=
+if cur_cmd<=car_ret then if cur_cmd>=tab_mark then if align_state=0 then
+  begin if intr_rec_on then flashtex_intr_next;
+  @<Insert the \(v)\<v_j> template and |goto restart|@>;
+  end
+@z
+
 @x pdftex.web l.8961 - an expansion that is not |big_switch|'s own ends |intr_at_switch|
 reswitch:
 if cur_cmd<call then @<Expand a nonmacro@>

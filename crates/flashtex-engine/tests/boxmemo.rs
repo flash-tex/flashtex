@@ -663,3 +663,22 @@ fn a_swapped_share_is_found_by_the_restricted_walk_too() {
         "the swap went unreported: {err}\n{s}"
     );
 }
+
+#[test]
+fn a_control_sequence_ending_an_alignment_entry_is_keyed() {
+    // (#2183) a control sequence meaning `\\cr` read at `align_state=0`
+    // ends the entry: `get_next` inserts the v-template and reads on, and
+    // never reaches the exit where a recording notes each control sequence
+    // read. Its meaning is part of the key all the same: once `\\x` is
+    // `\\cr\\noalign{\\kern5pt}`, the call is another key and the box is
+    // 7pt high, not the recorded 2pt
+    let s = check(
+        "align-cs",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\setbox0\\vbox{\\halign{##\\cr #1\\x}}\\global\\dimen1=\\ht0 }\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\let\\x\\cr \\measure{\\vrule height 2pt}\\show\\measure{\\vrule height 2pt}\\show\\measure{\\vrule height 2pt}\\show\n\
+         \\def\\x{\\cr\\noalign{\\kern5pt}}\\measure{\\vrule height 2pt}\\show\\measure{\\vrule height 2pt}\\show\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}

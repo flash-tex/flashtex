@@ -2636,20 +2636,28 @@ impl Globals {
                 if (self.cur_cmd <= car_ret) {
                     if (self.cur_cmd >= tab_mark) {
                         if (self.align_state == 0i32) {
-                            // §965
                             {
-                                if ((self.scanner_status == aligning) || (self.cur_align == null)) {
-                                    self.fatal_error(688i32);
+                                if self.intr_rec_on {
+                                    self.flashtex_intr_next();
                                 }
-                                self.cur_cmd = __av_mem[crate::ix::U(((self.cur_align).wrapping_add(5i32)) as usize)].hh().lh();
-                                { let __ix254 = (self.cur_align).wrapping_add(5i32); let __v255 = self.cur_chr; __av_mem[crate::ix::U((__ix254) as usize)].set_hh_lh(__v255); }
-                                if (self.cur_cmd == omit) {
-                                    self.begin_token_list(omit_template, v_template);
-                                } else {
-                                    self.begin_token_list(__av_mem[crate::ix::U(((self.cur_align).wrapping_add(2i32)) as usize)].int(), v_template);
+                                if self.bm_rec_on {
+                                    self.flashtex_bm_next();
                                 }
-                                self.align_state = 1000000i32;
-                                { __goto_1 = 0; continue 'l_dispatch_1; }
+                                // §965
+                                {
+                                    if ((self.scanner_status == aligning) || (self.cur_align == null)) {
+                                        self.fatal_error(688i32);
+                                    }
+                                    self.cur_cmd = __av_mem[crate::ix::U(((self.cur_align).wrapping_add(5i32)) as usize)].hh().lh();
+                                    { let __ix254 = (self.cur_align).wrapping_add(5i32); let __v255 = self.cur_chr; __av_mem[crate::ix::U((__ix254) as usize)].set_hh_lh(__v255); }
+                                    if (self.cur_cmd == omit) {
+                                        self.begin_token_list(omit_template, v_template);
+                                    } else {
+                                        self.begin_token_list(__av_mem[crate::ix::U(((self.cur_align).wrapping_add(2i32)) as usize)].int(), v_template);
+                                    }
+                                    self.align_state = 1000000i32;
+                                    { __goto_1 = 0; continue 'l_dispatch_1; }
+                                }
                             }
                         }
                     }
