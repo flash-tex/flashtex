@@ -8,7 +8,9 @@
 % |new_save_level|, 4 |unsave|; 5 a sparse-array definition, 6 a box
 % dimension, 7 |out_what|, which a recording cannot hold; 16 |read_toks|
 % and |open_or_close_in|, whose input files a check does not compare; 17
-% |save_for_after| at level |p|), and |big_switch| asks |flashtex_intr_switch|
+% |save_for_after| at level |p|; 18 the end of |get_next|, which reads past
+% the call when the token comes from below its body's input level), and
+% |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 %
 % The verifier compares every |mem| word either path wrote but those of the
@@ -139,6 +141,15 @@ begin a:=false;
 @y
 @!a:boolean; {have we already processed an \.{\\aftergroup} ?}
 begin a:=false; if intr_verify_on then flashtex_intr_op(4,0,0,0);
+@z
+
+@x xetex.web - a token read from below the body's input level: not replayable (kind 18)
+@<If an alignment entry has just ended, take appropriate action@>;
+exit:end;
+@y
+@<If an alignment entry has just ended, take appropriate action@>;
+exit: if intr_verify_on then flashtex_intr_op(18,0,0,0);
+end;
 @z
 
 @x xetex.web - expansion other than big_switch's direct macro

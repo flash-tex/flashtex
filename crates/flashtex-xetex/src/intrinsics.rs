@@ -311,8 +311,13 @@ impl Globals {
             return;
         }
         let global = k & 8 != 0;
-        let call_level = r.rec.as_ref().expect("checked").at.0;
+        let (call_level, base) = r.rec.as_ref().map(|rec| (rec.at.0, rec.base)).expect("checked");
         let op = match k {
+            // a token from below the body's level (the body used up, a
+            // look-ahead or a scan reading on): the call reads past itself,
+            // which a replay does not
+            18 if self.input_ptr < base => Err("ReadPast"),
+            18 => return,
             // the input files' positions are not compared
             16 => Err("FileInput"),
             // an `\aftergroup` token left at the call's level (or below,
