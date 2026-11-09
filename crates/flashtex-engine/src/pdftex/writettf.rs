@@ -325,9 +325,10 @@ impl Ttf<'_> {
         }
     }
 
-    /// `ttf_name_lookup`: the directory entry of table `s`.
+    /// `ttf_name_lookup`: the directory entry of table `s`, the first whose
+    /// tag matches it by `strncmp(tab->tag, s, 4)`.
     fn name_lookup(&mut self, s: &[u8], required: bool) -> Option<usize> {
-        let found = self.dir_tab.iter().position(|t| &t.tag[..] == s);
+        let found = self.dir_tab.iter().position(|t| tag_eq(&t.tag, s));
         if found.is_none() && required {
             self.g.pdftex_fail(&format!(
                 "can't find table `{}'",
@@ -1551,6 +1552,22 @@ fn strip_spaces_and_delims(s: &[u8]) -> Vec<u8> {
         out.truncate(z);
     }
     out
+}
+
+/// `strncmp(tag, s, 4) == 0`: the tags agree up to the first NUL. Two
+/// tags equal before a NUL (`zz\0a`, `zz\0b`) are one table to pdfTeX, so
+/// `ttf_copy_font` copies the first of them for both entries.
+fn tag_eq(tag: &[u8; 4], s: &[u8]) -> bool {
+    for (i, &a) in tag.iter().enumerate() {
+        let b = s.get(i).copied().unwrap_or(0);
+        if a != b {
+            return false;
+        }
+        if a == 0 {
+            return true;
+        }
+    }
+    true
 }
 
 /// `unsafe_name`.
