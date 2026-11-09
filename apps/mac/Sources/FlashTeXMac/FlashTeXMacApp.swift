@@ -40,7 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for path in dirty where path != model.project.entryPath {
                 switch model.project.saveDocumentNow(path) {
                 case .saved: continue
-                case .conflict(let c): allSaved = false; model.captureNote = c.summary
+                case .conflict(let c):
+                    model.captureNote = c.summary
+                    model.resolveDocumentConflictPanel(path) // Overwrite / Reload / Keep Editing, as for the entry
+                    if model.project.isDirty(path) { allSaved = false }
                 case .failed(let why): allSaved = false; model.captureNote = why
                 }
             }
@@ -56,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertSecondButtonReturn:
             // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
             model.preserveDirtyBuffers(reason: "quit without saving")
+            model.dropUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
             return true
         default: return false
         }

@@ -43,6 +43,10 @@ enum TextIn {
 pub trait OutSink: Write + Send {
     /// The position of the next byte written (`None`: a pipe).
     fn position(&mut self) -> Option<u64>;
+    /// The metadata of `path`, the file this sink writes ([`out_metadata`]).
+    fn metadata_of(&self, path: &str) -> std::io::Result<std::fs::Metadata> {
+        std::fs::metadata(path)
+    }
 }
 
 impl OutSink for File {
@@ -50,11 +54,30 @@ impl OutSink for File {
         use std::io::Seek;
         self.stream_position().ok()
     }
+    fn metadata_of(&self, path: &str) -> std::io::Result<std::fs::Metadata> {
+        out_metadata(self, path)
+    }
 }
 
 impl OutSink for std::process::ChildStdin {
     fn position(&mut self) -> Option<u64> {
         None
+    }
+}
+
+/// The metadata of output file `path` from `f`, the engine's descriptor of
+/// it, while that file still has a name (`os::still_linked`); else, as
+/// before, by path. A `stat` by path walks the path, and every write that
+/// reaches an output file asked for one (`note_foreign`), as did each file
+/// open for output at every checkpoint (`out_state`): 0.3 % of the engine
+/// thread on the first open of a 1,152-page book (lane COLD-FIRST-2). The
+/// two differ only when another program renamed the file away: the
+/// restore's own check by path (`checkpoint::changed_outside`) still finds
+/// that.
+fn out_metadata(f: &File, path: &str) -> std::io::Result<std::fs::Metadata> {
+    match f.metadata() {
+        Ok(m) if crate::os::still_linked(&m) => Ok(m),
+        _ => std::fs::metadata(path),
     }
 }
 
@@ -113,7 +136,8 @@ impl Write for Tracked {
 
 impl Tracked {
     fn write_timed(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        note_foreign(&self.path);
+        let now = out_metadata(&self.f, &self.path).ok().map(|m| stamp_of(&m));
+        note_foreign(&self.path, now);
         let at = if self.logical {
             use std::io::Seek;
             let at = self.f.stream_position()?;
@@ -143,6 +167,9 @@ impl OutSink for Tracked {
     fn position(&mut self) -> Option<u64> {
         use std::io::Seek;
         self.f.stream_position().ok()
+    }
+    fn metadata_of(&self, path: &str) -> std::io::Result<std::fs::Metadata> {
+        out_metadata(&self.f, path)
     }
 }
 
@@ -1716,6 +1743,65 @@ fn default_format_file() -> String {
     }
 }
 
+/// The format file each name a run asked for was found at in this process
+/// (`w_open_in`): (name as asked, path found).
+static LOADED_FORMATS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// The format name a run with first line `first_line` asks for: the
+/// `&name` that starts it (§524, `open_fmt_file`), else
+/// `TEX_format_default`.
+pub fn format_asked(first_line: &[u8]) -> String {
+    let s = String::from_utf8_lossy(first_line);
+    let s = s.trim_start();
+    match s.strip_prefix('&') {
+        Some(rest) => {
+            let n = rest.split(' ').next().unwrap_or("");
+            if n.len() > 4 && n[n.len() - 4..].eq_ignore_ascii_case(".fmt") {
+                n.to_string()
+            } else {
+                format!("{n}.fmt")
+            }
+        }
+        None => default_format_file(),
+    }
+}
+
+/// The format file a run asking for `asked` ([`format_asked`]) opens now:
+/// where a run of this process found it (the TeX distribution's trees are
+/// taken as unchanged for the process, as for the lookups), else looked up
+/// as `w_open_in` looks it up (`-output-directory` first, then
+/// `find_format`). A persisted S₀ holds the state its run loaded from its
+/// format; opened in another process, it stands for a full run only where
+/// that run would load the same format (`host::Key::check_format`).
+pub fn format_file_now(asked: &str) -> Option<String> {
+    if let Some((_, p)) = LOADED_FORMATS
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(a, _)| a == asked)
+    {
+        return Some(p.clone());
+    }
+    let base = match asked.split_once(':') {
+        Some((area, rest)) if area.len() > 1 && area.chars().all(|c| c.is_ascii_alphabetic()) => {
+            if area != "TeXformats" {
+                return None;
+            }
+            rest
+        }
+        _ => asked,
+    };
+    if let Some(dir) = run().output_directory {
+        if !base.starts_with('/') {
+            let p = format!("{dir}/{base}");
+            if Path::new(&p).is_file() {
+                return Some(p);
+            }
+        }
+    }
+    find_format(base)
+}
+
 /// The process's file resolver (see `resolver.rs`). kpathsea keeps its state
 /// in the environment, so there is one per process; `set_resolver` replaces
 /// the default chosen on first use.
@@ -2883,8 +2969,23 @@ impl Globals {
 
     /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's
     /// `texbopenin`): a TeX input file read as bytes (`\pdfobj file`).
+    ///
+    /// Its one caller, pdftex.web's "Write out a PDF object", copies every
+    /// byte to the end, so for the incremental journal this is a read of
+    /// the whole file (`note_whole_read`, as `\pdfmdfivesum file`), not only
+    /// the lookup that found it. Without the close after all of it, a
+    /// document embedding its own source (`\immediate\pdfobj stream file
+    /// {\jobname.tex}`) had restart points after the embed, its stream still
+    /// before a later edit, and kept the object with the old source (lane
+    /// REVIEW-INCR, `tests/incremental.rs`).
     pub fn tex_b_openin(&mut self, f: &mut ByteFile) -> bool {
-        self.byte_open_in(f, Format::Tex)
+        let ok = self.byte_open_in(f, Format::Tex);
+        if ok {
+            if let Some(p) = f.path.as_deref() {
+                note_whole_read(p);
+            }
+        }
+        ok
     }
 
     /// `open_input(&f, kpse_vf_format, FOPEN_RBIN_MODE)` (pdftex.h's
@@ -2933,11 +3034,19 @@ impl Globals {
     pub fn w_open_in(&mut self, f: &mut WordFile) -> bool {
         *f = WordFile::default();
         f.err = 1;
+        let asked = self.raw_file_name();
         let Some(name) = self.input_path(Format::Fmt, true) else {
             return false;
         };
         match File::open(&name) {
             Ok(h) => {
+                {
+                    let mut l = LOADED_FORMATS.lock().unwrap();
+                    match l.iter_mut().find(|(a, _)| *a == asked) {
+                        Some(e) => e.1 = name.clone(),
+                        None => l.push((asked, name.clone())),
+                    }
+                }
                 f.input = Some(BufReader::new(h));
                 f.path = Some(name);
                 f.err = 0;
@@ -3014,6 +3123,37 @@ impl Globals {
             return false;
         }
         let mut last_nonblank = self.first;
+        // The rest of the line at once, when the loop below would copy all
+        // of it without reaching its overflow test (`last >= buf_size-1`
+        // holds for no `last` in `lo..hi`): the same bytes through `xord`,
+        // `max_buf_stack` raised to `hi` as the loop's steps raise it, the
+        // same last non-blank, and the line consumed as `get_char` leaves it.
+        #[cfg(not(feature = "tex82"))]
+        if f.have_line && f.pos < f.line.len() {
+            let lo = self.last as usize;
+            let hi = lo + (f.line.len() - f.pos);
+            if hi <= (crate::generated::consts::buf_size - 1) as usize && hi <= self.buffer.len() {
+                if hi as i32 > self.max_buf_stack {
+                    self.max_buf_stack = hi as i32;
+                }
+                let xord: &[crate::generated::types::ASCII_code] = &self.xord[..256];
+                let dst = self.buffer.slice_mut(lo, hi);
+                let mut nb = 0;
+                for (k, (d, &c)) in dst.iter_mut().zip(&f.line[f.pos..]).enumerate() {
+                    *d = xord[c as usize];
+                    if *d != b' ' as crate::generated::types::ASCII_code {
+                        nb = k + 1;
+                    }
+                }
+                if nb > 0 {
+                    last_nonblank = (lo + nb) as i32;
+                }
+                f.pos = f.line.len();
+                f.refresh();
+                self.last = last_nonblank;
+                return true;
+            }
+        }
         while !eoln(f) {
             // texmfmp.c's `input_line` reads while `last < bufsize`; a line
             // that reaches `buffer[bufsize-1]` stops it before it sees the
@@ -3337,11 +3477,13 @@ impl Globals {
             name.push_str(".tcx");
         }
         let Some(found) = resolve(&name, Format::Web2c) else {
-            with_run(|r| r.translate_filename = Some(name.clone()));
-            eprintln!(
-                "{}: warning: Could not open char translation file `{name}'.",
-                invocation_name()
-            );
+            // `translate_filename` is now kpse_find_file's NULL: no TCX file
+            // after the banner or in the log, and the format's `xord`,
+            // `xchr` and `xprn` stand (tex.ch [50.1308]). kpathsea's
+            // WARNING1 names no program.
+            with_run(|r| r.translate_filename = None);
+            self.translate_filename_p = false;
+            eprintln!("warning: Could not open char translation file `{name}'.");
             return;
         };
         with_run(|r| r.translate_filename = Some(found.clone()));
@@ -4388,10 +4530,11 @@ pub fn stamp_output(path: &str) {
     FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
 }
 
-/// Before the engine writes more to `path` (`Tracked`): if another program
-/// changed it since the engine's last write, it stays marked.
-fn note_foreign(path: &str) {
-    if why_changed(path, false).is_some() {
+/// Before the engine writes more to `path` (`Tracked`), whose stamp is
+/// `now`: if another program changed it since the engine's last write, it
+/// stays marked.
+fn note_foreign(path: &str, now: Option<Stamp>) {
+    if why_changed_as(path, false, now).is_some() {
         FOREIGN.with(|f| f.borrow_mut().insert(out_key(path)));
     }
 }
@@ -5293,12 +5436,13 @@ fn out_state<W: Write>(
     w: &mut BufWriter<W>,
     path: &str,
     position: impl FnOnce(&mut W) -> Option<u64>,
+    metadata: impl FnOnce(&W) -> std::io::Result<std::fs::Metadata>,
 ) -> Result<(u64, u64), String> {
     w.flush().map_err(|e| format!("{path}: {e}"))?;
     let at = position(w.get_mut()).ok_or_else(|| format!("{path}: no position"))?;
     let len = match logical_len(path) {
         Some(n) => n,
-        None => std::fs::metadata(path)
+        None => metadata(w.get_ref())
             .map(|m| m.len())
             .map_err(|e| format!("{path}: {e}"))?,
     };
@@ -5398,7 +5542,7 @@ impl AlphaFile {
             Stream::Terminal
         } else if let Some(w) = self.output.as_mut() {
             let path = self.path.clone().ok_or("an output file without a name")?;
-            let (len, at) = out_state(w, &path, |s| s.position())?;
+            let (len, at) = out_state(w, &path, |s| s.position(), |s| s.metadata_of(&path))?;
             Stream::Out { path, len, at }
         } else {
             match self.input.as_mut() {
@@ -5492,10 +5636,15 @@ impl ByteFile {
     pub fn snapshot(&mut self) -> Result<FileSnap, String> {
         let stream = if let Some(w) = self.output.as_mut() {
             let path = self.path.clone().ok_or("an output file without a name")?;
-            let (len, at) = out_state(w, &path, |f| {
-                use std::io::Seek;
-                f.stream_position().ok()
-            })?;
+            let (len, at) = out_state(
+                w,
+                &path,
+                |f| {
+                    use std::io::Seek;
+                    f.stream_position().ok()
+                },
+                |f| f.metadata_of(&path),
+            )?;
             Stream::Out { path, len, at }
         } else if let Some(r) = self.input.as_mut() {
             let (path, offset) = in_offset(r, &self.path)?;

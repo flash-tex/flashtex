@@ -926,6 +926,69 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// changes/readset.ch: `\ifcsname` with an empty or a one-character name
+/// (`\csname\endcsname` is `null_cs`, `\Q` is `single_base+"Q"`) calls no
+/// `id_lookup`, and the meaning it tests is read by no `get_next` either; it
+/// is a read all the same. The first page tests both; an edit on the last
+/// page makes the `.aux` define them (and then not), so the `.aux` pass
+/// must restart before the first page, and every compile equals
+/// from-scratch runs.
+#[test]
+fn l5_ifcsname_of_a_short_name_is_a_read() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-ifcsname-short");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |q: bool, empty: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        s.push_str(
+            "Short names: \\ifcsname Q\\endcsname Q defined\\else Q undefined\\fi, \
+             \\ifcsname\\endcsname empty defined\\else empty undefined\\fi.\n\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "epsilon"));
+        }
+        s.push_str("\\makeatletter\n");
+        if q {
+            s.push_str("\\immediate\\write\\@auxout{\\string\\gdef\\string\\Q{q}}\n");
+        }
+        if empty {
+            s.push_str(
+                "\\immediate\\write\\@auxout{\\string\\expandafter\\string\\gdef\
+                 \\string\\csname\\string\\endcsname{e}}\n",
+            );
+        }
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(false, false))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let cases = [
+        ("the .aux defines \\Q", true, false),
+        ("and no longer", false, false),
+        ("the .aux defines \\csname\\endcsname", false, true),
+        ("both", true, true),
+        ("neither", false, false),
+    ];
+    for (what, q, empty) in cases {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(q, empty))], what);
+    }
+}
+
 /// `long_state` is dead at a checkpoint (`incr::dead_word`): an `.aux` whose
 /// last macro with parameters is `\long` in one pass and not in the other
 /// leaves `long_state` different after the read (`call` against
@@ -4301,9 +4364,12 @@ fn a_preamble_edit_after_an_edit_far_away_restarts_before_s0() {
 /// Review of #1551 (#1578): a file the run writes and later `\input`s,
 /// changed by another program between compiles. A run from the start writes
 /// it again before reading it; no restart point after the write may read
-/// the other program's version (`consumed_nothing_changed`). In the
-/// preamble (a restart before S₀) and in the body (from S₀ on), with a
-/// timed checkpoint at almost every line; every compile equals scratch runs.
+/// the other program's version (`consumed_nothing_changed`). Written in the
+/// preamble and read in the preamble (a restart before S₀) or in the body
+/// (S₀ itself, `written_before_s0_changed_outside`), and written and read in
+/// the body, pages apart (the body's restart points between the write and
+/// the read), with a timed checkpoint at almost every line; every compile
+/// equals scratch runs.
 #[test]
 fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
     let Some(e) = env() else {
@@ -4314,17 +4380,22 @@ fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
                  \\immediate\\write\\w{\\string\\def\\string\\gen{from the document}}\n\
                  \\immediate\\closeout\\w\n";
     let paras: String = (0..8).map(|k| para(k, "rho")).collect();
-    for (i, place) in ["preamble", "body"].into_iter().enumerate() {
-        let doc = if place == "preamble" {
-            format!(
+    let later: String = (8..40).map(|k| para(k, "rho")).collect();
+    for (i, place) in ["preamble", "body", "body-written"].into_iter().enumerate() {
+        let doc = match place {
+            "preamble" => format!(
                 "\\documentclass{{article}}\n{write}\\usepackage{{amsmath}}\n\\usepackage{{amssymb}}\n\
                  \\input{{gen.tex}}\n\\title{{T}}\n\\begin{{document}}\n{paras}\\gen\n\\end{{document}}\n"
-            )
-        } else {
-            format!(
+            ),
+            "body" => format!(
                 "\\documentclass{{article}}\n{write}\\begin{{document}}\n{paras}\
                  \\input{{gen.tex}}\\gen\n\\end{{document}}\n"
-            )
+            ),
+            // (written on the first page, read pages later)
+            _ => format!(
+                "\\documentclass{{article}}\n\\begin{{document}}\n{paras}{write}{later}\
+                 \\input{{gen.tex}}\\gen\n\\end{{document}}\n"
+            ),
         };
         let dir = e.dir.join(format!("outside-write-{i}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -4347,6 +4418,20 @@ fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
         // and an edit after that, in the same session
         let edited = doc.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &edited)], "then an edit");
+        if place == "body-written" {
+            // changed again, with an edit between the write and the read
+            let between = edited.replacen("Paragraph 20 with", "Paragraph 20 now with", 1);
+            compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[
+                    ("gen.tex", "\\def\\gen{from outside again}\n"),
+                    ("doc.tex", &between),
+                ],
+                "body-written: gen.tex changed again, and an edit after the write",
+            );
+        }
     }
 }
 
@@ -6029,13 +6114,18 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
     // (case, what paragraphs 3-12 of chapter 3, on the comparison's page
     // and the next ones, have, whether the comparison holds: with a matrix
     // in effect at a destination after it the words are compared; without
-    // one too, since review of #1908)
+    // one too, since review of #1908. So the comparison holds only when the
+    // two runs' memory happened to hold the same words there: on macOS it
+    // never does; in the Linux debug build it did (nightly 41318867031,
+    // "workspace, debug profile"). Not asserted in either case: what the
+    // memory happened to hold is no property of the engine's, and every
+    // compile equals scratch runs either way)
     let cases = [
-        ("no matrix", "", false),
+        ("no matrix", "", None),
         (
             "a matrix after the comparison",
             "\\pdfsave\\pdfsetmatrix{1 0 0 1}\\pdfdest name{m\\the\\inputlineno} xyz\\pdfrestore ",
-            false,
+            None,
         ),
     ];
     for (n, (case, matrix, held)) in cases.iter().enumerate() {
@@ -6103,10 +6193,8 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
                 &what,
             );
             assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
-            if *held {
+            if *held == Some(true) {
                 assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
-            } else {
-                assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}");
             }
         }
     }
@@ -6660,5 +6748,55 @@ fn a_link_broken_across_lines_does_not_stop_convergence() {
             .all(|r| field(r, "converged_at") == "null"),
         "{:#?}",
         runs[1]
+    );
+}
+
+/// Lane REVIEW-INCR: `\pdfobj file` (pdftex.web's "Write out a PDF object":
+/// `tex_b_openin`, then every byte to the end) reads the whole file, as
+/// `\pdfmdfivesum file` does. A document that embeds its own source while
+/// its stream is open at the page checkpoints before a late edit: a restart
+/// at one of them kept the object written with the old source. Every
+/// compile equals scratch runs.
+#[test]
+fn a_file_embedded_by_pdfobj_is_read_whole() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pdfobj-file");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\begin{document}\n\
+             \\immediate\\pdfobj stream file {\\jobname.tex}\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, if i == 34 { word } else { "lorem" }));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("alphb"))],
+        "a letter late in the embedded file",
+    );
+    assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("alpha"))],
+        "the revert",
     );
 }
