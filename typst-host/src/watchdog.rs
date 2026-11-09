@@ -104,7 +104,15 @@ pub fn uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
+/// The private temporary directory once created. Only success is cached:
+/// a failure (ENOSPC, EMFILE, the base briefly missing) is retried by the
+/// next call instead of failing every later compile until a restart. The
+/// watchdog's stop reads it without a lock.
 static TEMP: OnceLock<PathBuf> = OnceLock::new();
+
+/// Serialises attempts to create [`TEMP`], so two callers never create two
+/// directories.
+static TEMP_CREATE: Mutex<()> = Mutex::new(());
 
 /// Where the host's private temporary directory lives: `$XDG_RUNTIME_DIR`
 /// on Linux when set (per user, mode 0700), else the OS temporary directory
@@ -123,32 +131,63 @@ fn temp_base() -> PathBuf {
 /// The host process's own private temporary directory (`DONE.pdf` when the
 /// client names no output directory), created mode 0700 on first use
 /// (never an existing one: a name that exists gets a suffix), removed when
-/// the watchdog stops the host.
-pub fn temp_dir() -> PathBuf {
-    TEMP.get_or_init(|| {
-        use std::os::unix::fs::DirBuilderExt;
-        let base = temp_base();
-        let pid = std::process::id();
-        for n in 0..1000 {
-            let name = if n == 0 {
-                format!("flashtex-typst-host-{pid}")
-            } else {
-                format!("flashtex-typst-host-{pid}-{n}")
-            };
-            let p = base.join(name);
-            match std::fs::DirBuilder::new().mode(0o700).create(&p) {
-                Ok(()) => return p,
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(_) => break,
+/// the watchdog stops the host. When it cannot be created this is an
+/// error, never a fallback to a predictable shared name, and the next call
+/// tries again.
+pub fn temp_dir() -> Result<PathBuf, String> {
+    cached_private_dir(&TEMP, &temp_base())
+}
+
+/// [`temp_dir`] with its cell and base given (tests).
+fn cached_private_dir(cell: &OnceLock<PathBuf>, base: &std::path::Path) -> Result<PathBuf, String> {
+    if let Some(d) = cell.get() {
+        return Ok(d.clone());
+    }
+    let _one = TEMP_CREATE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(d) = cell.get() {
+        return Ok(d.clone());
+    }
+    let d = create_private_dir(base)?;
+    Ok(cell.get_or_init(|| d).clone())
+}
+
+/// Create a new directory of this host's in `base`, mode 0700.
+fn create_private_dir(base: &std::path::Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let pid = std::process::id();
+    for n in 0..1000 {
+        let name = if n == 0 {
+            format!("flashtex-typst-host-{pid}")
+        } else {
+            format!("flashtex-typst-host-{pid}-{n}")
+        };
+        let p = base.join(name);
+        match std::fs::DirBuilder::new().mode(0o700).create(&p) {
+            Ok(()) => return Ok(p),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(format!(
+                    "cannot create a private temporary directory in {}: {e}",
+                    base.display()
+                ))
             }
         }
-        base.join(format!("flashtex-typst-host-{pid}"))
-    })
-    .clone()
+    }
+    Err(format!(
+        "cannot create a private temporary directory in {}: 1,000 names taken",
+        base.display()
+    ))
 }
 
 /// Remove the temporary directories of this user's hosts that no longer run
 /// (a host killed from outside cannot remove its own). Called at start.
+///
+/// "No longer runs" is judged by the pid on this machine, in this pid
+/// namespace: the sweeps assume a local directory that no host on another
+/// machine or in another container shares (a temporary directory, the
+/// package cache, a local project). On NFS, a synced folder (Dropbox, iCloud)
+/// or a directory shared between containers, another host's live files can
+/// look dead and be removed.
 pub fn sweep_stale_temp_dirs() -> usize {
     use std::os::unix::fs::MetadataExt;
     let mut removed = 0;
@@ -192,6 +231,11 @@ fn stop(why: &str) -> ! {
             libc::fcntl(2, libc::F_SETFL, fl | libc::O_NONBLOCK);
         }
         libc::write(2, line.as_ptr().cast(), line.len());
+        // fd 2 may be shared with the parent (the same open file
+        // description): put its flags back.
+        if fl >= 0 {
+            libc::fcntl(2, libc::F_SETFL, fl);
+        }
     }
     let held = children();
     for &pid in held.iter() {
@@ -331,5 +375,30 @@ mod tests {
     fn resident_memory_is_measured() {
         let r = super::resident_bytes().expect("macOS and Linux report it");
         assert!(r > 1 << 20, "{r}");
+    }
+
+    /// A temporary directory that cannot be created is an error for that
+    /// call only: once the base exists, the next call creates it (0700) and
+    /// every later call gets the same one.
+    #[test]
+    fn a_failed_temporary_directory_is_retried() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ftth-tempretry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let base = dir.join("base");
+        let cell = std::sync::OnceLock::new();
+        let e = super::cached_private_dir(&cell, &base).expect_err("no base yet");
+        assert!(
+            e.contains("cannot create a private temporary directory"),
+            "{e}"
+        );
+        assert!(cell.get().is_none());
+        std::fs::create_dir_all(&base).unwrap();
+        let d = super::cached_private_dir(&cell, &base).expect("retried");
+        assert!(d.starts_with(&base) && d.is_dir());
+        let mode = std::fs::metadata(&d).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        assert_eq!(super::cached_private_dir(&cell, &base).unwrap(), d);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

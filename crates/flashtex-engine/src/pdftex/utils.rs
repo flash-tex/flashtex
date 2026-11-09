@@ -153,6 +153,8 @@ use crate::os::broken_down;
 /// `makepdftime`: `D:YYYYmmddHHMMSS` plus `Z` or `+HH'MM'`.
 pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
     let lt = broken_down(t, utc);
+    // `strftime(time_str, 30, "D:%Y%m%d%H%M%S", &lt)`, `%Y` as macOS's
+    // (at least four digits, DESIGN §13; glibc's has no padding)
     let mut s = format!(
         "D:{:04}{:02}{:02}{:02}{:02}{:02}",
         lt.tm_year + 1900,
@@ -160,8 +162,22 @@ pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
         lt.tm_mday,
         lt.tm_hour,
         lt.tm_min,
-        lt.tm_sec.min(59)
+        lt.tm_sec
     );
+    let size = s.len();
+    // "correction for seconds": a `6` at index 14 becomes `59` and the end,
+    // and the time zone goes at index `size`. With a four-digit year that
+    // is a leap second, which a `time_t` never gives; from the year 10000
+    // index 14 is a digit of the minutes, so a minute ending in 6 cuts the
+    // string there and the zone lands after its end, unseen (pdfTeX 1.40.29:
+    // `SOURCE_DATE_EPOCH=253402301160` is `D:10000010100059`).
+    if s.as_bytes().get(14) == Some(&b'6') {
+        s.truncate(14);
+        s.push_str("59");
+        if size != s.len() {
+            return s.into_bytes();
+        }
+    }
     let gmt = broken_down(t, true);
     let mut off = 60 * (lt.tm_hour - gmt.tm_hour) + lt.tm_min - gmt.tm_min;
     if lt.tm_year != gmt.tm_year {
@@ -330,12 +346,16 @@ impl Globals {
         if unset {
             if let Some(v) = std::env::var_os("SOURCE_DATE_EPOCH") {
                 if parse_source_date_epoch(v.as_encoded_bytes()).is_none() {
-                    eprintln!(
+                    use std::io::Write as _;
+                    let mut bytes = format!(
                         "{}: fatal: invalid epoch-seconds-timezone value for environment \
-                         variable $SOURCE_DATE_EPOCH: {}.",
-                        crate::system::invocation_name(),
-                        v.to_string_lossy()
-                    );
+                         variable $SOURCE_DATE_EPOCH: ",
+                        crate::system::invocation_name()
+                    )
+                    .into_bytes();
+                    bytes.extend_from_slice(v.as_encoded_bytes());
+                    bytes.extend_from_slice(b".\n");
+                    let _ = std::io::stderr().write_all(&bytes);
                     crate::system::exit_process(self, 1);
                 }
             }
@@ -379,11 +399,13 @@ impl Globals {
             .as_deref()
             .filter(|v| !forced && !v.is_empty() && *v != "0")
         {
-            eprintln!(
-                "warning: invalid value (expected 0 or 1) for environment variable \
-                 $FORCE_SOURCE_DATE: {}.",
-                v.to_string_lossy()
-            );
+            use std::io::Write as _;
+            let mut bytes = b"warning: invalid value (expected 0 or 1) for environment variable \
+                 $FORCE_SOURCE_DATE: "
+                .to_vec();
+            bytes.extend_from_slice(v.as_encoded_bytes());
+            bytes.extend_from_slice(b".\n");
+            let _ = std::io::stderr().write_all(&bytes);
         }
         let tm = if forced {
             let st = with_state(|s| start_time(&mut s.utils));
@@ -469,10 +491,23 @@ impl Globals {
             return;
         }
         let size = crate::generated::consts::pool_size;
-        if self.pool_ptr + 2 * len + 1 >= size {
+        // texmfmp.c's `poolptr + 2 * length + 1 >= poolsize`, in C's
+        // `int`: from a length of about 2^30 the sum wraps, can pass the
+        // test, and `fread` is then given `&strpool[poolptr + length]`
+        // (that sum wrapping too from 2^31 - poolptr), far outside the pool.
+        // That address is not mapped, so pdfTeX 1.40.29 on TeX Live's macOS
+        // arm64 build (DESIGN §13) reads nothing there (EFAULT) and the
+        // result is empty, with the file looked up and opened as usual --
+        // unless it seeks to an offset short of the end, where stdio's own
+        // buffer is copied there and pdfTeX crashes (SIGSEGV or SIGBUS).
+        // Linux's pdfTeX is empty in both. A crash is not replicated (§13):
+        // empty here too.
+        let need = i64::from(self.pool_ptr) + 2 * i64::from(len) + 1;
+        if need as i32 >= size {
             self.pool_ptr = size;
             return;
         }
+        let outside = need >= i64::from(size);
         let Some(path) = self.find_input_file(s) else {
             return;
         };
@@ -480,7 +515,7 @@ impl Globals {
             return;
         };
         crate::system::note_whole_read(&path);
-        if offset < 0 {
+        if offset < 0 || outside {
             return;
         }
         let from = (offset as usize).min(data.len());
