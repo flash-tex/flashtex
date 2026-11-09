@@ -828,14 +828,15 @@ class G:
             opts = []
             if self.chance(0.4):
                 opts.append(self.pick(["width", "height", "depth"]) + " " + self.pick(SMALLDIMS + ["3cm", "0.3\\hsize"]))
-            if self.chance(0.3):
-                opts.append("page %d" % self.n(0, 4))
-            if self.chance(0.3):
-                opts.append(self.pick(["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"]))
+            # pdftex.web's scan_image order: rule spec, attr, page, colorspace, box
             if self.chance(0.2):
                 opts.append("attr{/Interpolate true}")
+            if self.chance(0.3):
+                opts.append("page %d" % self.n(0, 4))
             if self.chance(0.1):
                 opts.append("colorspace %d" % self.n(0, 3))
+            if self.chance(0.3):
+                opts.append(self.pick(["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"]))
             return "\\pdfximage %s{%s}" % (" ".join(opts), self.pick(imgs))
         vf = self.pick(["ptmr7t", "pplr7t", "phvr7t", "ptmb7t", "ptmri7t"])
         return self.pick([
@@ -851,7 +852,7 @@ class G:
             "{\\font\\fzv=%s \\setbox7\\hbox{\\fzv %s}\\showbox7 \\box7}" % (vf, self.words(1, 4)),
             "{\\font\\fzv=%s \\fzv \\char%d \\char%d}" % (vf, self.n(0, 255), self.n(0, 255)),
             "{\\font\\fzv=%s \\pdffontexpand\\fzv %d %d %d %s\\pdfadjustspacing=%d \\fzv \\hsize=%s %s\\par}"
-            % (vf, self.n(0, 40), self.n(0, 40), self.n(1, 10), self.pick(["autoexpand", ""]), self.n(0, 2),
+            % (vf, self.n(0, 40), self.n(0, 40), self.n(1, 10), "autoexpand", self.n(0, 2),
                self.pick(["100pt", "150pt", "3in"]), self.words(10, 30)),
             "{\\pdffontexpand\\tenrm %d %d %d autoexpand \\pdfadjustspacing=2 \\efcode\\tenrm`e=%d "
             "\\hsize=%s \\tenrm %s\\par}" % (self.n(1, 50), self.n(1, 50), self.n(1, 10), self.n(0, 1000),
