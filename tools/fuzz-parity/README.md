@@ -21,7 +21,7 @@ python3 tools/fuzz-parity/fuzz.py --candidate target/release/flashtex-initex \
   is a pure function of the seed (one `random.Random(seed)`), so a seed
   number plus the generator's revision is the whole test case.
 - `--workers` is capped at 2.
-- Exit 0 when every seed was equal. Each non-equal seed is written to
+- Exit 0 when every seed was equal (or `both-hang`/`both-signal`). Each non-equal seed is written to
   `OUT/<class>/<seed>/` (`doc.tex`, both normalised logs, `result.json`
   with the first difference); `OUT/summary.json` groups seeds by
   signature.
@@ -53,7 +53,12 @@ In order; the first difference names the class:
 | `pdf` | PDF bytes differ and `tools/parity` `compare_pt2` fails (qpdf-normalised content streams, fonts, resources, media boxes) |
 | `dvi` | DVI bytes differ |
 | `terminal` | stdout differs (after the same normalisation) |
-| `timeout`, `both-hang` | one or both engines exceeded `--timeout` |
+| `timeout` | one engine exceeded `--timeout` |
+
+Two outcomes are not differences and do not fail a run: `both-hang`
+(both engines exceeded `--timeout`) and `both-signal` (both died by the
+same signal, in practice SIGXFSZ when a runaway loop fills the 64 MiB
+output cap).
 
 The signature is the class plus the first differing pair of lines with
 digits masked, so one cause found at many seeds counts once.

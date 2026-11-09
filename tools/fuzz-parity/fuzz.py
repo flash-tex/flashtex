@@ -45,6 +45,8 @@ if SHELL_OFF not in lockstep.ENGINE_SHELL_FLAGS:
     lockstep.ENGINE_SHELL_FLAGS.append(SHELL_OFF)
 
 FSIZE_LIMIT = 64 * 1024 * 1024
+# Classes that are not a difference between the engines.
+NEUTRAL = ("equal", "both-hang", "both-signal")
 DIGITS = re.compile(r"\d+")
 
 
@@ -111,6 +113,11 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
         return {"cls": "timeout", "sig": "timeout:" + side}
     (co, po), (cc, pc) = ro, rc
     res = {"rc": [co.returncode, cc.returncode], "logs": (co.log, cc.log)}
+    if cc.returncode < 0 and co.returncode == cc.returncode:
+        # Both killed by the same signal: in practice SIGXFSZ, both logs
+        # hit the 64 MiB cap in a runaway loop. Not a difference.
+        res.update(cls="both-signal", sig="both-signal:%d" % cc.returncode)
+        return res
     if cc.returncode < 0 or cc.returncode == 101:
         res.update(cls="candidate-crash", sig="crash:%d" % cc.returncode)
         return res
@@ -164,7 +171,7 @@ def fuzz_seed(seed, args):
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
     logs = res.pop("logs", None)
-    if res["cls"] != "equal":
+    if res["cls"] not in NEUTRAL:
         d = os.path.join(args.out, res["cls"], str(seed))
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "doc.tex"), "w", encoding="latin-1") as fh:
@@ -207,19 +214,19 @@ def main(argv=None):
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(args.workers, 2))) as ex:
         for r in ex.map(lambda s: fuzz_seed(s, args), parse_seeds(args.seeds)):
             results.append(r)
-            if r["cls"] != "equal":
+            if r["cls"] not in NEUTRAL:
                 print("seed %d: %s %s" % (r["seed"], r["cls"], r.get("sig", "")), flush=True)
     counts = {}
     sigs = {}
     for r in results:
         counts[r["cls"]] = counts.get(r["cls"], 0) + 1
-        if r["cls"] != "equal":
+        if r["cls"] not in NEUTRAL:
             sigs.setdefault(r.get("sig", r["cls"]), []).append(r["seed"])
     with open(os.path.join(args.out, "summary.json"), "w") as fh:
         json.dump({"counts": counts, "signatures": sigs}, fh, indent=1)
     print("%d seeds: %s; %d distinct signatures" % (
         len(results), ", ".join("%s %d" % kv for kv in sorted(counts.items())), len(sigs)))
-    return 0 if counts.get("equal", 0) == len(results) else 1
+    return 0 if sum(counts.get(c, 0) for c in NEUTRAL) == len(results) else 1
 
 
 if __name__ == "__main__":
