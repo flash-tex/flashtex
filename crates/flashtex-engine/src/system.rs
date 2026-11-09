@@ -2576,6 +2576,14 @@ fn popen_command(cmd: &str, win32: bool) -> std::borrow::Cow<'_, str> {
 /// texmfmp.c's `runpopen`: the command behind `\input|cmd` (reading) or
 /// `\openout` to `|cmd` (writing), subject to the same restrictions as
 /// `\write18`.
+/// `run_popen(cmd, true)`, for the XeTeX engine's `u_open_in`
+/// (`\input|cmd` there is texmfmp.c's `open_in_or_pipe` too): the same
+/// restricted-shell check against `shell_escape_commands`, the same
+/// quoting, and the same external effect recorded.
+pub fn run_popen_in(cmd: &str) -> Option<std::process::Child> {
+    run_popen(cmd, true)
+}
+
 fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
     // Every message below shows the command as rewritten, as texmfmp.c's do.
     let cmd = &*popen_command(cmd, crate::os::POPEN_QUOTES_TO_DOUBLE);
