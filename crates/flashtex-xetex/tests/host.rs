@@ -1465,6 +1465,95 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A page restart that keeps the old run as a branch (`restore_branch`, the
+/// convergence path) puts back the line break iterator saved with the
+/// checkpoint (`Host::brk_iter`, XeTeX_ext.c's `brkIter` and
+/// `brkLocaleStrNum`). The first compile opens it for `ja-JP` (string N)
+/// late in the document; the edit makes the locale `zh-CN`, which the run
+/// from the page before it makes as string N again. With the old run's
+/// final iterator left in place, `linebreak_start` saw the same string
+/// number and kept `ja-JP`'s rules, so the paragraph broke as Japanese
+/// (small kana and `ー` start a line) where a run of its own breaks it as
+/// Chinese (AUDIT-CKPT).
+#[test]
+fn a_page_restart_puts_back_the_line_break_iterator() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-brk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=8 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        if i == 5 {
+            // (narrow: the two locales break this text at different places)
+            body.push_str(
+                "\\XeTeXlinebreaklocale \"ja-JP\"\n{\\hsize=5.3em\\parindent=0pt \
+                 ちょっとキャッシュをチェックしてください。ぎゅっとショッピング、\
+                 ジャーナル、ちょっと。ぁぃぅぇぉっゃゅょーー\\par}\n\
+                 \\XeTeXlinebreaklocale \"\"\n",
+            );
+        }
+        for _ in 0..8 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
+         \\setmainfont{{HaranoAjiMincho-Regular.otf}}\n\\begin{{document}}\n{body}\
+         See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let texts = [doc.clone(), doc.replace("\"ja-JP\"", "\"zh-CN\"")];
+    let run = |envs: &[(&str, &str)]| -> Vec<(String, Vec<u8>)> {
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, &doc);
+        let mut e = vec![("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, text) in texts.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (_, done) = events(&mut c, id);
+            assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            outs.push((
+                starts,
+                std::fs::read(Path::new(&out).join("main.pdf")).unwrap_or_default(),
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run(&[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    // (the two locales do break the paragraph differently)
+    assert!(own[0].1 != own[1].1, "ja-JP and zh-CN give the same PDF");
+    let got = run(&[]);
+    assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An export (Export PDF…, Print…) between two keystrokes is a run of its
 /// own, in a process of its own (spec §6.3): it leaves the resident engine's
 /// S₀, so the keystroke after it goes on from S₀ or a page, not from the
