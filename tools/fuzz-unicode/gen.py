@@ -490,13 +490,15 @@ class Gen:
         TECkit mapping (tex-text) and \\Ucharcat."""
         # XeTeX's built-in names and one ICU does not know; ICU converter
         # names (latin1, cp1252, ...) are #2382, a known gap, left out so
-        # it does not mask other findings.
+        # it does not mask other findings. The \relax ends the name: ICU
+        # matches names on their letters and digits only, so `"utf8"{`
+        # (a comment, then a line starting with a brace) is ICU's UTF-8.
         enc = self.pick(["bytes", "utf8", "auto", "nosuch"])
         f = self.pick(self.fonts)
-        L = ['\\XeTeXinputencoding "%s"%%' % enc,
+        L = ['\\XeTeXinputencoding "%s"\\relax%%' % enc,
              "\\setbox13=\\hbox{\\%s %s}\\showbox13 \\shipout\\box13%%" % (
                  f, self.text(self.r.randint(2, 6), fonts=False)),
-             '\\XeTeXinputencoding "utf8"%']
+             '\\XeTeXinputencoding "utf8"\\relax%']
         if self.chance(0.5):
             L.append("\\setbox13=\\hbox{\\%s \\Ucharcat \"%X 11 \\Ucharcat `x 12 \\Uchar \"%X }\\showbox13%%" % (
                 f, self.r.choice([0x41, 0x5D0, 0x627, 0xE9, 0x1F600]), self.r.choice([0x301, 0x200D, 0xFB01])))
