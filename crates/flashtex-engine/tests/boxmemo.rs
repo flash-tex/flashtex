@@ -503,14 +503,16 @@ fn calls_in_math_groups_compare_their_save_stack() {
     // `\\label` in `equation`). The full verifier walks the save stack
     // group by group as `show_save_groups` does; it took the display's
     // nest level for inline math under a math group, read the `$$` as an
-    // `\\eqno` with a saved word, and misread every entry below
+    // `\\eqno` with a saved word, and misread every entry below. (Each
+    // display is an error here, for want of math fonts; the `\\par` after
+    // it sets the error count back to 0, which the key holds, #2294)
     let s = check(
         "math-group",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
          \\hsize=100pt \\tracingonline=0\n\
          \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
          \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
-         \\one\\one\\one\\end\n",
+         \\one\\par\\one\\par\\one\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
