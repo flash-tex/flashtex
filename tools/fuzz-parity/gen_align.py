@@ -175,7 +175,8 @@ class A:
             cut = self.n(0, max(0, ncols - 1))
             ps = parts[:]
             s = sep.join(ps[:cut]) + ("&" if cut else "") + "&" + sep.join(ps[cut:])
-        return s + self.cr()
+        # (a preamble does not expand macros: \mycr only after \span)
+        return s + self.pick(["\\cr ", "\\cr ", "\\crcr ", "\\endrow ", "\\span\\mycr "])
 
     def cr(self):
         return self.pick(["\\cr", "\\cr", "\\cr", "\\crcr", "\\endrow ", "\\mycr ",
@@ -210,7 +211,10 @@ class A:
         out = ""
         for i, c in enumerate(cells):
             if i:
-                out += self.pick(["&", "&", "&", "\\amp ", "\\span ", "&\\omit ", "\\span\\omit "])
+                sep = self.pick(["&", "&", "&", "\\amp ", "\\span ", "&\\omit ", "\\span\\omit "])
+                if "omit" in sep and c.startswith("\\omit") and (self.quiet or self.chance(0.8)):
+                    c = c[len("\\omit"):]  # a second \omit: "Misplaced \omit"
+                out += sep
             out += c
         return out + self.cr()
 
@@ -458,6 +462,9 @@ REPLAY_PRELUDE = [
     r"\catcode`\^=7 \catcode`\$=3 \catcode`\~=13 \catcode`\^^I=10 \scrollmode",
     r"\hsize=100pt \vsize=100pt \baselineskip=12pt \tolerance=10000 "
     r"\parfillskip=0pt plus 1fil \maxdepth=2pt \maxdeadcycles=25 \showboxdepth=10000 \showboxbreadth=10000",
+    # no over/underfull box warnings: a recording that prints is abandoned
+    r"\dimendef\maxdimen=10 \maxdimen=16383.99999pt %",
+    r"\hbadness=10000 \vbadness=10000 \hfuzz=\maxdimen \vfuzz=\maxdimen %",
     r"\let\amp=& \let\endrow=\cr \def\mycr{\cr}\def\pre{\hfil}\count7=0 \count8=0 \count9=0 %",
     r"\def\show{\message{[\the\count7/\the\count8/\the\count9/\the\dimen1/\the\dimen2/\the\dimen3]}}%",
 ]
@@ -508,8 +515,13 @@ def generate_replay(seed, fonts=False):
     if style == "draw":
         # where a draw call's nodes go: a box, an alignment cell, an output
         # routine, the main vertical list
+        # (a draw call appends only in restricted horizontal mode, §10.3:
+        # \hbox and \halign cells; the others test the refusal)
         call = a.pick([
             "\\setbox4\\vbox{%s}" % call, "\\setbox4\\hbox{%s}" % call,
+            "\\setbox4\\hbox{%s}" % call, "\\setbox4\\hbox{\\kern1pt %s\\unskip}" % call,
+            "\\setbox4\\vbox{\\halign{#\\cr %s\\cr}}" % call,
+            "\\setbox4\\vbox{\\halign{#&\\hfil#\\cr %s&%s\\cr\\noalign{\\kern1pt}%s\\cr}}" % (call, call, call),
             "\\setbox4\\vbox{\\halign{#\\cr %s\\cr %s\\cr}}" % (call, call),
             "\\setbox4\\vtop{\\kern1pt %s\\unskip\\setbox5\\lastbox}" % call,
             "\\setbox4\\hbox{\\valign{#\\cr %s\\cr}}" % call,
@@ -523,7 +535,9 @@ def generate_replay(seed, fonts=False):
         elif x < 0.55:
             steps.append("\\input u \\show%")
         elif x < 0.65:
-            steps.append("\\everycr{%s}%%" % a.pick(["", "\\noalign{\\kern1pt}", "\\global\\advance\\count8 1 "]))
+            # (only \noalign: anything else in \everycr starts a new row)
+            steps.append("\\everycr{%s}%%" % a.pick(["", "\\noalign{\\kern1pt}",
+                                                     "\\noalign{\\global\\advance\\count8 1 }"]))
         elif x < 0.72:
             steps.append("\\def\\pre{%s}%%" % a.pick(["\\hfil", "\\kern2pt", "\\tabskip=3pt"]))
         elif x < 0.8:
