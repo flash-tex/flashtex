@@ -69,8 +69,9 @@ struct Entry {
     bytes: Vec<u8>,
     length1: i32,
     length2: i32,
-    /// Where the subset tag is in `bytes`, if it was written there.
-    tag_at: Option<usize>,
+    /// Where the subset tag is in `bytes`, if it was written there, and
+    /// how many of its bytes landed (a fresh run writes no more).
+    tag_at: Option<(usize, usize)>,
     calls: Vec<Call>,
     fontname: Option<Vec<u8>>,
     subset_tag: Option<[u8; 6]>,
@@ -255,8 +256,8 @@ fn replay(e: Entry, job: Job, host: &mut dyn Host) -> Embedded {
             } => {
                 let now = host.subset_tag(glyphs, fontname);
                 if now != *tag {
-                    if let Some(at) = e.tag_at {
-                        subset::write_tag(&mut bytes, at, &now);
+                    if let Some((at, n)) = e.tag_at {
+                        subset::write_tag(&mut bytes, at, &now[..n]);
                     }
                 }
                 subset_tag = Some(now);
@@ -432,6 +433,59 @@ mod tests {
         let other = run(true, &["B"], 7, &[b"AAAAAA"]);
         assert_eq!(hits(), h, "a miss");
         assert_eq!(other, run(false, &["B"], 7, &[b"AAAAAA"]));
+    }
+
+    /// A late-`/FontName` font after a subset font whose stale tag offset
+    /// is 3 bytes before this font's `/Encoding`: pdfTeX's `strncpy` lands
+    /// 3 bytes there and the font's own `/Encoding` line overwrites the
+    /// rest. A hit given another tag must write those 3, not all 6.
+    #[test]
+    fn a_hit_writes_only_the_tag_bytes_a_run_wrote() {
+        let late = String::from_utf8(subset::tests::CLEAR.to_vec())
+            .unwrap()
+            .replace("/FontName /Test def\n", "")
+            .replace(
+                "readonly def\ncurrentfile",
+                "readonly def\n/FontName /Test def\ncurrentfile",
+            );
+        let font = subset::tests::pfa_with(late.as_bytes());
+        let go = |cached: bool, offset: i32, tag: &[u8; 6]| {
+            let mut fm = FmEntry::new();
+            fm.typ = F_SUBSETTED | F_TYPE1;
+            let mut fd = FdEntry {
+                gl_tree: Some([b"A".to_vec()].into_iter().collect()),
+                ..Default::default()
+            };
+            let mut persist = Persist {
+                fontname_offset: offset,
+                ..Persist::default()
+            };
+            let mut host = TagHost::new(&[tag]);
+            let job = Job {
+                fm: &fm,
+                fd: &mut fd,
+                persist: &mut persist,
+                fb_base: 0,
+            };
+            let out = if cached {
+                embed(&font, job, &mut host)
+            } else {
+                subset::embed(&font, job, &mut host)
+            }
+            .unwrap();
+            (out.bytes, out.tag_at)
+        };
+        let (probe, _) = go(false, 1, b"AAAAAA");
+        let enc = probe.windows(9).position(|w| w == b"/Encoding").unwrap();
+        let at = enc - 3;
+        let (direct, tag_at) = go(false, at as i32, b"QWERTY");
+        assert_eq!(tag_at, Some((at, 3)));
+        assert_eq!(&direct[at..at + 9], b"QWE/Encod");
+        go(true, at as i32, b"AAAAAA");
+        let h = hits();
+        let (again, _) = go(true, at as i32, b"QWERTY");
+        assert_eq!(hits(), h + 1, "a hit");
+        assert_eq!(again, direct);
     }
 
     fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {

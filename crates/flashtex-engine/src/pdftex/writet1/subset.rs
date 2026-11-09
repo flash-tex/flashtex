@@ -60,8 +60,9 @@ pub(super) struct Embedded {
     pub length1: i32,
     pub length2: i32,
     /// Where the subset tag was written into `bytes` (the font name's
-    /// prefix), for a copy given another tag (`super::cache`).
-    pub tag_at: Option<usize>,
+    /// prefix) and how many of its bytes landed there, for a copy given
+    /// another tag (`super::cache`).
+    pub tag_at: Option<(usize, usize)>,
 }
 
 /// `writet1`'s body: embed `font` as `job` asks.
@@ -185,8 +186,9 @@ struct Type1<'a, 'h> {
     synthetic: bool,
     /// The font's `/Encoding` is StandardEncoding (`ENC_STANDARD`).
     standard_encoding: bool,
-    /// Where the subset tag was written, from the start of `out.bytes`.
-    tag_at: Option<usize>,
+    /// Where the subset tag was written, from the start of `out.bytes`,
+    /// and how many of its bytes landed.
+    tag_at: Option<(usize, usize)>,
     length1: i32,
     length2: i32,
     cs: Charstrings,
@@ -624,13 +626,25 @@ impl Type1<'_, '_> {
             // offset is writet1.c's static: a font without `/FontName`
             // before `/Encoding` has the previous subset font's, and pdfTeX
             // writes the tag there, over whatever this font has at that
-            // place (0 is pdfTeX's assertion failure; nothing is written).
-            // Bytes past what is written so far are overwritten later.
+            // place. Bytes past what is written so far are overwritten
+            // later, so only those that landed are kept for a cache replay.
             let offset = self.persist.fontname_offset;
-            let at = usize::try_from(offset - self.out.base).ok();
-            if let (true, Some(at)) = (offset != 0, at) {
-                if write_tag(&mut self.out.bytes, at, &tag) {
-                    self.tag_at = Some(at);
+            if offset == 0 {
+                // `assert(t1_fontname_offset != 0)`: pdfTeX aborts. We
+                // don't copy the crash (ruling 2026-11-01); the tag is not
+                // written and the run goes on with a warning.
+                let name = self.fm.ff_name.as_deref().unwrap_or(&self.fm.tfm_name);
+                let mut msg = b"Type 1 font file `".to_vec();
+                msg.extend_from_slice(name);
+                msg.extend_from_slice(
+                    b"': no /FontName before /Encoding, subset tag not written \
+                      (pdfTeX aborts here)",
+                );
+                self.host.warn(&msg);
+            } else if let Ok(at) = usize::try_from(offset - self.out.base) {
+                let n = write_tag(&mut self.out.bytes, at, &tag);
+                if n > 0 {
+                    self.tag_at = Some((at, n));
                 }
             }
         }
@@ -948,15 +962,14 @@ impl Type1<'_, '_> {
     }
 }
 
-/// Write `tag` at `at` in `bytes`, as far as `bytes` goes; whether any of
-/// it landed.
-pub(super) fn write_tag(bytes: &mut [u8], at: usize, tag: &[u8; 6]) -> bool {
+/// Write `tag` at `at` in `bytes`, as far as `bytes` goes; how many of its
+/// bytes landed.
+pub(super) fn write_tag(bytes: &mut [u8], at: usize, tag: &[u8]) -> usize {
     let n = bytes.len().saturating_sub(at).min(tag.len());
-    if n == 0 {
-        return false;
+    if n > 0 {
+        bytes[at..at + n].copy_from_slice(&tag[..n]);
     }
-    bytes[at..at + n].copy_from_slice(&tag[..n]);
-    true
+    n
 }
 
 /// `isspace` in the C locale.
@@ -1008,7 +1021,7 @@ pub(super) mod tests {
         cipher::encrypt(Cipher::CHARSTRING, [0; 4].iter().chain(code).copied())
     }
 
-    const CLEAR: &[u8] = b"%!PS-AdobeFont-1.0: Test 001\n\
+    pub(in super::super) const CLEAR: &[u8] = b"%!PS-AdobeFont-1.0: Test 001\n\
         /FontType 1 def\n\
         /FontName /Test def\n\
         /UniqueID 5000000 def\n\
@@ -1061,7 +1074,7 @@ pub(super) mod tests {
     }
 
     /// [`pfa`] with another clear part.
-    fn pfa_with(clear: &[u8]) -> Vec<u8> {
+    pub(in super::super) fn pfa_with(clear: &[u8]) -> Vec<u8> {
         let sealed = cipher::encrypt(Cipher::EEXEC, [0; 4].into_iter().chain(private()));
         let mut font = clear.to_vec();
         for chunk in sealed.chunks(32) {
@@ -1231,14 +1244,17 @@ pub(super) mod tests {
         let bytes = &second.out.bytes;
         // the tag is where the first font's was, the name keeps `ABCDEF+`
         assert_eq!(&bytes[at..at + 6], b"XYZXYZ");
-        assert_eq!(second.out.tag_at, Some(at));
+        assert_eq!(second.out.tag_at, Some((at, 6)));
         assert!(has(bytes, "/FontName /ABCDEF+Test def\n"));
         // and the static now points at the second font's late name
         let late_at = find(bytes, b"ABCDEF+Test").unwrap();
         assert_eq!(persist.fontname_offset, late_at as i32);
-        // with no font before it, nothing is written (pdfTeX's assertion)
+        // with no font before it, nothing is written
+        // (pdfTeX's assertion), and the run says so (ruling 2026-11-01)
         let alone = embed_with(&pfa_with(late.as_bytes()), F_SUBSETTED, 0, &["A"]).unwrap();
         assert_eq!(alone.out.tag_at, None);
+        assert_eq!(alone.host.warnings.len(), 1);
+        assert!(alone.host.warnings[0].contains("no /FontName before /Encoding"));
         assert_ne!(&alone.out.bytes[at..at + 6], b"XYZXYZ");
     }
 
