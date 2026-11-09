@@ -479,6 +479,34 @@ fn protrusion_around_a_replayed_call_is_the_normal_paths() {
 }
 
 #[test]
+fn a_font_identifier_made_by_a_call_never_replays() {
+    // (#2184) `\\font\\b=cmr10` of a font already loaded makes `\\b` the
+    // font's identifier (`eqtb[font_id_base+f]`, `font_id_text(f)`, what
+    // `\\the\\font` and box displays name) outside `eq_define`; `\\font\\c`
+    // between the calls makes it `\\c`. A replay would leave `\\c` where the
+    // call makes it `\\b` again, so the recording is abandoned and nothing
+    // replays
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "font-id",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\a=cmr10 \\a\n\
+         \\def\\measure#1{\\begingroup\\font\\b=cmr10 \\setbox0\\hbox{\\b #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\show{\\setbox1\\hbox{x}\\showbox1 \\message{[\\expandafter\\string\\the\\font|\\the\\dimen1]}}\n\
+         \\measure{x}\\show\\measure{x}\\show\\font\\c=cmr10 \\show\\measure{x}\\show\
+         \\font\\c=cmr10 \\measure{x}\\show\\measure{x}\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    // (`0` pins this fix's refusal. A later change that replays `\\font`
+    // and sets the identifier itself, #2184's other option, changes it)
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
 fn calls_in_math_groups_compare_their_save_stack() {
     // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
     // display, and of a display's `\\eqno` (cleveref's prefix under
