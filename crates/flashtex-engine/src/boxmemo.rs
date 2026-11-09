@@ -3524,6 +3524,13 @@ impl Globals {
             false
         } else if c == k::leader_ship {
             chr != k::a_leaders - 1
+        } else if c == k::un_vbox && chr > k::copy_code {
+            // e-TeX's \pagediscards and \splitdiscards (`unpackage`'s
+            // "Handle saved items"): they move `disc_ptr`'s items, which no
+            // key holds, into the list and leave none. A call recorded
+            // while there were none would be replayed once a \vsplit or a
+            // page break has kept some (the end check sees no change then)
+            false
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
         } else if c == k::make_box {

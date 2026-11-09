@@ -496,3 +496,26 @@ fn calls_in_math_groups_compare_their_save_stack() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+#[test]
+fn saved_discards_are_never_replayed() {
+    // e-TeX's \splitdiscards and \pagediscards move the items the last
+    // \vsplit or page break discarded (`disc_ptr`, kept while
+    // \savingvdiscards>0) into the current list, and leave none. A call
+    // recorded while there were none read nothing its key holds, so it was
+    // replayed once there were some: its box kept the recorded height, and
+    // the items stayed kept where the normal path takes them.
+    let s = check(
+        "discards",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode \\savingvdiscards=1\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{#1}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\def\\split{\\setbox1\\vbox{\\hrule height 1pt\\penalty0\\vskip 5pt\\hrule height 1pt}\\setbox2\\vsplit1 to 1pt }\n\
+         \\measure{\\splitdiscards}\\show\\measure{\\splitdiscards}\\show\\measure{\\splitdiscards}\\show\n\
+         \\split\\measure{\\splitdiscards}\\show\\measure{\\splitdiscards}\\show\n\
+         \\vsize=100pt \\maxdepth=0pt \\output={\\measure{\\pagediscards}\\show\\setbox0\\box255 \\deadcycles=0 }\n\
+         \\hrule height 1pt\\penalty-10000 \\vskip 7pt\\hrule height 1pt\\penalty-10000\n\
+         \\vskip 7pt\\hrule height 1pt\\penalty-10000 \\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
