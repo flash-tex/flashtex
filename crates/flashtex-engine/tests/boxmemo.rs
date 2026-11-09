@@ -437,12 +437,31 @@ fn a_box_made_in_a_group_is_not_the_calls_after_it() {
 
 /// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
 fn cmr10() -> Option<Vec<u8>> {
+    tex_file("cmr10.tfm")
+}
+
+/// TeX Live's file `name`, or `None` (the test then passes with a note).
+fn tex_file(name: &str) -> Option<Vec<u8>> {
     let bin = flashtex_engine::resolver::find_texlive_bin()?;
-    let out = Command::new(bin.join("kpsewhich"))
-        .arg("cmr10.tfm")
-        .output()
-        .ok()?;
+    let out = Command::new(bin.join("kpsewhich")).arg(name).output().ok()?;
     std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+/// Plain TeX's four text-size fonts, as files for [`check_with`], and the
+/// lines that load them into families 0-3 at every size.
+fn math_fonts() -> Option<(Vec<(&'static str, Vec<u8>)>, &'static str)> {
+    let mut files = vec![];
+    for n in ["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"] {
+        files.push((n, tex_file(n)?));
+    }
+    Some((
+        files,
+        "\\font\\r=cmr10 \\font\\i=cmmi10 \\font\\s=cmsy10 \\font\\e=cmex10\n\
+         \\textfont0=\\r \\scriptfont0=\\r \\scriptscriptfont0=\\r\n\
+         \\textfont1=\\i \\scriptfont1=\\i \\scriptscriptfont1=\\i\n\
+         \\textfont2=\\s \\scriptfont2=\\s \\scriptscriptfont2=\\s\n\
+         \\textfont3=\\e \\scriptfont3=\\e \\scriptscriptfont3=\\e\n",
+    ))
 }
 
 #[test]
@@ -495,4 +514,34 @@ fn calls_in_math_groups_compare_their_save_stack() {
          \\one\\one\\one\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn an_active_math_character_is_part_of_the_key() {
+    // (lane AUDIT-MATH) a character of math code "8000 in a formula stands
+    // for its active character, whose meaning tex.web §1152 reads directly
+    // (`eq_type(cur_cs)`), not through `get_next`: from `set_math_char` (`!`)
+    // and from `scan_math` (`?`, a superscript). Each is redefined between
+    // two calls; the call after it must measure the formula with the new
+    // meaning
+    let Some((files, fonts)) = math_fonts() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "active-math",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
+            fonts,
+            "\\mathcode`\\!=\"8000 \\mathcode`\\?=\"8000\n\
+             {\\catcode`\\!=13 \\gdef!{x}\\catcode`\\?=13 \\gdef?{y}}\n\
+             \\def\\measure{\\begingroup\\setbox0\\hbox{$a!b^?$}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\one{\\measure\\message{[\\the\\dimen1]}}\n\
+             \\one\\one\\one {\\catcode`\\!=13 \\gdef!{xxxx}}\\one\\one\n\
+             {\\catcode`\\?=13 \\gdef?{yyyy}}\\one\\one\\end\n",
+        ]
+        .concat(),
+        &files,
+    );
+    assert!(stat(&s, "hits") >= 4, "{s}");
 }

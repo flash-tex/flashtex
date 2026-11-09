@@ -2903,7 +2903,9 @@ impl Globals {
         }
     }
 
-    /// `\csname` and `\ifcsname` looked `p` up.
+    /// `\csname` and `\ifcsname` looked `p` up, or a math character of
+    /// math code `"8000` stands for active character `p` (tex.web §1152,
+    /// which reads its meaning without `get_next`).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_read(&mut self, p: i32) {
