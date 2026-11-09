@@ -223,6 +223,74 @@ fn draw_calls_replay_with_their_hole() {
     assert!(stat(&s, "hits") >= 3, "{s}");
 }
 
+/// A draw call `\\one` offers in an `\\hbox` after `#1` sets its hole,
+/// `\\box9`, to one of two boxes of the same dimensions, `\\a` and `\\b`.
+const HOLE_PRELUDE: &str = "\\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+    \\def\\one#1{#1\\setbox1\\hbox{\\relax\\measure}\\showbox1 }\n";
+
+#[test]
+fn holes_changed_or_read_past_their_key_never_replay() {
+    // (lane AUDIT-MATH) a replay splices in the register's box of the
+    // moment as it is, so the call may neither change the hole (`\\raise`:
+    // `box_end` shifts it) nor read its contents: `\\copy` of a box the call
+    // made around it, or of the hole itself taken back with `\\lastbox`
+    let s = check(
+        "hole-changed",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n",
+            HOLE_PRELUDE,
+            "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+             \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n\
+             \\def\\measure{\\raise2pt\\box9\\relax}\\one\\a\\one\\a\\one\\a\n\
+             \\def\\measure{\\begingroup\\setbox2\\hbox{\\box9}\\copy2\\box2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
+             \\def\\measure{\\begingroup\\box9\\setbox3\\lastbox\\copy3\\box3\\endgroup}\\one\\a\\one\\a\\one\\b\n\
+             \\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    // a box the call made around the hole may still be measured and
+    // unboxed: that moves the hole node, unread
+    let s = check(
+        "hole-unboxed",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n",
+            HOLE_PRELUDE,
+            "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+             \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n\
+             \\def\\measure{\\begingroup\\setbox2\\hbox{\\box9}\\dimen0=\\wd2 \\unhbox2\\kern\\dimen0\\endgroup}\n\
+             \\one\\a\\one\\a\\one\\a\\one\\b\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn holes_in_a_formula_never_replay() {
+    // (lane AUDIT-MATH) a box moved into a formula is a noad's `sub_box`:
+    // `make_scripts` widens and shifts it (tex.web §756), and `clean_box`
+    // frees the kern of a box that is a character and a kern (§721)
+    let Some((files, fonts)) = math_fonts() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "hole-math",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
+            fonts,
+            HOLE_PRELUDE,
+            "\\def\\a{\\setbox9\\hbox{\\r f\\kern1pt}}\\def\\b{\\setbox9\\hbox{\\kern1pt\\r f}}\n\
+             \\def\\measure{$x^{\\box9}$}\\one\\a\\one\\a\\one\\a\n\
+             \\def\\measure{$\\mathop{\\box9}\\limits$}\\one\\b\\one\\b\\one\\a\\end\n",
+        ]
+        .concat(),
+        &files,
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
 #[test]
 fn calls_ending_in_expansions_replay() {
     // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
@@ -437,12 +505,34 @@ fn a_box_made_in_a_group_is_not_the_calls_after_it() {
 
 /// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
 fn cmr10() -> Option<Vec<u8>> {
+    tex_file("cmr10.tfm")
+}
+
+/// TeX Live's file `name`, or `None` (the test then passes with a note).
+fn tex_file(name: &str) -> Option<Vec<u8>> {
     let bin = flashtex_engine::resolver::find_texlive_bin()?;
     let out = Command::new(bin.join("kpsewhich"))
-        .arg("cmr10.tfm")
+        .arg(name)
         .output()
         .ok()?;
     std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+/// Plain TeX's four text-size fonts, as files for [`check_with`], and the
+/// lines that load them into families 0-3 at every size.
+fn math_fonts() -> Option<(Vec<(&'static str, Vec<u8>)>, &'static str)> {
+    let mut files = vec![];
+    for n in ["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"] {
+        files.push((n, tex_file(n)?));
+    }
+    Some((
+        files,
+        "\\font\\r=cmr10 \\font\\i=cmmi10 \\font\\s=cmsy10 \\font\\e=cmex10\n\
+         \\textfont0=\\r \\scriptfont0=\\r \\scriptscriptfont0=\\r\n\
+         \\textfont1=\\i \\scriptfont1=\\i \\scriptscriptfont1=\\i\n\
+         \\textfont2=\\s \\scriptfont2=\\s \\scriptscriptfont2=\\s\n\
+         \\textfont3=\\e \\scriptfont3=\\e \\scriptscriptfont3=\\e\n",
+    ))
 }
 
 #[test]

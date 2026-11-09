@@ -320,6 +320,13 @@ box_code: begin scan_register_num; fetch_box(cur_box);
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
 @z
 
+@x pdftex.web l.30171 - ... and one whose list it moves (\.{\\unhbox}, \.{\\unvbox})
+else  begin link(tail):=list_ptr(p); change_box(null);
+@y
+else  begin link(tail):=list_ptr(p); change_box(null);
+  if bm_rec_on then flashtex_bm_box_use(cur_val,4);
+@z
+
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
 if intr_rec_on then flashtex_intr_command;
 case cur_cmd of
