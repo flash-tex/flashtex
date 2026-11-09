@@ -15,7 +15,7 @@
 //! alignment state, strings, errors, mode, list tail, scanner and output as
 //! it found them, and made no glue, shape, box or sparse-register
 //! definition, no write to a `\tracing...` parameter, no `\read`,
-//! `\openin`, `\closein` or `\XeTeXinputencoding`, and no `\aftergroup` at its own level
+//! `\openin`, `\closein`, `\XeTeXinputencoding` or `\font`, and no `\aftergroup` at its own level
 //! (`not_replayable.*` otherwise).
 //!
 //! An eligible call with a kept recording from the previous guarded call is
@@ -315,6 +315,9 @@ impl Globals {
             // call opens comes back at its end and its effects are recorded
             17 if p > level_one && p <= call_level => Err("AfterGroup"),
             17 => return,
+            // `new_font` writes `eqtb[font_id_base+f]` and `font_id_text(f)`
+            // outside `eq_define` (#2259)
+            18 => Err("Font"),
             _ => match k & 7 {
                 1 if [glue_ref, shape_ref, box_ref].contains(&t) => Err("GlueShapeOrBox"),
                 1 => Ok(Op::Def(p, t, self.intr_val(t, e), global)),
