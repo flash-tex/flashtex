@@ -123,6 +123,12 @@ independent chunks, each balanced on its own:
   image parameters; virtual fonts (Times, Palatino, Helvetica); font
   expansion with and without `autoexpand`; `\letterspacefont`,
   `\pdfcopyfont`, protrusion; the ToUnicode and omit switches;
+- e-TeX's less used parts (`etex`): TeX--XeT (`\TeXXeTstate`,
+  `\beginL`/`\endR`, unmatched ends, displays, leaders and breaks in
+  reversed text), `\fontcharwd` & co., `\parshapelength`/`indent`/`dimen`,
+  `\currentgrouptype`/`\currentiftype`/`\currentifbranch`, the glue
+  queries, `\lastlinefit`, discards, `\tracingnesting` across
+  `\scantokens`, `\protected\edef`;
 - the PDF writer (`pdfwriter`): object streams and files, reserved and
   reused object numbers, annotations, links of every kind, destinations,
   outlines, threads, the info/trailer/version keys, compression levels,

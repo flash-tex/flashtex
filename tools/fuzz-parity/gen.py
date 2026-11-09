@@ -871,8 +871,90 @@ class G:
             "\\pdffontattr\\tenrm{/Fz 1}\\message{\\the\\pdffontobjnum\\tenrm,\\pdffontname\\tenrm,\\pdffontsize\\tenrm}",
         ])
 
+    def etex(self):
+        """e-TeX's less used parts: TeX--XeT, the font and paragraph-shape
+        queries, group and conditional state, \\showtokens, \\interactionmode."""
+        w = lambda: self.words(1, 6)
+        return self.pick([
+            "{\\TeXXeTstate=1 \\beginR %s\\endR\\ %s\\par}" % (w(), w()),
+            "{\\TeXXeTstate=1 \\noindent\\beginL %s \\beginR %s\\endR %s\\endL\\par}" % (w(), w(), w()),
+            "{\\TeXXeTstate=1 \\setbox3\\hbox{\\beginR %s\\endR}\\showbox3 \\box3}" % w(),
+            "{\\TeXXeTstate=1 \\beginR %s $x+y$ %s\\par}" % (w(), w()),
+            "{\\TeXXeTstate=1 \\endL\\endR\\beginR %s\\par}" % w(),
+            "{\\TeXXeTstate=1 \\hsize=%s \\beginR %s\\endR\\par}" % (self.pick(["50pt", "100pt", "2in"]), self.words(10, 30)),
+            "{\\TeXXeTstate=1 \\beginR %s\\hfil\\break %s\\endR\\par}" % (w(), w()),
+            "{\\TeXXeTstate=1 \\beginR %s\\leaders\\hrule\\hskip 20pt %s\\endR\\showlists\\par}" % (w(), w()),
+            "{\\TeXXeTstate=1 \\predisplaydirection=%d \\beginR %s$$x\\eqno(1)$$\\endR\\par}" % (self.n(-1, 1), w()),
+            "{\\TeXXeTstate=0 \\beginR x\\endR\\par}",
+            "{\\TeXXeTstate=1 \\setbox3\\hbox{\\beginR a\\kern%s b\\vrule width1pt\\endR}\\unhbox3 \\showlists}" % self.pick(SMALLDIMS),
+            "\\message{\\the\\fontcharwd\\tenrm`a,\\the\\fontcharht\\tenbf`g,\\the\\fontchardp\\tenit`y,"
+            "\\the\\fontcharic\\tenit`f,\\the\\fontcharwd\\tenrm 300}",
+            "{\\parshape 3 1pt 2pt 3pt 4pt 5pt 6pt \\message{\\the\\parshapelength%d,\\the\\parshapeindent%d,"
+            "\\the\\parshapedimen%d}}" % (self.n(-1, 5), self.n(-1, 5), self.n(-1, 7)),
+            "\\begingroup{\\message{\\the\\currentgrouplevel:\\the\\currentgrouptype}}"
+            "\\ifnum1=1 \\unless\\ifx ab\\message{\\the\\currentiflevel:\\the\\currentiftype:\\the\\currentifbranch}\\fi\\fi\\endgroup",
+            "\\hbox{\\message{\\the\\currentgrouptype}}$\\message{\\the\\currentgrouptype}$\\vtop{\\message{\\the\\currentgrouptype}}",
+            "\\showtokens{a#b\\par}\\showtokens\\expandafter{\\the\\everypar}",
+            "\\message{\\detokenize{a#b \\x}|\\unexpanded{\\y #}}",
+            "{\\interactionmode=%d \\message{\\the\\interactionmode}}" % self.n(-1, 4),
+            "\\message{\\number\\numexpr %s\\relax,\\the\\dimexpr %s\\relax,\\the\\glueexpr %s\\relax}" % (
+                self.pick(["7*11/3", "(-7)/2", "2147483647/2*2", "-(3)", "1+(2*(3+4))", "65536*32768",
+                           "-2147483647-1", "7/0"]),
+                self.pick(["1pt*3/4", "(1pt+2pt)/3", "16383pt*2", "1sp*-1", "-(1pt)", "\\maxdimen/2*2"]),
+                self.pick(["1pt plus 2fil*3", "(1pt minus 1pt)/2", "\\baselineskip*2", "0pt plus 1fill-1pt"])),
+            "\\message{\\the\\gluestretch\\glueexpr 1pt plus 3fil\\relax,\\the\\gluestretchorder\\skip0,"
+            "\\the\\glueshrinkorder\\glueexpr 0pt minus 2filll\\relax,\\the\\mutoglue\\muexpr 3mu plus 1fill\\relax,"
+            "\\the\\gluetomu\\skip0}",
+            "{\\lastlinefit=%d \\parfillskip=0pt plus 1fil \\hsize=%s %s\\par}" % (self.pick([0, 500, 1000, 2000, -1]),
+                                                                           self.pick(["100pt", "200pt"]), self.words(10, 40)),
+            "{\\savingvdiscards=1 \\setbox3\\vbox{a\\par\\penalty0 \\vskip 3pt b\\par}\\setbox4\\vsplit3 to 5pt "
+            "\\showbox3 \\message{\\the\\lastpenalty}\\vbox{\\splitdiscards}\\vbox{\\pagediscards}}",
+            "\\showgroups\\showifs{\\iftrue\\showifs\\showgroups\\fi}",
+            "{\\tracingnesting=2 \\scantokens{\\begingroup}\\endgroup}",
+            "{\\tracingnesting=2 \\scantokens{\\iftrue}\\fi}",
+            "\\protected\\edef\\fzp{\\noexpand\\relax}\\show\\fzp \\message{\\meaning\\fzp}",
+            "\\middle", "\\showtokens{\\showtokens}", "\\interactionmode=\\interactionmode",
+            "\\message{\\ifcsname fz\\endcsname Y\\else N\\fi\\ifdefined\\fzundef Y\\else N\\fi\\iffontchar\\tenrm 200 Y\\else N\\fi}",
+        ])
+
+    def files(self):
+        """web2c's file handling (tex.ch, texmfmp.c): pipes and \\write18 with
+        shell escape off, odd file names, directories and devices, \\endinput,
+        nested \\input, \\openin/\\read edge cases."""
+        mk = "\\immediate\\openout3=%s \\immediate\\write3{%s}\\immediate\\closeout3 "
+        return self.pick([
+            "\\immediate\\write18{echo fz}", "\\write18{echo fz}", "\\message{\\the\\pdfshellescape}",
+            "\\input|\"echo fz\" ", "\\openin3=|\"echo fz\" \\ifeof3 E\\else O\\read3 to\\x\\show\\x\\closein3\\fi",
+            "\\immediate\\openout3=|\"cat\" \\immediate\\write3{x}\\immediate\\closeout3 ",
+            mk % ("fzi.tex", "\\message{inner}\\endinput after") + "\\input fzi ",
+            mk % ("fzj.tex", "a\\endinput b") + "\\input fzj c\\par",
+            mk % ("\"fz j.tex\"", "\\message{spaced}") + "\\input \"fz j\" \\input{\"fz j.tex\"}",
+            mk % ("fzk", "\\message{noext}") + "\\input fzk \\input fzk.tex ",
+            mk % ("fzl.tex", "\\input fzl ") + "\\input fzl ",
+            mk % ("fzm.tex", "\\message{\\the\\inputlineno}^^J\\message{\\the\\inputlineno}") + "\\input fzm ",
+            mk % ("fzn.tex", "{") + "\\input fzn }",
+            mk % ("fzo.tex", "\\iftrue") + "\\input fzo \\fi",
+            mk % ("fzp.tex", "\\def\\fzq#1{#1}\\fzq") + "\\input fzp {x}",
+            mk % ("fzr.tex", "line one^^Jline two^^J^^J") + "\\openin4=fzr \\read4 to\\a\\read4 to\\b\\read4 to\\c\\read4 to\\d"
+            "\\show\\a\\show\\b\\show\\c\\show\\d\\ifeof4 E\\fi\\closein4",
+            mk % ("fzs.tex", "{a") + "\\openin4=fzs \\read4 to\\a\\show\\a\\closein4",
+            mk % ("fzt.tex", "\\par\\par") + "\\openin4=fzt \\readline4 to\\a\\show\\a\\closein4",
+            "\\openin3=. \\ifeof3 E\\else O\\closein3\\fi", "\\openin3=/dev/null \\ifeof3 E\\else O\\read3 to\\x\\show\\x\\fi",
+            "\\input /dev/null \\message{after-null}", "\\input \"\" ", "\\input .tex ", "\\input{} ",
+            "\\openin3=doc \\read3 to\\x \\show\\x \\closein3", "\\openin3=doc.tex \\readline3 to\\x \\show\\x \\closein3",
+            "\\read-1 to\\x \\show\\x", "\\read16 to\\x", "\\read3 to\\x \\show\\x", "\\closein3 \\closein15 \\closein-1",
+            "\\openin16=doc ", "\\immediate\\openout16=fzx \\immediate\\openout-1=fzy ",
+            "\\immediate\\write3{unopened}\\immediate\\write15{unopened}",
+            "\\immediate\\openout3=fz^^e9.tex \\immediate\\write3{e}\\immediate\\closeout3 \\input fz^^e9 ",
+            "\\immediate\\openout3=fz\\jobname.tex \\immediate\\closeout3 \\message{\\pdffilesize{fzdoc.tex}}",
+            "\\everyeof{\\message{eof}}" + mk % ("fzu.tex", "u") + "\\input fzu \\everyeof{}",
+            "\\message{\\jobname}\\edef\\fzj{\\jobname}\\show\\fzj",
+            "\\special{%s}" % self.pick(["", "x", "header=a.ps", "pdf:dest (d) [@thispage /Fit]"]),
+            "\\endinput \\message{same-line}",
+        ])
+
     def chunk(self):
-        k = self.n(0, 126)
+        k = self.n(0, 140)
         if k < 22:
             return self.paragraph()
         if k < 28:
@@ -909,6 +991,10 @@ class G:
             return self.pdfwriter()
         if k < 126:
             return self.media()
+        if k < 133:
+            return self.etex()
+        if k < 140:
+            return self.files()
         return "\\setbox%d\\hbox{%s}" % (self.n(10, 12), self.inline(2))
 
     def hyph_setting(self):
