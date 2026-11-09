@@ -46,6 +46,9 @@ pub struct ExtRecord {
     pub last_byte_reads: u64,
     /// `pdftex::matrix_uses()` at this checkpoint.
     pub matrix_uses: u64,
+    /// `pdftex::garbage()` and `pdftex::unset_reads()` at this checkpoint.
+    pub garbage: bool,
+    pub unset_reads: u64,
     /// How many first reads of control sequences the read-set holds
     /// (`crate::readset`, DESIGN.md §5.5).
     pub rs: usize,
@@ -70,6 +73,8 @@ crate::codec_struct!(ExtRecord {
     reads,
     last_byte_reads,
     matrix_uses,
+    garbage,
+    unset_reads,
     rs,
     notes,
     opens,
@@ -881,6 +886,24 @@ impl Globals {
         self.arena.branch_old_chunks(&p.branch, old, cs, stop)
     }
 
+    /// Mark the pending branch's records, and its end, as holding memory
+    /// that may differ from a scratch run's (`pdftex::garbage`): a
+    /// comparison let the variable-size memory differ, and the jump or the
+    /// reattach makes the old run's states this run's from there on, so
+    /// every restore of one of them, in this compile or a later one,
+    /// carries the mark (lane REVIEW).
+    pub fn taint_pending(&mut self) {
+        if self.layer_ref().is_none() {
+            return;
+        }
+        if let Some(p) = self.layer().pending.as_mut() {
+            for (_, r) in p.records.iter_mut() {
+                r.garbage = true;
+            }
+            p.live.garbage = true;
+        }
+    }
+
     /// The host record of checkpoint `old` of the pending branch.
     pub fn pending_record(&self, old: CheckpointId) -> Option<ExtRecord> {
         let p = self.layer_ref()?.pending.as_ref()?;
@@ -1009,6 +1032,8 @@ impl Globals {
             reads: system::reads_len(),
             last_byte_reads: crate::pdftex::last_byte_reads(),
             matrix_uses: crate::pdftex::matrix_uses(),
+            garbage: crate::pdftex::garbage(),
+            unset_reads: crate::pdftex::unset_reads(),
             rs: self.layer().rs.len(),
             notes: crate::diag::len(),
             opens: system::opens_len(),
@@ -1037,6 +1062,8 @@ impl Globals {
         system::forget_open_instances(&open_outputs(rec));
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
+        crate::pdftex::set_garbage(rec.garbage);
+        crate::pdftex::set_unset_reads(rec.unset_reads);
         // (a read before the restore target asks for nothing: a run from
         // there takes no `Point::FileRead` for it)
         self.layer().file_read_due = false;

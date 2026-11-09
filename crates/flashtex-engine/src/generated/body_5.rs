@@ -875,7 +875,7 @@ impl Globals {
         }
         match __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().b0() {
             pdf_dest_xyz => {
-                if self.matrixused() {
+                if self.flashtex_dest_matrixused() {
                     self.set_rect_dimens(p, parent_box, x, y, __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(), __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(), __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(), __av_eqtb[crate::ix::U(((29929i32) - 1) as usize)].int());
                 } else {
                     {
@@ -885,14 +885,14 @@ impl Globals {
                 }
             }
             pdf_dest_fith | pdf_dest_fitbh => {
-                if self.matrixused() {
+                if self.flashtex_dest_matrixused() {
                     self.set_rect_dimens(p, parent_box, x, y, __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(), __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(), __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(), __av_eqtb[crate::ix::U(((29929i32) - 1) as usize)].int());
                 } else {
                     { let __v798 = self.cur_v; __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_int(__v798); }
                 }
             }
             pdf_dest_fitv | pdf_dest_fitbv => {
-                if self.matrixused() {
+                if self.flashtex_dest_matrixused() {
                     self.set_rect_dimens(p, parent_box, x, y, __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(), __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(), __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(), __av_eqtb[crate::ix::U(((29929i32) - 1) as usize)].int());
                 } else {
                     { let __v799 = self.cur_h; __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_int(__v799); }

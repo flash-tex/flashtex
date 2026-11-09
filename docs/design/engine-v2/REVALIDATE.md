@@ -183,11 +183,8 @@ measured `/XYZ 160.667` against scratch's `-3920.03`, in two cases:
 - the old run had the matrix after P2;
 - no run had a matrix until the edit put one in.
 
-The second case means no check of the old run can tell whether the words are dead. So they are
-compared again at a revalidation, as before revision 2. The keystroke after the first at a new
-place on *Infinite Descent* ×2 goes on from P0 again (§6.1). Getting that back soundly needs the
-live run to notice such a read after a comparison that left the words out, and to redo the
-compile. That is not done here.
+The second case means no check of the old run can tell whether the words are dead. #1925
+compared them again; §7 replaces that with a detector, and revision 2's rule holds again.
 
 ### 6.4 Tests
 
@@ -198,8 +195,84 @@ compile. That is not done here.
   the two reads depends on the segment checkpoints' timing, so those cases are allowed either
   way. Every compile equals scratch runs.
 - `a_revalidation_leaves_out_what_a_destination_never_set`: a destination kept in a box register
-  past the comparison, made where a scratch box of the size's parity was dropped. Since the review
-  of #1908 no keystroke revalidates, with or without a matrix in effect after the comparison.
+  past the comparison, made where a scratch box of the size's parity was dropped; every keystroke
+  revalidates, and with a matrix in effect after the comparison none does.
 - `a_kept_destination_shipped_under_a_matrix_after_a_revalidation` (review of #1908): the same
   destination shipped after the edit under a half turn, the matrix there before the edit or put in
   by it; every compile equals scratch runs.
+
+## 7. Memory a scratch run would hold otherwise (lane REVIEW, 2026-11-01)
+
+### 7.1 The problem (measured)
+
+pdfTeX reads words it never set in one place only (`crate::iso`): `do_dest` under a
+`\pdfsetmatrix` passes a destination's width, height and depth to `set_rect_dimens`, and
+`\pdfdest` sets those for `fitr` only. The other kinds hold whatever the variable-size memory held
+before `get_node`. A run whose memory differs from a scratch run's there ships other coordinates.
+Three ways reach such a read, each measured against scratch runs:
+
+- **READ-REVALIDATE** (§6.3): `/XYZ 160.667` against `-3920.03`.
+- **The convergence test.** It leaves the words out when the old run's future has no matrix in
+  effect. The jump keeps the old run's checkpoints, and a later compile that puts a matrix around a
+  kept destination's shipout restarts at one of them. Measured: the PDF was 71,965 bytes against
+  scratch's 71,964.
+- **A BOX-MEMO replay.** It neither makes nor frees its call's scratch nodes, so a destination
+  made next lies where the normal path's scratch box was. In INITEX with `FLASHTEX_BOXMEMO=on`
+  the PDF was 2,767 bytes against 2,779 with it off. In the host the PDF was 60,486 bytes against
+  60,481.
+
+### 7.2 The detector
+
+- **The mark.** `pdftex::garbage` says that this run's memory may hold, in such words, what a
+  scratch run would not. It is part of every checkpoint's host record (`ExtRecord::garbage`),
+  so restores, the convergence jump, persisted S₀ and S₁ carry it. Three things set it:
+  - a comparison that held while the variable-size memory differed (`same_words`'s
+    `LO_DIFFERED`): free cells, dead cells, nodes at other addresses, a destination's unset
+    words, `rover`. It marks the old run's records and end (`Globals::taint_pending`,
+    `carry_garbage`), which the compile goes on from;
+  - a BOX-MEMO replay (`bm_replay`);
+  - nothing else. One-word memory (`hi_mem_min` on) is left out, because a one-word node is
+    written whole when it is made.
+- **The read.** changes/checkpoint.ch makes `do_dest`'s three `matrixused` calls
+  `flashtex_dest_matrixused`. When a matrix is in effect, that call counts the read
+  (`pdftex::unset_reads`, also in the record) and, with the mark set, flags it.
+- **The redo.** A pass that flagged a read is run again from the format
+  (`Session::garbage_redo`, `cold_reason` "a destination's unset words were read ..."), with
+  BOX-MEMO off for the rest of the session so that later compiles do not redo themselves again.
+  A run from the format clears the mark.
+- **What the comparisons keep without running it.** The pages of the old run a comparison keeps
+  are not run again, so they cannot flag a read:
+  - the convergence test, which keeps the old run's pages to its end, fails when the memory
+    differed and the old run read such words after the convergence point;
+  - READ-REVALIDATE, which keeps them from P1 to P2, fails when the old run read such words after
+    P1, there or later: the run from P2 would likely read them too and redo the compile, while the
+    run from P0 has a scratch run's memory.
+
+### 7.3 Free cells (suspected, not reproduced)
+
+A comparison that drops free cells differing between the runs, and a destination allocated there
+later, is the same read. A probe of 8 documents (four scratch boxes toggled before a page break,
+two places of destinations under a matrix after it) converged every time and equalled scratch.
+Every free cell those comparisons dropped lay in one-word memory, which no unset word comes from.
+Variable-size differences, should any arise, set the mark like any other.
+
+### 7.4 Tests
+
+All of these equal scratch runs:
+
+- `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`: in (a) of §6.3 the
+  revalidation fails and the run goes on from P0. (b) is redone from the format. The keystrokes
+  between them, with no matrix, revalidate.
+- `a_destination_kept_past_a_convergence_shipped_later_under_a_matrix`: converges, and the next
+  compile, which puts the matrix in, is redone.
+- `a_destination_shipped_under_a_matrix_after_a_box_memo_replay`: redone, then BOX-MEMO stays off.
+- `a_revalidation_leaves_out_what_a_destination_never_set` holds again (§6.4).
+- `a_link_broken_across_lines_does_not_stop_convergence`,
+  `beamer_navigation_actions_converge` and `beamer_fragile_frames_restart_near_and_converge`
+  still converge.
+
+Each of the three failed without the redo (verified with the redo switched off; (a) then still
+revalidated).
+
+**Outside a host session** (`FLASHTEX_BOXMEMO=on` on the command line, a developer mode) nothing
+redoes the run. Such a read after a replay still differs from a run with BOX-MEMO off.

@@ -130,6 +130,30 @@ big_switch: if ckpt_request<>0 then flashtex_checkpoint_hook;
 get_x_token;@/
 @z
 
+@x pdftex.web l.36719 - a destination's unset words read under a matrix are noted (lane REVIEW)
+    pdf_dest_xyz:
+        if matrixused then
+@y
+    pdf_dest_xyz:
+        if flashtex_dest_matrixused then
+@z
+
+@x pdftex.web l.36729 - a destination's unset words read under a matrix are noted (lane REVIEW)
+    pdf_dest_fitbh:
+        if matrixused then
+@y
+    pdf_dest_fitbh:
+        if flashtex_dest_matrixused then
+@z
+
+@x pdftex.web l.36737 - a destination's unset words read under a matrix are noted (lane REVIEW)
+    pdf_dest_fitbv:
+        if matrixused then
+@y
+    pdf_dest_fitbv:
+        if flashtex_dest_matrixused then
+@z
+
 @x the new sections go at the end of part 54
 @* \[55] Index.
 @y
@@ -152,6 +176,7 @@ so an engine that is not asked for checkpoints never calls the hook.
 @ @<Declare the routines of pdf\TeX's C parts@>=
 procedure flashtex_checkpoint_hook; external;
 procedure flashtex_level_opened; external;
+function flashtex_dest_matrixused:boolean; external;
 
 @* \[55] Index.
 @z

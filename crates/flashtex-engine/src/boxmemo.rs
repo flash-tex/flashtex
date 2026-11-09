@@ -690,6 +690,19 @@ pub fn mode() -> Mode {
     with_config(|c| c.mode)
 }
 
+/// BOX-MEMO off on this thread from now on, whatever the environment says
+/// (`crate::incr`: a compile that read a destination's unset words after a
+/// replay is redone from scratch without it, and the session keeps it off,
+/// so that the next compile does not redo itself again; lane REVIEW).
+pub fn disable() {
+    with_config(|_| ());
+    CONFIG.with(|c| {
+        if let Some(c) = c.borrow_mut().as_mut() {
+            c.mode = Mode::Off;
+        }
+    });
+}
+
 /// Macros BOX-MEMO records anywhere, not only in an edit's window (§6), and
 /// takes from the intrinsics wherever it is on (`owns`): hyperref's
 /// `\pdfstringdefPreHook` (§12.2). Its calls hit on every later page, a
@@ -2455,6 +2468,10 @@ impl Globals {
             return;
         }
         let m = mode();
+        // (switched off on this thread since the engine started: `disable`)
+        if m == Mode::Off {
+            return;
+        }
         ST.with(|s| s.borrow_mut().stats.offers += 1);
         // preconditions (K6)
         let globaldefs = self.bm_eq(INT_BASE + k::global_defs_code).int();
@@ -4249,6 +4266,11 @@ impl Globals {
             ))
         });
         let (ops, last_badness, rs_locs) = taken?;
+        // (the call's scratch nodes are neither made nor freed: the
+        // variable-size memory may then hold, where the normal path left
+        // them, other words; a destination's unset words show them,
+        // `pdftex::garbage`, lane REVIEW)
+        crate::pdftex::set_garbage(true);
         // the body, used up: as `get_next` pops it
         self.end_token_list();
         // the L5 read-set (DESIGN.md §5.5), as D9's `intr_report_reads`

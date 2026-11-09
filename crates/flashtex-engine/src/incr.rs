@@ -413,6 +413,12 @@ pub struct Report {
     pub s1_ms: Vec<(&'static str, f64)>,
 }
 
+/// `Report::cold_reason` of a pass redone from the format because it read a
+/// destination's unset words in memory not a scratch run's
+/// (`Session::garbage_redo`).
+pub const GARBAGE_REDO: &str =
+    "a destination's unset words were read where the memory may differ from a run from scratch";
+
 impl Report {
     pub fn json(&self) -> String {
         format!(
@@ -586,6 +592,8 @@ struct Obs {
     old_last_byte_reads_end: Option<u64>,
     /// The old run's `matrix_uses` at its end.
     old_matrix_uses_end: Option<u64>,
+    /// The old run's `unset_reads` at its end (`carry_garbage`).
+    old_unset_reads_end: Option<u64>,
     /// How many external effects (`\write18`, `\pdfelapsedtime`, ...) the
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
@@ -1326,6 +1334,9 @@ impl Obs {
             }
             (r, _) => r,
         };
+        // (the old run's pages from here to its end are kept, and its
+        // states are this run's: lane REVIEW)
+        let r = r.and_then(|n| carry_garbage(g, &o, self.old_unset_reads_end).map(|()| n));
         if r.is_ok() {
             let n = crate::iso::last_dead_cells();
             if n > 0 && dead_verify_mode() {
@@ -1542,19 +1553,23 @@ impl Obs {
         // run's whole future, which a restart at `P2` does not keep:
         // compared here)
         let last_byte_dead = false;
-        // ... nor the dimensions `\pdfdest` leaves unset (`crate::iso`),
-        // which hold whatever the memory held and differ between runs that
-        // allocated differently. #1908 left them out when the old run had no
-        // `\pdfsetmatrix` in effect between `P1` and `P2`, but from `P2` on
-        // the run is live from the old run's state, with the old run's words
-        // in every destination still in it, and a destination shipped later
-        // under a matrix reads them (`set_rect_dimens`) where a scratch run
-        // reads its own: one kept in a box register and shipped after the
-        // edit took the old run's coordinates, whether the old run had the
-        // matrix there or the edit put it in (review of #1908, lane REVIEW:
-        // `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`).
-        // What the run from `P2` will do is not known here: compared.
-        let dest_dims_dead = false;
+        // The dimensions `\pdfdest` leaves unset (`crate::iso`) hold
+        // whatever the memory held, which differs between runs that
+        // allocated differently (on Infinite Descent x2 the keystroke after
+        // the first at a new place failed here on a destination's words,
+        // and typeset 4 pages instead of 1; lane LATE-EDIT). They are read
+        // only with a `\pdfsetmatrix` in effect (`matrix_uses`). What a
+        // restart at `P2` keeps of the old run past `P1` is its pages up to
+        // `P2`: when the old run found no matrix in effect between them,
+        // those pages never read the words. From `P2` on the run is live
+        // from the old run's state, with the old run's words in every
+        // destination still in it, and one it ships under a matrix reads
+        // them where a scratch run reads its own: the old run's states are
+        // marked (`carry_garbage`), and such a read redoes the compile from
+        // scratch (`Session::compile_pass`; review of #1908, lane REVIEW).
+        let dest_dims_dead = g
+            .pending_record(pr.p2)
+            .is_some_and(|r| r.matrix_uses == o.matrix_uses);
         let mut char_or = vec![];
         let mut stages = self
             .old_lines
@@ -1583,7 +1598,12 @@ impl Obs {
         if !char_or.is_empty() {
             return Err("the new run shipped characters the old one had not".into());
         }
-        Ok(())
+        // (the old run's pages from `P1` to `P2` are kept, and its states
+        // from `P2` are this run's. When the old run reads a destination's
+        // unset words anywhere after `P1`, the run from `P2` would likely
+        // read them too, and redo the compile: the run goes on from `P0`
+        // instead, its memory a scratch run's)
+        carry_garbage(g, &o, self.old_unset_reads_end)
     }
 
     /// The old run's last page checkpoint from `old` on (excluding `old`
@@ -1677,6 +1697,45 @@ impl Obs {
     }
 }
 
+thread_local! {
+    /// `same_words`: the comparison it is making found the variable-size
+    /// memory different (`LO_DIFFERED` once it held).
+    static LO_DIFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether the last `same_words` that held found the variable-size
+    /// memory different between the runs: free cells, dead cells, nodes at
+    /// other addresses or a destination's unset words, all of which a later
+    /// destination's unset words can show (`pdftex::garbage`, lane REVIEW).
+    /// One-word memory (`hi_mem_min` on) is left out: a one-word node is
+    /// written whole when it is made.
+    static LO_DIFFERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// See `LO_DIFFERED`.
+fn last_lo_differed() -> bool {
+    LO_DIFFERED.with(|c| c.get())
+}
+
+/// The comparison `same_words` made held, and it kept memory that differs
+/// from the new run's (`last_lo_differed`), or this run's memory already
+/// did (`pdftex::garbage`): the old run's states the compile goes on from
+/// carry the mark. Err when a page of the old run's it keeps, from `o` to
+/// `upto` (its unset-word reads, `pdftex::unset_reads`), read a
+/// destination's unset words: those may differ here.
+fn carry_garbage(g: &mut Globals, o: &ExtRecord, upto: Option<u64>) -> Result<(), String> {
+    let lo = last_lo_differed();
+    if lo && upto.is_none_or(|u| u != o.unset_reads) {
+        return Err(
+            "the old run's later pages read a destination's unset words, and the memory differs"
+                .into(),
+        );
+    }
+    if lo || crate::pdftex::garbage() {
+        crate::pdftex::set_garbage(true);
+        g.taint_pending();
+    }
+    Ok(())
+}
+
 /// DESIGN.md §5.3's comparison of the live word space with the old run's at
 /// checkpoint `old` of the pending branch: equal but for dead words, free
 /// cells and PDF file positions, and -- with `relabel`, where the runs
@@ -1684,6 +1743,37 @@ impl Obs {
 /// the nodes the structural comparison walked (0 if it was not needed).
 #[allow(clippy::too_many_arguments)]
 fn same_words(
+    g: &mut Globals,
+    old: CheckpointId,
+    last_byte_dead: bool,
+    dest_dims_dead: bool,
+    relabel: bool,
+    debug: bool,
+    stop: Box<dyn FnMut() -> bool + '_>,
+    char_or: &mut Vec<(usize, u64)>,
+    dorm: Option<&mut crate::dormant::Aside>,
+) -> Result<usize, String> {
+    LO_DIFF.with(|c| c.set(false));
+    LO_DIFFERED.with(|c| c.set(false));
+    let r = same_words_inner(
+        g,
+        old,
+        last_byte_dead,
+        dest_dims_dead,
+        relabel,
+        debug,
+        stop,
+        char_or,
+        dorm,
+    );
+    if r.is_ok() {
+        LO_DIFFERED.with(|c| c.set(LO_DIFF.with(|d| d.get())));
+    }
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+fn same_words_inner(
     g: &mut Globals,
     old: CheckpointId,
     last_byte_dead: bool,
@@ -1720,6 +1810,13 @@ fn same_words(
         return Err(PREEMPTED.into());
     }
     let words = crate::statediff::words(g, &d);
+    let hi = g.hi_mem_min.max(0) as usize;
+    if words.iter().any(|w| {
+        (w.region == "mem" && w.index < hi)
+            || matches!(w.scalar, Some("rover" | "lo_mem_max" | "hi_mem_min"))
+    }) {
+        LO_DIFF.with(|c| c.set(true));
+    }
     let layout = crate::statediff::scalar_layout(g);
     let g: &Globals = g;
     // `pdf_char_used` (the characters each font has shipped, a set that
@@ -3977,7 +4074,8 @@ impl Session {
                 let f = g.record_of(s0.id).and_then(|r0| {
                     let t = Instant::now();
                     let f = f?;
-                    f.check(&s0.key, &r0, clock, &first_line, stop_at)?;
+                    let data = host::s1::s0_data_hash(path)?;
+                    f.check(&s0.key, data, &r0, clock, &first_line, stop_at)?;
                     s1_ms.push(("check", ms(t)));
                     let t = Instant::now();
                     let reads = f.journal_reads()?;
@@ -4141,6 +4239,10 @@ impl Session {
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
+        // (from S₁, whose record may carry the mark: lane REVIEW)
+        if !rep.paused && crate::pdftex::take_garbage_read() {
+            return self.garbage_redo(t0, stop_at);
+        }
         Ok(rep)
     }
 
@@ -4864,7 +4966,15 @@ impl Session {
                     rep.paused_flt = paused_flt;
                     return Ok(rep);
                 }
-                // it typeset pages before the change: they stay
+                // it typeset pages before the change: they stay, unless
+                // it read a destination's unset words in memory not a
+                // scratch run's (`garbage_redo`; lane REVIEW): then back to
+                // the complete run it was replacing
+                Some(true) if crate::pdftex::garbage_read_pending() => {
+                    crate::pdftex::take_garbage_read();
+                    self.abandon_paused(true)?;
+                    paused_how = "abandoned";
+                }
                 Some(true) => {
                     self.settle_paused()?;
                     paused_how = "settled";
@@ -5171,6 +5281,32 @@ impl Session {
     /// One pass: from scratch, or from the newest checkpoint before what
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        crate::pdftex::take_garbage_read();
+        let rep = self.compile_pass_once(t0, stop_at)?;
+        if rep.paused || !crate::pdftex::take_garbage_read() {
+            return Ok(rep);
+        }
+        self.garbage_redo(t0, stop_at)
+    }
+
+    /// The pass read a destination's unset words where its memory may hold
+    /// other words than a run from scratch (`pdftex::garbage`: a comparison
+    /// kept the old run's, or a BOX-MEMO replay left out its call's scratch
+    /// nodes), so what it read, and its PDF, may differ from scratch's
+    /// (lane REVIEW): the pass again from the format, with BOX-MEMO off for
+    /// the rest of the session, so that its compiles do not redo themselves
+    /// again.
+    fn garbage_redo(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        if self.opts.debug {
+            eprintln!("[incr] a destination's unset words were read in memory not a scratch run's: from the format");
+        }
+        crate::boxmemo::disable();
+        let r = self.cold(t0, stop_at, Some(GARBAGE_REDO.into()));
+        crate::pdftex::take_garbage_read();
+        r
+    }
+
+    fn compile_pass_once(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
         system::file_trace(|| format!("pass {}", self.pass));
         self.before_pass = self
             .g
@@ -5863,6 +5999,12 @@ impl Session {
                     Ok(n)
                 } else {
                     Err("pdf_char_used differs".to_string())
+                }
+            })
+            .inspect(|_| {
+                // (the old run's states go on with the patch: lane REVIEW)
+                if last_lo_differed() {
+                    g.taint_pending();
                 }
             })
             .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
@@ -6668,6 +6810,7 @@ impl Session {
             next_test: 0,
             old_last_byte_reads_end: None,
             old_matrix_uses_end: None,
+            old_unset_reads_end: None,
             old_effects_end: 0,
             shifts: vec![],
 
@@ -6722,6 +6865,9 @@ impl Session {
         stop_at: Option<usize>,
         reason: Option<String>,
     ) -> Result<Report, String> {
+        // (a run from the format: its memory is a scratch run's)
+        crate::pdftex::set_garbage(false);
+        crate::pdftex::set_unset_reads(0);
         // The files a stopped run was rewriting are read as the run this
         // pass stands for read them (`fixed_inputs`): put back for a run
         // from scratch, which reads them all
@@ -6875,6 +7021,7 @@ impl Session {
         // The live state is the old run's end.
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
+        obs.old_unset_reads_end = Some(crate::pdftex::unset_reads());
         obs.old_effects_end = system::external_effects_len();
         obs.changed_lookup_last = self.changed_lookup_last;
         crate::os::phase_mark('f');
@@ -7575,6 +7722,15 @@ impl Session {
         self.after_run(p.t0, status, &mut rep)?;
         if rep.paused {
             return Ok(rep);
+        }
+        if crate::pdftex::take_garbage_read() {
+            let (passes, modes) = (rep.passes, rep.pass_modes.clone());
+            rep = self.garbage_redo(p.t0, None)?;
+            if rep.paused {
+                return Ok(rep);
+            }
+            rep.passes = passes.max(1);
+            rep.pass_modes = modes;
         }
         rep.pass_s.push(rep.total_s);
         self.more_passes(p.t0, &mut rep)?;

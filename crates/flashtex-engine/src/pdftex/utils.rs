@@ -1032,6 +1032,18 @@ impl Globals {
         used
     }
 
+    /// `matrixused` where `do_dest` asks it (changes/checkpoint.ch): when a
+    /// matrix is in effect, `set_rect_dimens` reads the destination's
+    /// width, height and depth, which `\pdfdest` sets for `fitr` only
+    /// (`super::note_unset_read`).
+    pub fn flashtex_dest_matrixused(&mut self) -> bool {
+        let used = self.matrixused();
+        if used {
+            super::note_unset_read();
+        }
+        used
+    }
+
     /// `matrixtransformrect` (utils.c).
     pub fn matrixtransformrect(&mut self, llx: i32, lly: i32, urx: i32, ury: i32) {
         with_state(|st| {
