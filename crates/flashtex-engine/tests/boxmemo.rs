@@ -706,3 +706,29 @@ fn a_call_that_ends_a_paragraph_is_not_replayed_after_an_error() {
     );
     assert!(stat(&s, "hits") >= 1, "{s}");
 }
+
+#[test]
+fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
+    // (lane REVIEW, #1977) the call's body skips `\foo` in a false
+    // conditional, read in place (changes/throughput.ch [4]); then `\foo`
+    // becomes a conditional, which nests the skipped text: the call no
+    // longer draws its rule (and leaves `\iftrue` open). A replay that kept
+    // the recording would draw it. Before #1977 (boxmemo.ch reading the
+    // in-place tokens through `get_next`) the fourth call replayed: the log
+    // with BOX-MEMO on said `[1.0pt]` where off said `[0.0pt]`
+    let s = check(
+        "skipped-in-place",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\let\\foo\\relax\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\iftrue\\iffalse\\foo\\fi\\vrule width #1\\fi}\
+         \\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\measure{1pt}\\message{[\\the\\dimen1]}\\measure{1pt}\\message{[\\the\\dimen1]}\
+         \\measure{1pt}\\message{[\\the\\dimen1]}\n\
+         \\let\\foo\\iftrue\n\
+         \\measure{1pt}\\message{[\\the\\dimen1]}\\end\n",
+    );
+    assert!(stat(&s, "recordings") >= 1, "{s}");
+    // (review of #2153) calls 2 and 3 replay, and call 4 misses: without
+    // this the test passes with nothing replayed
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
+}

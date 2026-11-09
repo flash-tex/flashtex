@@ -3288,6 +3288,10 @@ impl Globals {
             self.flashtex_poll();
             save_scanner_status = self.scanner_status;
             save_warning_index = self.warning_index;
+            if self.intr_verify_on {
+                self.flashtex_intr_observe();
+            }
+            self.intr_at_switch = false;
             self.warning_index = self.cur_cs;
             ref_count = self.cur_chr;
             r = self.mem[crate::ix::U((ref_count) as usize)].hh().rh();
@@ -3996,6 +4000,7 @@ impl Globals {
         co_backup = self.cur_order;
         backup_backup = self.mem[crate::ix::U((backup_head) as usize)].hh().rh();
         'l_reswitch_b: loop {
+            self.intr_at_switch = false;
             if (self.cur_cmd < call) {
                 // §399
                 {
