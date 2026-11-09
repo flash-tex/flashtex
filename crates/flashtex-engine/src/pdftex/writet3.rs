@@ -230,6 +230,13 @@ impl Globals {
         self.pdf_new_dict(0, 0, 0);
         t.char_procs[glyph_index as usize] = self.obj_ptr;
         if width == 0 {
+            // With a NaN `\pdffontscale` (which the header scale check accepts,
+            // as in C) this width is NaN, and C's `(int) t3_char_widths[i]`
+            // (writet3.c:138 and :379) is undefined behaviour: x86_64
+            // (`cvttss2si`) gives INT_MIN, arm64 (`fcvtzs`) gives 0. FlashTeX
+            // follows TeX Live macOS arm64 per the DESIGN §13 ruling of
+            // 2026-11-01; Rust's saturating `as i32` here and in the /Widths
+            // loop gives 0 for NaN, matching arm64.
             let w = self.get_charwidth(f, glyph_index);
             t.char_widths[glyph_index as usize] =
                 (w as f32 / t.font_scale) / self.pdf_font_size[f as usize] as f32;
@@ -460,8 +467,10 @@ impl Globals {
                 } else {
                     None
                 };
+                // `t3_font_scale <= 0 || t3_font_scale > 1000` fails: a NaN
+                // (`\pdffontscale nan`) passes both tests, as in C
                 match scale {
-                    Some(s) if s > 0.0 && s <= 1000.0 => t.font_scale = s,
+                    Some(s) if !(s <= 0.0 || s > 1000.0) => t.font_scale = s,
                     _ => self.pdftex_fail("missing or invalid font scale"),
                 }
                 while !file.eof {
@@ -563,6 +572,7 @@ impl Globals {
             }
         } else {
             for i in first_char..=last_char {
+                // NaN width -> 0 (arm64 ruling, DESIGN §13); see t3_write_glyph.
                 self.pdf_printf(format!("{} ", t.char_widths[i as usize] as i32).as_bytes());
             }
         }
