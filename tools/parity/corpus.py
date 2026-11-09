@@ -38,6 +38,10 @@ Cache layout (`--cache`, default `$FLASHTEX_PARITY_CACHE` or
 
     eprints/<id>            the downloaded bytes (verified against the manifest)
     archives/<id>           the same, for an archive tier's source archive
+    blobs/<sha256>          every verified download by content, shared by all tiers
+                            and runs (`$FLASHTEX_PARITY_BLOBS` puts it elsewhere, e.g.
+                            a store that outlives the cache); an entry is used only
+                            after its bytes hash to its name
     src/<tier>/<doc-id>/    the unpacked tree the oracle and FlashTeX both read
 
 An archive tier (`ARCHIVE_TIERS`: `books`) pins a whole project's source
@@ -51,6 +55,7 @@ import datetime
 import errno
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -231,6 +236,21 @@ def http_get(url, timeout=120):
         return r.read()
 
 
+def http_range(url, start, timeout=120):
+    """The bytes of `url` from `start` on: `(offset, body)`, where `offset` is
+    `start` when the server answered 206 with that range and 0 when it sent
+    the whole body. A cut read raises IncompleteRead with `.offset` set the
+    same way, so its `.partial` can be kept for the next attempt."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Range": f"bytes={start}-"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        offset = start if getattr(r, "status", 200) == 206 else 0
+        try:
+            return offset, r.read()
+        except http.client.IncompleteRead as e:
+            e.offset = offset
+            raise
+
+
 def eprint_url(ident):
     return f"https://export.arxiv.org/e-print/{ident}"
 
@@ -314,20 +334,36 @@ class ShaMismatch(ValueError):
 def fetch_verified(url, want, polite, log=None, tries=FETCH_TRIES):
     """The bytes at `url`, verified against the pinned SHA-256 `want` before
     the caller caches them. A network error or a short body (IncompleteRead)
-    is retried with `backoff`; a body of another hash is fetched once more (a
-    proxy or a cut connection can hand back other bytes) and then raised as
-    ShaMismatch, since arXiv serving changed bytes twice is no network error.
-    Raises the last error after `tries` attempts."""
+    is retried with `backoff`; a cut read keeps the bytes it got, and the next
+    attempt asks only for the rest (`http_range`; a server that ignores the
+    range sends the whole body, which replaces them). A body of another hash
+    is fetched once more from the start (a proxy or a cut connection can hand
+    back other bytes) and then raised as ShaMismatch, since arXiv serving
+    changed bytes twice is no network error. Raises the last error after
+    `tries` attempts."""
     mismatches = 0
+    have = b""  # the bytes a cut read got, kept for a ranged retry
     for i in range(tries):
         polite()
         try:
-            data = http_get(url)
+            if have:
+                offset, body = http_range(url, len(have))
+                data = have[:offset] + body
+            else:
+                data = http_get(url)
+        except http.client.IncompleteRead as e:
+            if i == tries - 1:
+                raise
+            have = have[:getattr(e, "offset", 0)] + (e.partial or b"")
+            err, wait = e, backoff(i, e)
         except Exception as e:  # noqa: BLE001 - retried, then raised
             if i == tries - 1 or getattr(e, "code", None) in NOT_RETRIED:
                 raise
+            if getattr(e, "code", None) == 416:
+                have = b""  # the object shrank to len(have) or less: start over
             err, wait = e, backoff(i, e)
         else:
+            have = b""
             got = sha256_bytes(data)
             if got == want:
                 return data
@@ -343,6 +379,73 @@ def fetch_verified(url, want, polite, log=None, tries=FETCH_TRIES):
 
 
 THROTTLED = (429, 503)
+
+
+def blob_dir(cache):
+    """The content-addressed store: `$FLASHTEX_PARITY_BLOBS`, else `<cache>/blobs`."""
+    return os.environ.get("FLASHTEX_PARITY_BLOBS") or os.path.join(cache, "blobs")
+
+
+def read_blob(blobs, sha):
+    """The bytes stored under `sha`, or None. An entry whose bytes do not hash
+    to its name (a cut copy, a disk error) is removed and reads as missing."""
+    if not re.fullmatch(r"[0-9a-f]{64}", sha or ""):
+        return None
+    path = os.path.join(blobs, sha)
+    try:
+        data = slurp(path, "rb")
+    except OSError:
+        return None
+    if sha256_bytes(data) == sha:
+        return data
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return None
+
+
+def write_atomic(path, data):
+    """`data` at `path`, through a temporary file renamed into place, so that a
+    reader (or a run cut short) never sees part of it."""
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def link_or_write(src, path, data):
+    """`path` as a hard link to `src` (no second copy on disk) when both are on
+    one file system, else `data` written atomically."""
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        os.link(src, tmp)
+        os.replace(tmp, path)
+    except OSError:
+        write_atomic(path, data)
+
+
+def write_blob(blobs, sha, data, src=None):
+    """Keep verified bytes under their SHA-256 (a hard link to `src`, the file
+    that already holds them, where it can be); refuses bytes of another hash."""
+    if sha256_bytes(data) != sha:
+        raise ShaMismatch(f"blob {sha[:12]}: bytes hash to {sha256_bytes(data)[:12]}")
+    os.makedirs(blobs, exist_ok=True)
+    path = os.path.join(blobs, sha)
+    if not os.path.isfile(path):
+        if src:
+            link_or_write(src, path, data)
+        else:
+            write_atomic(path, data)
 
 
 class Throttled(Exception):
@@ -583,9 +686,16 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 log(f"  {tier}/{doc_id}: cached bytes are not the pinned sha256; fetched again")
                 os.remove(path)
                 data = None
+            fetched = False
+            if data is None:
+                # the content-addressed store first: bytes an earlier run (any tier) verified
+                data = read_blob(blob_dir(cache), e["sha256"])
+                if data is not None:
+                    link_or_write(os.path.join(blob_dir(cache), e["sha256"]), path, data)
             if data is None:
                 try:  # one request per `delay` s, retried with backoff, verified before it is cached
                     data = fetch_verified(e["url"], e["sha256"], polite, log=log)
+                    fetched = True
                 except ShaMismatch as ex:
                     rec["problem"] = str(ex)
                     docs.append(rec)
@@ -594,9 +704,12 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                     rec["problem"] = f"fetch failed after {FETCH_TRIES} tries: {ex}"
                     docs.append(rec)
                     continue
-                with open(path + ".tmp", "wb") as f:
-                    f.write(data)
-                os.replace(path + ".tmp", path)
+                write_atomic(path, data)
+            if fetched or not os.path.isfile(os.path.join(blob_dir(cache), e["sha256"])):
+                try:
+                    write_blob(blob_dir(cache), e["sha256"], data, src=path)
+                except OSError as ex:  # a full or read-only store costs a download next time, nothing else
+                    log(f"  {tier}/{doc_id}: not kept in the blob store: {ex}")
             # UNPACK_V in the marker: a tree unpacked before unpack kept the archive's times is made again
             root = e.get("root")
             marker = os.path.join(dest, ".parity-unpacked")
