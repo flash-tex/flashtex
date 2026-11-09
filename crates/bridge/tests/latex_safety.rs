@@ -538,3 +538,81 @@ fn bibliography_lists_and_accented_names_are_checked_per_file() {
     rejected(r"\includegraphics{figs/my plot.pdf}");
     rejected("\\includegraphics{figs/\u{FF0E}\u{FF0E}/x}");
 }
+
+#[test]
+fn percent_inside_verbatim_arguments_does_not_hide_later_commands() {
+    // REVIEW-SEC2 on #2005: inside these arguments `%` is ordinary text, so
+    // TeX runs what follows on the same line (the TL 2026 pdflatex oracle
+    // read a sentinel after `\verb|%|` and `\lstinline|%|`). The sentinel
+    // paths are only parsed, never read.
+    let s = "/nonexistent/flashtex-sentinel";
+    rejected(&format!(r"\verb|%|\verbatiminput{{{s}}}"));
+    rejected(&format!(r"\verb|%|\input{{{s}}}"));
+    rejected(r"\verb|%|\write18{touch /nonexistent/flashtex-sentinel}");
+    rejected(&format!(r"\verb*|%|\input{{{s}}}"));
+    rejected(&format!(r"\Verb[x]!%!\input{{{s}}}"));
+    rejected(&format!(r"\lstinline|%|\input {s}"));
+    rejected(&format!(r"\lstinline[language=C]|%|\input {s}"));
+    rejected(&format!(r"\lstinline{{a%}}\input{{{s}}}"));
+    rejected(&format!(r"\mintinline{{c}}|%|\input{{{s}}}"));
+    rejected(&format!("\\url{{a%}}\\input{{{s}}}\n}}"));
+    rejected(&format!(r"\href{{a%}}{{b}}\includegraphics{{{s}}}"));
+    rejected(&format!(r"\nolinkurl{{%}}\input{{{s}}}"));
+    // A verbatim environment, a short-verb character or a `v` argument is
+    // not modelled, so combined with a comment it is refused outright.
+    rejected(&format!(
+        "\\begin{{verbatim}}%\\end{{verbatim}}\\input{{{s}}}\n\\end{{verbatim}}"
+    ));
+    rejected(&format!(
+        "\\begin%\n{{lstlisting}}%\\end{{lstlisting}}\\input{{{s}}}\n\\end{{lstlisting}}"
+    ));
+    rejected(&format!(r"\MakeShortVerb{{\|}}|%|\input{{{s}}}"));
+    rejected(&format!(
+        r"\NewDocumentCommand{{\x}}{{v}}{{}}\x|%|\input{{{s}}}"
+    ));
+    rejected(&format!("\\verb |a%|\\input{{{s}}}"));
+    // Ordinary uses stay accepted.
+    accepted(r"\verb|100%| and \url{https://example.org/a%20b}");
+    accepted(r"\lstinline|x % y| then \includegraphics{figs/a.pdf}");
+    accepted("\\verb|x| % trailing note");
+    accepted("\\begin{verbatim}x\\end{verbatim}");
+    accepted("% a note\n\\includegraphics{figs/a.pdf}");
+}
+
+#[test]
+fn more_file_readers_and_file_primitives_are_checked() {
+    // REVIEW-SEC2 on #2005: each of these opened `/etc/passwd` unchecked.
+    let s = "/nonexistent/flashtex-sentinel";
+    for reader in [
+        "BVerbatimInput",
+        "LVerbatimInput",
+        "verbatimtabinput",
+        "embedfile",
+        "attachfile",
+        "textattachfile",
+        "loadglsentries",
+        "csvautotabular",
+        "pgfplotstableread",
+        "pgfimage",
+    ] {
+        rejected(&format!(r"\{reader}{{{s}}}"));
+        rejected(&format!(r"\{reader}{{../flashtex-sentinel}}"));
+        accepted(&format!(r"\{reader}{{data/x.txt}}"));
+    }
+    rejected(&format!(r"\listinginput{{1}}{{{s}}}"));
+    rejected(&format!(r"\DTLloaddb{{db}}{{{s}}}"));
+    accepted(r"\DTLloaddb{db}{data/x.csv}");
+    for primitive in ["XeTeXpicfile", "XeTeXpdffile", "pdfmapfile", "pdfmapline"] {
+        rejected(&format!(r"\{primitive}{{{s}}}"));
+        rejected(&format!(r"\{primitive} {s}"));
+    }
+    rejected(r"\pdfmapfile{+/nonexistent/flashtex-sentinel}");
+    rejected(&format!(r"\font\x={s}"));
+    rejected(&format!(r"\font\x = {s} at 10pt"));
+    rejected(r"\font\x=../flashtex-sentinel");
+    rejected(&format!(r#"\font\x="{s}""#));
+    rejected(&format!(r"\font\x={{{s}}}"));
+    rejected(r"\font=cmr10");
+    accepted(r"\font\x=cmr10 at 12pt \x hi");
+    accepted(r"\fontsize{10}{12}\selectfont x");
+}
