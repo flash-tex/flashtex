@@ -97,8 +97,9 @@ class Doc:
 
 
 class Gen:
-    def __init__(self, seed):
+    def __init__(self, seed, area=None):
         self.r = random.Random(seed)
+        self.area = area
         self.fonts = []      # control-sequence names of loaded text fonts
         self.font_scripts = {}
         self.math = False
@@ -250,7 +251,9 @@ class Gen:
                         ("XeTeXupwardsmode", ["0", "0", "0", "1"]),
                         ("XeTeXuseglyphmetrics", ["0", "1"]),
                         ("XeTeXinputnormalization", ["0", "0", "1", "2"]),
-                        ("XeTeXtracingfonts", ["0", "1"])):
+                        ("XeTeXtracingfonts", ["0", "1"]),
+                        ("XeTeXgenerateactualtext", ["0", "1"]),
+                        ("XeTeXhyphenatablelength", ["3", "8", "63", "255"])):
             if self.chance(0.5):
                 L.append("\\%s=%s%%" % (p, self.pick(vals)))
         if self.chance(0.25):
@@ -314,7 +317,7 @@ class Gen:
         for _ in range(self.r.randint(1, 4)):
             a, b = self.pick([0, 4095] + classes), self.pick([0, 4095] + classes)
             tok = self.pick(["\\kern%s" % self.dim(0, 3), "\\hskip 1pt plus 1pt", "{\\%s}" % self.pick(self.fonts),
-                             "\\penalty 0 ", "\\message{ic}", "\\penalty10000\\hskip0pt", "[", "\\relax"])
+                             "\\penalty 0 ", "\\message{ic}", "\\penalty10000\\hskip0pt", "\\kern-1pt", "\\relax"])
             L.append("\\XeTeXinterchartoks %d %d = {%s}%%" % (a, b, tok))
         L.append("\\setbox3=\\hbox{%s}\\showbox3 \\shipout\\box3%%" % self.text(self.r.randint(3, 10)))
         if self.chance(0.5):
@@ -458,6 +461,25 @@ class Gen:
                      self.pick(["", " \\" + self.pick(self.fonts) + " " + self.word("latn")])))
         return L
 
+    def chunk_encoding(self):
+        """\\XeTeXinputencoding for the next line, then back to UTF-8; a
+        TECkit mapping (tex-text) and \\Ucharcat."""
+        enc = self.pick(["bytes", "latin1", "utf8", "auto", "cp1252", "iso-8859-7", "nosuch"])
+        f = self.pick(self.fonts)
+        L = ['\\XeTeXinputencoding "%s"%%' % enc,
+             "\\setbox13=\\hbox{\\%s %s}\\showbox13 \\shipout\\box13%%" % (
+                 f, self.text(self.r.randint(2, 6), fonts=False)),
+             '\\XeTeXinputencoding "utf8"%']
+        if self.chance(0.5):
+            L.append("\\setbox13=\\hbox{\\%s \\Ucharcat \"%X 11 \\Ucharcat `x 12 \\Uchar \"%X }\\showbox13%%" % (
+                f, self.r.choice([0x41, 0x5D0, 0x627, 0xE9, 0x1F600]), self.r.choice([0x301, 0x200D, 0xFB01])))
+        if self.chance(0.4):
+            m = "fm" + "abcdefghijklmnopqrstuvwxyz"[self.n % 26] * (1 + self.n // 26)
+            self.n += 1
+            L.append('\\font\\%s="[%s]:mapping=tex-text"\\setbox13=\\hbox{\\%s ``a\'\' -- b --- c ,,d<<e>> !` ?`}'
+                     '\\showbox13 \\shipout\\box13%%' % (m, self.pick(TEXT_FONTS)[0], m))
+        return L
+
     def chunk_showlists(self):
         return ["\\setbox11=\\hbox{%s\\showlists}\\shipout\\box11%%" % self.text(self.r.randint(1, 5))]
 
@@ -465,7 +487,10 @@ class Gen:
         kinds = [self.chunk_paragraph] * 4 + [self.chunk_bidi] * 3 + [self.chunk_interchar] * 2 + \
                 [self.chunk_queries] * 2 + [self.chunk_ligkern] * 3 + [self.chunk_glyph] + \
                 [self.chunk_hyph] * 2 + [self.chunk_math] * 3 + [self.chunk_picture] + \
-                [self.chunk_fontchange] * 2 + [self.chunk_showlists] + [self.chunk_locale] * 2
+                [self.chunk_fontchange] * 2 + [self.chunk_showlists] + [self.chunk_locale] * 2 + [self.chunk_encoding]
+        if self.area:
+            # A dense run of one area (`--area bidi`, ...): its chunks only.
+            kinds = [getattr(self, "chunk_" + self.area)]
         out = []
         for _ in range(self.r.randint(4, 12)):
             out += self.pick(kinds)()
@@ -479,14 +504,15 @@ class Gen:
     # -- LaTeX (xelatex + fontspec) --------------------------------------
     def generate_latex(self):
         r = self.r
-        main = self.pick(["Latin Modern Roman", "TeX Gyre Termes", "TeX Gyre Pagella",
-                          "LibertinusSerif-Regular.otf", "texgyreheros-regular.otf"])
+        # By file name: on macOS xetex finds fonts by name through Core Text,
+        # which does not see TeX Live's fonts.
+        main = self.pick(["lmroman10-regular.otf", "texgyretermes-regular.otf",
+                          "texgyrepagella-regular.otf", "LibertinusSerif-Regular.otf",
+                          "texgyreheros-regular.otf", "CharisSIL-Regular.ttf"])
         L = ["\\documentclass{article}", "\\usepackage{fontspec}"]
-        if main.endswith(".otf"):
-            L.append("\\setmainfont{%s}" % main)
-        else:
-            L.append("\\setmainfont{%s}%s" % (main, self.pick(["", "[Ligatures=TeX]", "[Numbers=OldStyle]",
-                                                               "[Letters=SmallCaps]", "[LetterSpace=5]"])))
+        L.append("\\setmainfont{%s}%s" % (main, self.pick(["", "[Ligatures=TeX]", "[Numbers=OldStyle]",
+                                                           "[Letters=SmallCaps]", "[LetterSpace=5]",
+                                                           "[WordSpace=1.5]", "[Kerning=Off]"])))
         L.append("\\newfontfamily\\hebrewfont{DavidCLM-Medium.otf}[Script=Hebrew]")
         L.append("\\newfontfamily\\arabicfont{Amiri-Regular.ttf}[Script=Arabic]")
         if self.chance(0.5):
@@ -513,11 +539,16 @@ class Gen:
         return Doc(L, latex=True)
 
 
-def generate(seed, latex=False):
-    g = Gen(seed)
+AREAS = ["paragraph", "bidi", "interchar", "queries", "ligkern", "glyph", "hyph", "math",
+         "picture", "fontchange", "showlists", "locale", "encoding"]
+
+
+def generate(seed, latex=False, area=None):
+    g = Gen(seed, area)
     return g.generate_latex() if latex else g.generate()
 
 
 if __name__ == "__main__":
     s = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    sys.stdout.write(generate(s, latex="--latex" in sys.argv).render())
+    area = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--area=")), None)
+    sys.stdout.write(generate(s, latex="--latex" in sys.argv, area=area).render())

@@ -60,6 +60,16 @@ In order; the first difference names the class:
 | `pdf` | with `--pdf`: tools/xetex-pdfparity/compare.py (structural, `--no-visual`) fails on the two PDFs (xdvipdfmx's and the candidate's own) |
 | `latex-*` | with `--latex`: latex.py's verdict (log, XDV, exit status, panic) |
 
+`--pdf` findings need a second look before they are filed: the comparison
+is with xdvipdfmx, not TeX, and two kinds of difference are deliberate or
+known. xdvipdfmx's glyphs drift up to 0.005 em from TeX's positions in
+TrueType fonts (its `/W` widths are rounded; tools/xetex-pdfparity/README.md,
+"xdvipdfmx's precision"), so a `glyph-position` just over the tolerance in
+a large TrueType font (Charis SIL, Amiri) is xdvipdfmx's, not the writer's.
+The writer marks vertical native fonts (`:vertical`) unsupported and draws
+them upright (`glyph-matrix`, `src/out/page.rs`). A run where xdvipdfmx
+itself fails ("driver return code") is not compared.
+
 Neutral outcomes, not failures: `both-hang`, `both-signal` (the same signal
 in both), and `oracle-crash`: xetex itself died by a signal (undefined
 behaviour; kept under `OUT/oracle-crash/` for reference). TeX Live 2026's

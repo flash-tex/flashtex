@@ -169,6 +169,13 @@ def compare_pdf(text, candidate, oracle, work, timeout):
     po, pc = os.path.join(od, "doc.pdf"), os.path.join(cd, "doc.pdf")
     if not os.path.exists(po) and not os.path.exists(pc):
         return None
+    try:
+        with open(os.path.join(od, "doc.log"), encoding="utf-8", errors="replace") as fh:
+            if "(driver return code) generating output" in fh.read():
+                # xdvipdfmx failed: the oracle's PDF is partial, not comparable.
+                return None
+    except OSError:
+        pass
     if os.path.exists(po) != os.path.exists(pc):
         return {"cls": "pdf", "sig": "pdf-missing:" + ("oracle" if not os.path.exists(po) else "candidate")}
     out = os.path.join(work, "pdfcmp.json")
@@ -200,7 +207,7 @@ def compare(text, candidate, oracle, work, timeout, pdf=False):
 
 
 def fuzz_seed(seed, args):
-    text = gen.generate(seed).render()
+    text = gen.generate(seed, area=args.area).render()
     work = tempfile.mkdtemp(prefix="fzu-%d-" % seed, dir=args.tmp)
     try:
         res = compare(text, args.candidate, args.oracle, work, args.timeout, args.pdf)
@@ -302,6 +309,8 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--pdf", action="store_true", help="also compare the PDFs (xdvipdfmx vs the candidate's writer)")
+    ap.add_argument("--area", choices=gen.AREAS, default=None,
+                    help="every chunk from one area of the grammar")
     ap.add_argument("--latex", action="store_true",
                     help="xelatex/fontspec documents instead of xetex -ini ones")
     ap.add_argument("--formats", default=None,
