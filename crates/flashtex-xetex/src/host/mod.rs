@@ -416,6 +416,20 @@ enum Msg {
     Profile(Mode),
 }
 
+/// The minor version of a client's `HELLO` (spec §6.2, §3), or `None` when
+/// the host must refuse it (`ERROR` `version`): it names another protocol,
+/// or another major, or no version, as `flashtex-host` refuses them. The
+/// major is the first element of `version`, the minor the second (0 when
+/// absent, as `flashtex-host` reads it).
+fn client_minor(hello: &Json) -> Option<i64> {
+    let version = hello.get("version").and_then(Json::as_array)?;
+    let major = version.first().and_then(Json::as_i64);
+    if hello.str_field("protocol") != Some(PROTOCOL) || major != Some(VERSION_MAJOR as i64) {
+        return None;
+    }
+    Some(version.get(1).and_then(Json::as_i64).unwrap_or(0).max(0))
+}
+
 fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
     let Ok(wconn) = conn.try_clone() else { return };
     let out: Out = Arc::new(Mutex::new(Box::new(BufWriter::new(wconn))));
@@ -433,15 +447,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
         );
         return;
     }
-    let version = hello
-        .get("version")
-        .and_then(Json::as_array)
-        .map(|v| v.iter().filter_map(Json::as_i64).collect::<Vec<_>>());
-    let (major, minor) = match version.as_deref() {
-        Some([a, b, ..]) => (*a, *b),
-        _ => (VERSION_MAJOR as i64, 2),
-    };
-    if major != VERSION_MAJOR as i64 {
+    let Some(minor) = client_minor(&hello) else {
         send_json(
             &out,
             kind::ERROR,
@@ -451,7 +457,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
             ]),
         );
         return;
-    }
+    };
     let accepted: Vec<String> = hello
         .get("accept")
         .and_then(Json::as_array)
@@ -951,5 +957,39 @@ mod tests {
         assert!(o.once && o.external_tools);
         assert_eq!(o.formats, ["xelatex"]);
         assert!(Opts::parse(&[]).is_err());
+    }
+
+    /// A `HELLO` of another protocol or major is refused, as `flashtex-host`
+    /// refuses it (lane AUDIT-DL): before, the Unicode host took any
+    /// `protocol`, and a `version` without two numbers (`[4]`, `[4, "x"]`,
+    /// none at all) as 3.2.
+    #[test]
+    fn a_hello_of_another_protocol_or_major_is_refused() {
+        let minor = |s: &str| client_minor(&Json::parse(s).unwrap());
+        assert_eq!(
+            minor(r#"{"protocol": "display-list-v3", "version": [3, 3]}"#),
+            Some(3)
+        );
+        assert_eq!(
+            minor(r#"{"protocol": "display-list-v3", "version": [3, 1], "accept": []}"#),
+            Some(1)
+        );
+        assert_eq!(
+            minor(r#"{"protocol": "display-list-v3", "version": [3]}"#),
+            Some(0)
+        );
+        for refused in [
+            r#"{"protocol": "display-list-v2", "version": [3, 2]}"#,
+            r#"{"version": [3, 2]}"#,
+            r#"{"protocol": "display-list-v3", "version": [4, 0]}"#,
+            r#"{"protocol": "display-list-v3", "version": [4]}"#,
+            r#"{"protocol": "display-list-v3", "version": [4, "x"]}"#,
+            r#"{"protocol": "display-list-v3", "version": ["3", 2]}"#,
+            r#"{"protocol": "display-list-v3"}"#,
+            r#"{"protocol": "display-list-v3", "version": 3}"#,
+            "null",
+        ] {
+            assert_eq!(minor(refused), None, "{refused}");
+        }
     }
 }
