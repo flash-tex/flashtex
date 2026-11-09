@@ -1,0 +1,78 @@
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /NNTKRY+STIXTwoMath-Regular-UTF16 def
+/CMapType 2 def
+/CIDSystemInfo <<
+  /Registry (Adobe)
+  /Ordering (UCS)
+  /Supplement 0
+>> def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+26 beginbfchar
+<04AD> <2212>
+<065F> <2209>
+<0661> <220A>
+<0662> <220B>
+<0664> <220C>
+<066B> <2210>
+<066E> <2211>
+<0681> <221B>
+<0687> <221C>
+<068D> <221D>
+<0696> <2224>
+<0698> <2225>
+<069A> <2226>
+<06A0> <222A>
+<06A2> <222B>
+<06A8> <222C>
+<06AE> <222D>
+<06B4> <222E>
+<06BA> <222F>
+<06C0> <2230>
+<06C6> <2231>
+<06CC> <2232>
+<06D2> <2233>
+<06E2> <223D>
+<06E3> <223E>
+<06E5> <223F>
+endbfchar
+8 beginbfrange
+<0654> <0659> <2200>
+<065B> <065D> <2206>
+<0666> <0668> <220D>
+<0671> <0674> <2213>
+<0676> <0679> <2217>
+<068F> <0694> <221E>
+<069C> <069E> <2227>
+<06D8> <06E0> <2234>
+endbfrange
+1 beginbfchar
+<0CD2> <D835DC23>
+endbfchar
+2 beginbfrange
+<0CAE> <0CD0> <D835DC00>
+<0CD4> <0CFF> <D835DC24>
+endbfrange
+7 beginbfchar
+<0D06> <D835DC56>
+<0D08> <D835DC57>
+<0D16> <D835DC63>
+<0D18> <D835DC64>
+<0D42> <D835DC8B>
+<0D55> <D835DC9E>
+<0D56> <D835DC9F>
+endbfchar
+5 beginbfrange
+<0D00> <0D04> <D835DC50>
+<0D0A> <0D14> <D835DC58>
+<0D1A> <0D1C> <D835DC65>
+<0D1E> <0D40> <D835DC68>
+<0D44> <0D54> <D835DC8C>
+endbfrange
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
