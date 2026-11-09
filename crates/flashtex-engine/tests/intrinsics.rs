@@ -267,3 +267,47 @@ fn memory_usage_is_pdftex_s_while_replaying() {
         "the memory lines differ from pdftex's"
     );
 }
+
+#[test]
+fn a_replay_keeps_the_normal_paths_capacity_errors() {
+    // (lane AUDIT-OVERFLOW, #2308) a replay puts nothing in the buffer or
+    // the pool and pushes no input level: a call recorded with room to
+    // spare was replayed where its normal path stops with `TeX capacity
+    // exceeded` (on main: `[survived]`, exit 0), or, for the groups it
+    // makes again, stopped there with the replay's context instead of the
+    // call's
+    let h = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n";
+    let mut cases = common::capacity_cases("hook", "\\global\\count2=1 ");
+    // four macro levels, 9993 levels deep (stack_size=10000)
+    cases.push((
+        "! TeX capacity exceeded, sorry [input stack size=10000]",
+        format!(
+            "{h}\\def\\ia{{\\ib\\relax}}\\def\\ib{{\\ic\\relax}}\\def\\ic{{\\id\\relax}}\\def\\id{{\\ie\\relax}}\n\
+             \\def\\ie{{\\if\\relax\\relax\\global\\count2=2 \\fi\\relax}}\n\
+             \\def\\hook{{\\begingroup\\ia\\endgroup}}\n\\hook\\hook\\hook\n\
+             \\def\\s{{\\relax\\hook\\relax}}\
+             \\def\\r{{\\advance\\count1 1 \\ifnum\\count1<9993 \\expandafter\\r\\else\\expandafter\\s\\fi\\relax}}\n\
+             \\r\\message{{[survived]}}\\end\n"
+        ),
+    ));
+    // six groups at level 250 (grouping levels=255)
+    cases.push((
+        "! TeX capacity exceeded, sorry [grouping levels=255]",
+        format!(
+            "{h}\\def\\hook{{\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\
+             \\global\\count2=2 \\endgroup\\endgroup\\endgroup\\endgroup\\endgroup\\endgroup}}\n\
+             \\hook\\hook\\hook\n\
+             \\def\\nest{{\\begingroup\\advance\\count1 1 \\ifnum\\count1<250 \\expandafter\\nest\\fi}}\n\
+             \\nest\\relax\\hook\\message{{[survived]}}\\end\n"
+        ),
+    ));
+    for (i, (want, src)) in cases.into_iter().enumerate() {
+        let tag = format!("capacity-{i}");
+        let d = scratch(&tag);
+        std::fs::write(d.join("t.tex"), &src).unwrap();
+        let off = run(&d, "off", "hook");
+        assert!(off.log.contains(want), "{tag}: {}", off.log);
+        let s = check(&tag, &src);
+        assert!(stat(&s, "replays") >= 2, "{tag}: {s}");
+    }
+}
