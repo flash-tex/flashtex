@@ -1,0 +1,126 @@
+% Unicode corpus (lane UNICODE): a real document rather than a feature
+% probe. A short paper that loads everything at once, as authors do:
+% fontspec by family name (TeX Gyre Pagella and Heros), a project font
+% (JetBrains Mono, OFL, from the project's fonts/ folder by Path=),
+% unicode-math (TeX Gyre Pagella Math), polyglossia with Greek (Libertinus
+% Serif by name), Hebrew and Arabic (bidi), xeCJK (Fandol), hyperref, a
+% table of contents, footnotes, a table, cross references and a
+% bibliography. Every font is one the no-TeX-Live bundle packs (GFS Didot,
+% tried first, is not: tools/bundle/tl2026/extra.txt).
+\documentclass[11pt,a4paper]{article}
+\usepackage{amsmath}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setmainfont{TeX Gyre Pagella}
+\setsansfont{TeX Gyre Heros}[Scale=MatchLowercase]
+\setmonofont{JetBrainsMono}[Path=fonts/, Extension=.ttf,
+  UprightFont=*-Regular, BoldFont=*-Bold, ItalicFont=*-Italic,
+  BoldItalicFont=*-BoldItalic, Scale=MatchLowercase]
+\setmathfont{TeX Gyre Pagella Math}
+\usepackage{xeCJK}
+\setCJKmainfont[BoldFont=FandolSong-Bold.otf, ItalicFont=FandolKai-Regular.otf]{FandolSong-Regular.otf}
+\setCJKsansfont[BoldFont=FandolHei-Bold.otf]{FandolHei-Regular.otf}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=green!40!black]{hyperref}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{greek}
+\setotherlanguage{hebrew}
+\setotherlanguage{arabic}
+\newfontfamily\greekfont{Libertinus Serif}
+\newfontfamily\hebrewfont{DavidCLM}[Script=Hebrew, Extension=.otf,
+  UprightFont=*-Medium, BoldFont=*-Bold, ItalicFont=*-MediumItalic,
+  BoldItalicFont=*-BoldItalic]
+\newfontfamily\arabicfont{Amiri}[Script=Arabic, Extension=.ttf,
+  UprightFont=*-Regular, BoldFont=*-Bold, ItalicFont=*-Italic,
+  BoldItalicFont=*-BoldItalic]
+\title{Typesetting Many Scripts in One Document}
+\author{A. Author\thanks{Department of Typography, \texttt{author@example.org}.}}
+\date{1 November 2026}
+\begin{document}
+\maketitle
+\begin{abstract}
+We report on a document that mixes Latin, Greek, Hebrew, Arabic and Chinese
+text with OpenType mathematics. The aim is ordinary: a paper an author would
+write, with a table of contents, footnotes, a table, cross references and a
+short bibliography~\cite{knuth, bringhurst}.
+\end{abstract}
+\tableofcontents
+
+\section{Introduction}\label{s:intro}
+Real documents rarely exercise one feature at a time. This one sets its body
+in Pagella, its headings in Heros (\textsf{like this, \textbf{bold}}) and its
+code in a font the project ships: \texttt{fn main() \{ println!("hi"); \}},
+\texttt{\textbf{bold}}, \texttt{\textit{italic}}. Ligatures (fi, fl, ffi),
+old-style figures {\addfontfeatures{Numbers=OldStyle}0123456789} and small
+capitals (\textsc{Small Caps}) come from the main font.\footnote{Pagella's
+small capitals are real glyphs, not scaled capitals.} Section~\ref{s:math}
+has the mathematics and Section~\ref{s:scripts} the other scripts.
+
+\section{Mathematics}\label{s:math}
+Inline, the Gaussian integral $\int_{-\infty}^{\infty} e^{-x^2}\,dx=\sqrt{\pi}$
+and a sum $\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$ sit in the line. Displayed,
+with Unicode input:
+\begin{equation}\label{eq:euler}
+  e^{iπ} + 1 = 0, \qquad ∀ε>0\ ∃δ>0:\ |x-a|<δ ⇒ |f(x)-f(a)|<ε .
+\end{equation}
+\begin{align}
+  \nabla \times \mathbf{B} &= μ_0 \mathbf{J} + μ_0 ε_0 \frac{∂\mathbf{E}}{∂t}, \label{eq:maxwell}\\
+  \mathbb{P}(A \mid B) &= \frac{\mathbb{P}(B \mid A)\,\mathbb{P}(A)}{\mathbb{P}(B)} .
+\end{align}
+Equations~\eqref{eq:euler} and~\eqref{eq:maxwell} use \verb|unicode-math|'s
+symbols: $\mathcal{L}$, $\mathfrak{g}$, $\mathsf{T}$, $\symbf{x}$, $ℝ^n$, $ℤ$.
+
+\section{Other scripts}\label{s:scripts}
+\subsection{Greek}
+\begin{greek}
+Ἐν ἀρχῇ ἦν ὁ λόγος, καὶ ὁ λόγος ἦν πρὸς τὸν θεόν.
+\end{greek}
+
+\subsection{Hebrew and Arabic}
+Hebrew inline, \texthebrew{שלום עולם}, then a paragraph.
+
+\begin{hebrew}
+זהו טקסט בעברית עם מספרים 2026 ו\textbf{הדגשה}. משפט שני, ארוך יותר, כדי
+שהפסקה תתפרס על פני יותר משורה אחת.
+\end{hebrew}
+
+Arabic inline, \textarabic{السلام عليكم}, then a paragraph.
+
+\begin{Arabic}
+مرحبا بالعالم. هذا نص عربي مع \textbf{خط عريض} وأرقام ١٢٣٤. هذه فقرة
+أطول قليلا حتى تمتد على أكثر من سطر واحد.
+\end{Arabic}
+
+\subsection{Chinese}
+中文排版：这是一个中文段落，包含标点符号“引号”、（括号）和《书名号》。中文与
+English混排，数字123和公式$a^2+b^2=c^2$。\textbf{粗体}、\textit{楷体}、
+\textsf{黑体}。这一段要足够长，才能检验中文的断行与标点挤压。
+
+\section{Results}\label{s:results}
+Table~\ref{t:scripts} lists the scripts and the fonts that set them.
+\begin{table}[h]
+\centering
+\begin{tabular}{llr}
+\toprule
+Script & Font & Sample \\
+\midrule
+Latin   & TeX Gyre Pagella & Ågård \\
+Greek   & Libertinus Serif & \textgreek{λόγος} \\
+Hebrew  & David CLM        & \texthebrew{עברית} \\
+Arabic  & Amiri            & \textarabic{عربي} \\
+Chinese & Fandol Song      & 中文 \\
+Code    & JetBrains Mono   & \texttt{a->b} \\
+\bottomrule
+\end{tabular}
+\caption{Scripts and fonts.}\label{t:scripts}
+\end{table}
+The links in this paragraph go to Section~\ref{s:intro}, to
+Equation~\eqref{eq:euler} and to \href{https://ctan.org/pkg/fontspec}{fontspec on CTAN}.
+
+\begin{thebibliography}{9}
+\bibitem{knuth} D.~E. Knuth, \emph{The \TeX book}, Addison-Wesley, 1984.
+\bibitem{bringhurst} R.~Bringhurst, \emph{The Elements of Typographic Style}, Hartley \& Marks, 2004.
+\end{thebibliography}
+\end{document}

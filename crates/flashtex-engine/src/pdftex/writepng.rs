@@ -9,10 +9,10 @@
 //! transparency to alpha, stripping alpha or 16 bits, gamma) and they are
 //! written, compressed by pdfTeX's zlib, alpha as a separate `/SMask`.
 
-use super::cfile::{CFile, Whence};
+use super::cfile::Whence;
 use super::images::{ImageData, ImageEntry, IMAGE_COLOR_B, IMAGE_COLOR_C, IMAGE_COLOR_I};
 use crate::generated::Globals;
-use std::ffi::{c_char, c_int, c_longlong, c_ulong, CStr, CString};
+use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, CStr, CString};
 
 #[repr(C)]
 struct FtPng {
@@ -39,6 +39,8 @@ super::xpdf::linked_or_unlinked! {
     fn ftpng_transform(p: *mut FtPng, what: c_int, a: f64, b: f64) -> c_int;
     fn ftpng_read_row(p: *mut FtPng, row: *mut u8) -> c_int;
     fn ftpng_read_image(p: *mut FtPng, rows: *mut *mut u8) -> c_int;
+    fn ftpng_fseek(p: *mut FtPng, offset: c_long, whence: c_int) -> c_int;
+    fn ftpng_fread(p: *mut FtPng, buf: *mut u8, n: usize) -> usize;
     fn ftpng_header_version() -> *const c_char;
     fn ftpng_lib_version() -> *const c_char;
 }
@@ -201,6 +203,27 @@ impl PngImage {
         // SAFETY: out-parameters.
         unsafe { ftpng_gamma(self.h(), &mut g, &mut f) };
         (g, f)
+    }
+
+    /// `fseek` on the file libpng reads (`png_get_io_ptr`): whether it
+    /// succeeded. (An offset beyond C's `long` is one `fseek` refuses.)
+    fn fseek(&self, offset: i64, whence: Whence) -> bool {
+        let w = match whence {
+            Whence::Set => libc::SEEK_SET,
+            Whence::Cur => libc::SEEK_CUR,
+            Whence::End => libc::SEEK_END,
+        };
+        let Some(off) = c_long::try_from(offset).ok() else {
+            return false;
+        };
+        // SAFETY: a live handle.
+        unsafe { ftpng_fseek(self.h(), off, w) == 0 }
+    }
+
+    /// `fread(buf, 1, buf.len(), fp)` on the file libpng reads.
+    fn fread(&self, buf: &mut [u8]) -> usize {
+        // SAFETY: `buf.len()` writable bytes.
+        unsafe { ftpng_fread(self.h(), buf.as_mut_ptr(), buf.len()) }
     }
 }
 
@@ -686,9 +709,9 @@ impl Globals {
     }
 
     /// `spng_getint`: a big-endian 32-bit chunk field.
-    fn spng_getint(&mut self, fp: &mut CFile) -> i32 {
+    fn spng_getint(&mut self, fp: &PngImage) -> i32 {
         let mut buf = [0u8; 4];
-        if fp.read(&mut buf) != 4 {
+        if fp.fread(&mut buf) != 4 {
             self.pdftex_fail("writepng: reading chunk type failed");
         }
         ((((((buf[0] as i32) << 8).wrapping_add(buf[1] as i32)) << 8).wrapping_add(buf[2] as i32))
@@ -696,33 +719,34 @@ impl Globals {
             .wrapping_add(buf[3] as i32)
     }
 
-    fn spng_seek(&mut self, fp: &mut CFile, off: i64, whence: Whence) {
-        if !fp.seek(off, whence) {
+    fn spng_seek(&mut self, fp: &PngImage, off: i64, whence: Whence) {
+        if !fp.fseek(off, whence) {
             self.pdftex_fail("writepng: fseek in PNG file failed");
         }
     }
 
     /// `copy_png`: the IDAT chunks of the file, unchanged, as the stream
-    /// (after a first pass for its `/Length`).
-    fn copy_png(&mut self, png: &PngImage, name: &[u8]) {
+    /// (after a first pass for its `/Length`). The file is the one libpng
+    /// reads, opened by `read_png_info` (`png_get_io_ptr`), not the name
+    /// opened again: a file renamed or removed since `\pdfximage` is still
+    /// the one written, as in pdfTeX.
+    fn copy_png(&mut self, png: &PngImage) {
         const SPNG_CHUNK_IDAT: i32 = 0x49444154;
         const SPNG_CHUNK_IEND: i32 = 0x49454E44;
-        let Some(mut fp) = CFile::open(name) else {
-            self.fatal_perror(name);
-        };
+        let fp = png;
         // 1st pass to find overall stream /Length
         let mut streamlength: i32 = 0;
-        self.spng_seek(&mut fp, 8, Whence::Set);
+        self.spng_seek(fp, 8, Whence::Set);
         loop {
-            let len = self.spng_getint(&mut fp);
-            let typ = self.spng_getint(&mut fp);
+            let len = self.spng_getint(fp);
+            let typ = self.spng_getint(fp);
             if typ == SPNG_CHUNK_IEND {
                 break;
             }
             if typ == SPNG_CHUNK_IDAT {
                 streamlength = streamlength.wrapping_add(len);
             }
-            self.spng_seek(&mut fp, len as i64 + 4, Whence::Cur);
+            self.spng_seek(fp, len as i64 + 4, Whence::Cur);
         }
         self.pdf_printf(
             format!(
@@ -736,10 +760,10 @@ impl Globals {
         // 2nd pass to copy data
         let mut idat = 0; // flag to check continuous IDAT chunks sequence
         let mut chunk = Vec::new();
-        self.spng_seek(&mut fp, 8, Whence::Set);
+        self.spng_seek(fp, 8, Whence::Set);
         loop {
-            let mut len = self.spng_getint(&mut fp);
-            let typ = self.spng_getint(&mut fp);
+            let mut len = self.spng_getint(fp);
+            let typ = self.spng_getint(fp);
             if typ == SPNG_CHUNK_IDAT {
                 // do copy
                 if idat == 2 {
@@ -752,13 +776,13 @@ impl Globals {
                     // fread into pdfbuf: bytes past the end of the file are
                     // not stored (the buffer keeps what it held)
                     chunk.resize(i as usize, 0);
-                    let got = fp.read(&mut chunk);
+                    let got = fp.fread(&mut chunk);
                     let at = self.pdf_ptr;
                     self.pdf_buf_store(&chunk[..got]);
                     self.pdf_ptr = at + i;
                     len -= i;
                 }
-                self.spng_seek(&mut fp, 4, Whence::Cur);
+                self.spng_seek(fp, 4, Whence::Cur);
             } else if typ == SPNG_CHUNK_IEND {
                 // done
                 self.pdf_end_stream();
@@ -767,7 +791,7 @@ impl Globals {
                 if idat == 1 {
                     idat = 2;
                 }
-                self.spng_seek(&mut fp, len as i64 + 4, Whence::Cur);
+                self.spng_seek(fp, len as i64 + 4, Whence::Cur);
             }
         }
     }
@@ -793,7 +817,6 @@ impl Globals {
     /// `write_png`.
     pub(crate) fn write_png(&mut self, st: &mut State, e: &mut ImageEntry) {
         let cs_ref = e.colorspace_ref;
-        let name = e.name.clone().unwrap_or_default();
         let ImageData::Png(png) = &e.data else {
             self.pdftex_fail("unknown type of image");
         };
@@ -845,7 +868,7 @@ impl Globals {
                 }
             }
             self.tex_printf(b" (PNG copy)");
-            self.copy_png(png, &name);
+            self.copy_png(png);
             if palette_objnum > 0 {
                 self.png_write_palette_obj(palette_objnum, &palette);
             }

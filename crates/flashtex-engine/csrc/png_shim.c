@@ -225,6 +225,18 @@ int ftpng_read_image(ftpng *p, unsigned char **rows)
     return 0;
 }
 
+/* copy_png's reads: `fseek` and `fread` on the file libpng reads
+ * (`png_get_io_ptr`), the one opened by read_png_info. */
+int ftpng_fseek(ftpng *p, long offset, int whence)
+{
+    return fseek(p->file, offset, whence);
+}
+
+size_t ftpng_fread(ftpng *p, unsigned char *buf, size_t n)
+{
+    return fread(buf, 1, n, p->file);
+}
+
 /* The version strings pdfTeX's --version prints. */
 const char *ftpng_header_version(void)
 {

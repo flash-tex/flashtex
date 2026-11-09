@@ -7,14 +7,28 @@
 #
 #   gh workflow run xetex-regenerate.yml --ref <branch>
 #
-# It also runs on a push that changes a change file or the translator's
-# arguments.
+# It also runs, when a change file or the translator's arguments change, on
+# a pull request, on a push to main, and on a push to the XeTeX lanes'
+# branches (`on:` below).
 name: xetex-regenerate
 
 on:
   workflow_dispatch:
+  # Push runs only on main and on the lanes that measure with this workflow;
+  # any other branch gets it through its pull request (same paths) or by
+  # `gh workflow run <file> --ref <branch>`. Push runs on every feature
+  # branch were most of a 396-run queue on 2026-11-08.
   push:
-    branches-ignore: [main, "gh-readonly-queue/**"]
+    branches:
+      - main
+      - "agent/*unicode*"
+      - "agent/*unicode*/**"
+      - "agent/daniel-parent/xetex-intr*"
+    paths:
+      - "crates/flashtex-xetex/changes/**"
+      - "crates/flashtex-xetex/web2rust-default.args"
+      - ".github/workflows/xetex-regenerate.yml"
+  pull_request:
     paths:
       - "crates/flashtex-xetex/changes/**"
       - "crates/flashtex-xetex/web2rust-default.args"
