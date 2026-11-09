@@ -6778,3 +6778,73 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// (lane AUDIT-VF, #2338) pdfTeX makes an expanded font when a line first needs
+/// that ratio (`auto_expand_font`, from `hpack`'s font substitution,
+/// pdftex.web §705), so a call that breaks a paragraph under
+/// `\pdfadjustspacing` makes fonts unless an earlier paragraph made them
+/// first. Such fonts have no control sequence (K3 sees none), and making one
+/// changes no font version, so a call recorded after paragraph X made them
+/// could replay after an edit's restore took X's fonts away: the replay
+/// skips the fonts the normal path makes, and every font made after the call
+/// takes another number (`/F<n>` in the page streams). Here `\measure`
+/// breaks X's text at X's width; it is recorded and replayed while X stays,
+/// then X becomes one line, which needs no expanded font, and `\Large` is
+/// loaded after the call.
+#[test]
+fn a_call_that_makes_expanded_fonts_after_their_maker_is_gone() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("expanded-font-measure");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = "The quick brown fox jumps over the lazy dog while seventeen wizards \
+                quietly box jumping frogs, and lexicographic analysis of typesetting \
+                with expansion and protrusion makes justified paragraphs differently \
+                whenever stretch and shrink meet the tolerance and the badness.";
+    let before: String = (0..14).map(|i| para(i, "alpha")).collect();
+    let after: String = (14..34).map(|i| para(i, "beta")).collect();
+    let doc = |word: &str, x: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\vbox{{#1\\par}}\\global\\dimen1=\\ht0 \\endgroup}}\n\
+             \\begin{{document}}\n\\pdffontexpand\\font 50 50 5 autoexpand\n\
+             {before}Some {word} text.\n\n\
+             {{\\hsize=14em \\pdfadjustspacing=2 {x}\\par}}\n\n\
+             A\\relax\\measure{{\\hsize=14em \\pdfadjustspacing=2 {text}}}\\the\\dimen1\\par\n\n\
+             {{\\Large A heading loaded after the call}}\\par\n\n{after}\\end{{document}}\n"
+        )
+    };
+    let stats = dir.with_extension("bmstats");
+    let _ = std::fs::remove_file(&stats);
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BOXMEMO", "on"),
+            ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+            ("FLASHTEX_BOXMEMO_STATS", stats.to_str().unwrap()),
+        ],
+    );
+    let first = doc("plain", text);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &first)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // edits just before X: their windows make X's fonts again, then record
+    // the call, then replay it
+    for word in ["plainx", "plain", "plainx", "plain"] {
+        let t = doc(word, text);
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &t)], word);
+    }
+    // X needs no expanded font now: the call makes them itself
+    let short = doc("plain", "Short.");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &short)], "short");
+    if let Ok(s) = std::fs::read_to_string(&stats) {
+        eprintln!("boxmemo stats: {s}");
+    }
+}

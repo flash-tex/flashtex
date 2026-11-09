@@ -357,6 +357,15 @@ struct Context {
     par_token: i32,
     font_version: i32,
     hyph_version: i32,
+    /// `font_ptr` at the call (lane AUDIT-VF). The font versions name the
+    /// changes made to fonts, not how many there are: pdfTeX makes an
+    /// expanded font when a line first needs its ratio (`auto_expand_font`,
+    /// from `hpack`, pdftex.web §705), with no control sequence that K3
+    /// could see. A call recorded after another paragraph made the fonts
+    /// it needs makes none; after a restore that took them away, the normal
+    /// path makes them inside the call, and a replay would not, so every
+    /// later font would take another number.
+    font_ptr: i32,
     /// The current list's `aux` (`\spacefactor` and `clang`, or
     /// `\prevdepth`) at the call: a draw call's first spaces and lines
     /// depend on it.
@@ -447,6 +456,7 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
         ctx.par_token,
         ctx.font_version,
         ctx.hyph_version,
+        ctx.font_ptr,
         ctx.aux as i32,
         (ctx.aux >> 32) as i32,
         k1.len() as i32,
@@ -2036,6 +2046,7 @@ impl Globals {
             par_token: self.par_token,
             font_version: self.bm_font_version,
             hyph_version: self.bm_hyph_version,
+            font_ptr: self.font_ptr,
             aux: self.cur_list.aux_field.0,
         }
     }
