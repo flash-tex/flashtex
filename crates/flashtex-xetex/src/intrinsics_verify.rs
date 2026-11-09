@@ -45,8 +45,8 @@
 //! the chunks compared: such a call counts as `unverified.checkpoint`.
 
 use crate::generated::consts::{
-    backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value,
-    token_list, v_template,
+    backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value, token_list,
+    v_template,
 };
 use crate::generated::types::memory_word;
 use crate::intrinsics::{Op, Val, NULL};
@@ -481,7 +481,13 @@ impl Globals {
         };
         let free_i = self.intr_free(&|k| iword(mem0 + 8 * k), &isc);
         let live_mem = |k: usize| self.mem[k].to_bits();
-        let (av, ro, lo, hi, me) = (self.avail, self.rover, self.lo_mem_max, self.hi_mem_min, self.mem_end);
+        let (av, ro, lo, hi, me) = (
+            self.avail,
+            self.rover,
+            self.lo_mem_max,
+            self.hi_mem_min,
+            self.mem_end,
+        );
         let nsc = |name: &str| match name {
             "avail" => av,
             "rover" => ro,
@@ -491,7 +497,9 @@ impl Globals {
         };
         let free_n = self.intr_free(&live_mem, &nsc);
         let is_free = |f: &[u64], k: i32| {
-            k >= 0 && f.get(k as usize >> 6).is_some_and(|b| b >> (k & 63) & 1 == 1)
+            k >= 0
+                && f.get(k as usize >> 6)
+                    .is_some_and(|b| b >> (k & 63) & 1 == 1)
         };
         let churn = &self.host.intrinsics.churn;
         // (scratch heads, set before they are read in the command that
