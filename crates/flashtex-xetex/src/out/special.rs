@@ -223,6 +223,73 @@ fn fqurl(base: Option<&[u8]>, name: &[u8]) -> Vec<u8> {
     q
 }
 
+/// `dvipdfmx:config g X` or `g X,Y` (dvipdfmx.c's read_config_special,
+/// then its `-g` option): the annotation margin, `(x, y)` in bp; `None` if
+/// `s` is no such special. dpxutil.c's dpx_util_read_length reads each
+/// length: a number, then a unit (bp without one; `true` allowed).
+pub fn config_grow(s: &[u8]) -> Option<(f64, f64)> {
+    let r = trim(s).strip_prefix(b"dvipdfmx:")?;
+    let mut p = Parser::new(r);
+    if !p.keyword(b"config") {
+        return None;
+    }
+    p.skip_white();
+    // parse_ident's characters
+    let ident = |p: &mut Parser| -> Vec<u8> {
+        let st = p.i;
+        while p.i < p.s.len()
+            && (p.s[p.i].is_ascii_alphanumeric() || b"!\"#$&'*+,-.:;=?@\\^_`|~".contains(&p.s[p.i]))
+        {
+            p.i += 1;
+        }
+        p.s[st..p.i].to_vec()
+    };
+    let opt = ident(&mut p);
+    // getopt: `-g` takes the next argument, `-gX` the rest of the word
+    let arg = match opt.as_slice() {
+        b"g" => {
+            p.skip_white();
+            ident(&mut p)
+        }
+        [b'g', rest @ ..] => rest.to_vec(),
+        _ => return None,
+    };
+    let len = |t: &[u8]| -> f64 {
+        // parse_float_decimal and atof, then the unit
+        let mut i = 0;
+        if matches!(t.first(), Some(b'+' | b'-')) {
+            i = 1;
+        }
+        while i < t.len() && (t[i].is_ascii_digit() || t[i] == b'.') {
+            i += 1;
+        }
+        let v: f64 = std::str::from_utf8(&t[..i])
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0.0);
+        let u = t[i..].strip_prefix(b"true").unwrap_or(&t[i..]);
+        let k = match u {
+            b"pt" => 72.0 / 72.27,
+            b"in" => 72.0,
+            b"cm" => 72.0 / 2.54,
+            b"mm" => 72.0 / 25.4,
+            b"pc" => 12.0 * 72.0 / 72.27,
+            b"dd" => 1238.0 / 1157.0 * 72.0 / 72.27,
+            b"cc" => 12.0 * 1238.0 / 1157.0 * 72.0 / 72.27,
+            b"sp" => 72.0 / (72.27 * 65536.0),
+            _ => 1.0,
+        };
+        v * k
+    };
+    Some(match arg.iter().position(|&c| c == b',') {
+        Some(c) => (len(&arg[..c]), len(&arg[c + 1..])),
+        None => {
+            let g = len(&arg);
+            (g, g)
+        }
+    })
+}
+
 fn trim(s: &[u8]) -> &[u8] {
     let st = s
         .iter()
@@ -231,83 +298,175 @@ fn trim(s: &[u8]) -> &[u8] {
     &s[st..]
 }
 
-/// A colour of a special: `rgb r g b`, `cmyk c m y k`, `gray g`,
-/// `hsb h s b`, or a PDF array `[g]`, `[r g b]`, `[c m y k]`.
-pub fn read_color(p: &mut Parser) -> Option<Col> {
-    // dvipdfmx writes colour components with 3 decimals (measured: xcolor's
-    // `rgb 0.7843 0.3921 0` is `.784 .392 0 rg`)
-    read_color_exact(p).map(|c| {
-        Col(c
-            .0
-            .into_iter()
-            .map(|v| (v * 1000.0).round() / 1000.0)
-            .collect())
-    })
+/// Components with 3 decimals, as dvipdfmx writes them (measured: xcolor's
+/// `rgb 0.7843 0.3921 0` is `.784 .392 0 rg`).
+fn rounded(c: Col) -> Col {
+    Col(c
+        .0
+        .into_iter()
+        .map(|v| (v * 1000.0).round() / 1000.0)
+        .collect())
 }
 
-fn read_color_exact(p: &mut Parser) -> Option<Col> {
-    if p.peek() == Some(b'[') {
-        let Obj::Array(a) = p.object()? else {
-            return None;
-        };
-        let v: Option<Vec<f64>> = a.iter().map(Obj::as_num).collect();
-        let v = v?;
-        return matches!(v.len(), 1 | 3 | 4).then_some(Col(v));
-    }
-    let save = p.i;
+/// A colour of a `color` or `background` special (spc_util.c's
+/// spc_read_color_color): `rgb r g b`, `cmyk c m y k`, `gray g`,
+/// `hsb h s b` or a colour name ([`named_color`]). Nothing else: not
+/// `grey`, a bare number or an array.
+pub fn read_color(p: &mut Parser) -> Option<Col> {
     let w = p.word()?.to_vec();
     let nums =
         |p: &mut Parser, n: usize| -> Option<Vec<f64>> { (0..n).map(|_| p.number()).collect() };
     let c = match w.as_slice() {
         b"rgb" => Col(nums(p, 3)?),
         b"cmyk" => Col(nums(p, 4)?),
-        b"gray" | b"grey" => Col(nums(p, 1)?),
+        b"gray" => Col(nums(p, 1)?),
         b"hsb" => {
             let v = nums(p, 3)?;
             Col(hsb_to_rgb(v[0], v[1], v[2]).to_vec())
         }
-        _ => match named_color(&w) {
-            Some(c) => c,
-            None => {
-                p.i = save;
-                // a bare number is gray
-                let g = p.number()?;
-                Col(vec![g])
-            }
-        },
+        _ => named_color(&w)?,
     };
-    Some(c)
+    Some(rounded(c))
 }
 
-fn hsb_to_rgb(h: f64, s: f64, b: f64) -> [f64; 3] {
-    let h6 = (h * 6.0).rem_euclid(6.0);
-    let i = h6.floor();
-    let f = h6 - i;
-    let (p, q, t) = (b * (1.0 - s), b * (1.0 - s * f), b * (1.0 - s * (1.0 - f)));
-    match i as i32 {
-        0 => [b, t, p],
-        1 => [q, b, p],
-        2 => [p, b, t],
-        3 => [p, q, b],
-        4 => [t, p, b],
-        _ => [b, p, q],
+/// A colour of a `pdf:` special (spc_util.c's spc_read_color_pdf): one,
+/// three or four numbers (gray, RGB, CMYK), in `[...]` or not, or a
+/// colour name; `/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK` and their
+/// components. What it tried to read is consumed when it fails, as the C
+/// leaves it.
+pub fn read_pdf_color(p: &mut Parser) -> Option<Col> {
+    p.skip_white();
+    let mut n = None;
+    if p.peek() == Some(b'/') {
+        n = match p.name()?.as_slice() {
+            b"DeviceGray" => Some(1),
+            b"DeviceRGB" => Some(3),
+            b"DeviceCMYK" => Some(4),
+            // `/Pattern`, `@colorspace`: not carried out
+            _ => return None,
+        };
+    }
+    let array = p.peek() == Some(b'[');
+    if array {
+        p.i += 1;
+    }
+    let mut v = Vec::new();
+    while v.len() < n.unwrap_or(4) {
+        match p.number() {
+            Some(x) => v.push(x),
+            None => break,
+        }
+    }
+    let c = match (n, v.len()) {
+        (Some(n), k) if k != n => return None,
+        (_, 1 | 3 | 4) => Col(v),
+        (Some(_), _) => return None,
+        _ => named_color(p.word()?)?,
+    };
+    if array {
+        if p.peek() != Some(b']') {
+            return None;
+        }
+        p.i += 1;
+    }
+    Some(rounded(c))
+}
+
+/// spc_util.c's rgb_color_from_hsv, as written (`h` = 1 is case 6).
+fn hsb_to_rgb(h: f64, s: f64, v: f64) -> [f64; 3] {
+    if s == 0.0 {
+        return [v, v, v];
+    }
+    let h6 = h * 6.0;
+    let i = h6 as i32;
+    let f = h6 - i as f64;
+    let (v1, v2, v3) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    match i {
+        0 => [v, v3, v1],
+        1 => [v2, v, v1],
+        2 => [v1, v, v3],
+        3 => [v1, v2, v],
+        4 => [v3, v1, v],
+        5 | 6 => [v, v1, v2],
+        _ => [v, v, v],
     }
 }
 
-/// The dvips colour names dvipdfmx knows (`color.pro`'s CMYK values) that
-/// drivers still emit; others are reported.
+/// The dvips colour names dvipdfmx knows (spc_util.c's `colordefs`, in
+/// its order): CMYK, except `Gray`, `Black` and `White`, which are gray
+/// (measured: `color push Black` is `0 g`). color.sty's `named` model
+/// (xetex.def) writes these names into its `color` specials.
 fn named_color(w: &[u8]) -> Option<Col> {
     let cmyk = |c: f64, m: f64, y: f64, k: f64| Some(Col(vec![c, m, y, k]));
     match w {
-        // measured: `color push Black` is `0 g`
+        b"GreenYellow" => cmyk(0.15, 0.0, 0.69, 0.0),
+        b"Yellow" => cmyk(0.0, 0.0, 1.0, 0.0),
+        b"Goldenrod" => cmyk(0.0, 0.1, 0.84, 0.0),
+        b"Dandelion" => cmyk(0.0, 0.29, 0.84, 0.0),
+        b"Apricot" => cmyk(0.0, 0.32, 0.52, 0.0),
+        b"Peach" => cmyk(0.0, 0.5, 0.7, 0.0),
+        b"Melon" => cmyk(0.0, 0.46, 0.5, 0.0),
+        b"YellowOrange" => cmyk(0.0, 0.42, 1.0, 0.0),
+        b"Orange" => cmyk(0.0, 0.61, 0.87, 0.0),
+        b"BurntOrange" => cmyk(0.0, 0.51, 1.0, 0.0),
+        b"Bittersweet" => cmyk(0.0, 0.75, 1.0, 0.24),
+        b"RedOrange" => cmyk(0.0, 0.77, 0.87, 0.0),
+        b"Mahogany" => cmyk(0.0, 0.85, 0.87, 0.35),
+        b"Maroon" => cmyk(0.0, 0.87, 0.68, 0.32),
+        b"BrickRed" => cmyk(0.0, 0.89, 0.94, 0.28),
+        b"Red" => cmyk(0.0, 1.0, 1.0, 0.0),
+        b"OrangeRed" => cmyk(0.0, 1.0, 0.5, 0.0),
+        b"RubineRed" => cmyk(0.0, 1.0, 0.13, 0.0),
+        b"WildStrawberry" => cmyk(0.0, 0.96, 0.39, 0.0),
+        b"Salmon" => cmyk(0.0, 0.53, 0.38, 0.0),
+        b"CarnationPink" => cmyk(0.0, 0.63, 0.0, 0.0),
+        b"Magenta" => cmyk(0.0, 1.0, 0.0, 0.0),
+        b"VioletRed" => cmyk(0.0, 0.81, 0.0, 0.0),
+        b"Rhodamine" => cmyk(0.0, 0.82, 0.0, 0.0),
+        b"Mulberry" => cmyk(0.34, 0.9, 0.0, 0.02),
+        b"RedViolet" => cmyk(0.07, 0.9, 0.0, 0.34),
+        b"Fuchsia" => cmyk(0.47, 0.91, 0.0, 0.08),
+        b"Lavender" => cmyk(0.0, 0.48, 0.0, 0.0),
+        b"Thistle" => cmyk(0.12, 0.59, 0.0, 0.0),
+        b"Orchid" => cmyk(0.32, 0.64, 0.0, 0.0),
+        b"DarkOrchid" => cmyk(0.4, 0.8, 0.2, 0.0),
+        b"Purple" => cmyk(0.45, 0.86, 0.0, 0.0),
+        b"Plum" => cmyk(0.5, 1.0, 0.0, 0.0),
+        b"Violet" => cmyk(0.79, 0.88, 0.0, 0.0),
+        b"RoyalPurple" => cmyk(0.75, 0.9, 0.0, 0.0),
+        b"BlueViolet" => cmyk(0.86, 0.91, 0.0, 0.04),
+        b"Periwinkle" => cmyk(0.57, 0.55, 0.0, 0.0),
+        b"CadetBlue" => cmyk(0.62, 0.57, 0.23, 0.0),
+        b"CornflowerBlue" => cmyk(0.65, 0.13, 0.0, 0.0),
+        b"MidnightBlue" => cmyk(0.98, 0.13, 0.0, 0.43),
+        b"NavyBlue" => cmyk(0.94, 0.54, 0.0, 0.0),
+        b"RoyalBlue" => cmyk(1.0, 0.5, 0.0, 0.0),
+        b"Blue" => cmyk(1.0, 1.0, 0.0, 0.0),
+        b"Cerulean" => cmyk(0.94, 0.11, 0.0, 0.0),
+        b"Cyan" => cmyk(1.0, 0.0, 0.0, 0.0),
+        b"ProcessBlue" => cmyk(0.96, 0.0, 0.0, 0.0),
+        b"SkyBlue" => cmyk(0.62, 0.0, 0.12, 0.0),
+        b"Turquoise" => cmyk(0.85, 0.0, 0.2, 0.0),
+        b"TealBlue" => cmyk(0.86, 0.0, 0.34, 0.02),
+        b"Aquamarine" => cmyk(0.82, 0.0, 0.3, 0.0),
+        b"BlueGreen" => cmyk(0.85, 0.0, 0.33, 0.0),
+        b"Emerald" => cmyk(1.0, 0.0, 0.5, 0.0),
+        b"JungleGreen" => cmyk(0.99, 0.0, 0.52, 0.0),
+        b"SeaGreen" => cmyk(0.69, 0.0, 0.5, 0.0),
+        b"Green" => cmyk(1.0, 0.0, 1.0, 0.0),
+        b"ForestGreen" => cmyk(0.91, 0.0, 0.88, 0.12),
+        b"PineGreen" => cmyk(0.92, 0.0, 0.59, 0.25),
+        b"LimeGreen" => cmyk(0.5, 0.0, 1.0, 0.0),
+        b"YellowGreen" => cmyk(0.44, 0.0, 0.74, 0.0),
+        b"SpringGreen" => cmyk(0.26, 0.0, 0.76, 0.0),
+        b"OliveGreen" => cmyk(0.64, 0.0, 0.95, 0.4),
+        b"RawSienna" => cmyk(0.0, 0.72, 1.0, 0.45),
+        b"Sepia" => cmyk(0.0, 0.83, 1.0, 0.7),
+        b"Brown" => cmyk(0.0, 0.81, 1.0, 0.6),
+        b"Tan" => cmyk(0.14, 0.42, 0.56, 0.0),
+        b"Gray" => Some(Col(vec![0.5])),
         b"Black" => Some(Col(vec![0.0])),
         b"White" => Some(Col(vec![1.0])),
-        b"Red" => cmyk(0.0, 1.0, 1.0, 0.0),
-        b"Green" => cmyk(1.0, 0.0, 1.0, 0.0),
-        b"Blue" => cmyk(1.0, 1.0, 0.0, 0.0),
-        b"Cyan" => cmyk(1.0, 0.0, 0.0, 0.0),
-        b"Magenta" => cmyk(0.0, 1.0, 0.0, 0.0),
-        b"Yellow" => cmyk(0.0, 0.0, 1.0, 0.0),
         _ => None,
     }
 }
@@ -359,21 +518,60 @@ impl<M: Metrics> Builder<'_, M> {
                     .diag(format!("bad colour in `color push{}'", lossy(r)));
                 return;
             };
-            self.doc.colors.push((c.clone(), c.clone()));
-            self.set_colors(Some(c.clone()), Some(c));
+            if self.doc.color_push((c.clone(), c.clone())) {
+                self.set_colors(Some(c.clone()), Some(c));
+            }
         } else if p.keyword(b"pop") {
-            self.doc.colors.pop();
+            self.doc.color_pop();
             self.reset_color();
         } else {
             let Some(c) = read_color(&mut p) else {
                 self.doc.diag(format!("bad colour in `color{}'", lossy(r)));
                 return;
             };
-            // `color SPEC`: the stack is that colour alone.
+            // `color SPEC` (pdf_color_clear_stack, pdf_color_set): the
+            // stack is emptied and its bottom entry is that colour.
             self.doc.colors.clear();
-            self.doc.colors.push((c.clone(), c.clone()));
+            self.doc.color_base = Some((c.clone(), c.clone()));
             self.set_colors(Some(c.clone()), Some(c));
         }
+    }
+
+    /// The fill and stroke colours of `pdf:bcolor`/`pdf:scolor`
+    /// (spc_pdfm.c): `fill C` and/or `stroke C`, or `C [C']` (fill, and
+    /// stroke if given, else the fill). A colour that does not read is the
+    /// current one (spc_util_read_pdfcolor's default), so the special
+    /// still pushes; nothing at all where a colour is due is an error.
+    fn pdf_colors(&mut self, p: &mut Parser) -> Option<(Col, Col)> {
+        let (cf, cs) = self
+            .doc
+            .color_current()
+            .unwrap_or((Col::black(), Col::black()));
+        let read = |p: &mut Parser, default: &Col| -> Option<Col> {
+            if p.at_end() {
+                return None;
+            }
+            Some(read_pdf_color(p).unwrap_or_else(|| default.clone()))
+        };
+        if matches!(p.peek(), Some(b'f' | b's')) {
+            let (mut f, mut s) = (cf.clone(), cs.clone());
+            while !p.at_end() {
+                if p.rest().starts_with(b"fill") {
+                    p.i += 4;
+                    f = read(p, &cf)?;
+                } else if p.rest().starts_with(b"stroke") {
+                    p.i += 6;
+                    s = read(p, &cs)?;
+                } else {
+                    // the C loops here for ever
+                    return None;
+                }
+            }
+            return Some((f, s));
+        }
+        let f = read(p, &cf)?;
+        let s = if p.at_end() { f.clone() } else { read(p, &cs)? };
+        Some((f, s))
     }
 
     /// `background SPEC`, `pdf:bgcolor SPEC`: the page's background, a
@@ -431,7 +629,7 @@ impl<M: Metrics> Builder<'_, M> {
                 self.doc.fonts.map_line(&line);
             }
             b"backgroundcolor" => {
-                if let Some(c) = read_color(&mut p) {
+                if let Some(c) = read_pdf_color(&mut p) {
                     self.background(c);
                 }
             }
@@ -478,14 +676,34 @@ impl<M: Metrics> Builder<'_, M> {
                 }
             }
             b"code" | b"direct" => self.literal(p.rest()),
+            // `pdf:page:` and `pdf:direct:` (spc_pdfm.c's
+            // pdft_compat_handlers): operators written as they are
+            b"page:" | b"direct:" => self.literal(p.rest()),
+            // dvipdfmx reads it before the run (the trailer's /ID)
+            b"trailerid" => self.doc.ignored_special("pdf:trailerid"),
             b"literal" => {
-                if p.keyword(b"direct") {
+                // spc_handler_pdfm_literal: `reverse` and `direct` in any
+                // order and number, matched as prefixes (as the C's
+                // strncmp does); `reverse` is ignored with a warning
+                let mut direct = false;
+                loop {
+                    p.skip_white();
+                    if p.rest().starts_with(b"reverse") {
+                        p.i += 7;
+                        self.doc.ignored_special("pdf:literal reverse");
+                    } else if p.rest().starts_with(b"direct") {
+                        p.i += 6;
+                        direct = true;
+                    } else {
+                        break;
+                    }
+                }
+                if p.at_end() {
+                    return;
+                }
+                if direct {
                     self.literal(p.rest());
                 } else {
-                    let reverse = p.keyword(b"reverse");
-                    if reverse {
-                        self.doc.ignored_special("pdf:literal reverse");
-                    }
                     // the origin moved to the current point, and back
                     let (x, y) = self.user_point();
                     let (x, y) = self.rel(x, y);
@@ -524,49 +742,50 @@ impl<M: Metrics> Builder<'_, M> {
                 s.restore();
                 self.reset_color();
             }
-            b"btrans" | b"begintransform" => {
+            b"btrans" | b"begintransform" | b"begintrans" | b"bt" => {
                 let m = read_transform(&mut p);
                 self.cur().save();
                 self.concat_about_point(m);
             }
-            b"etrans" | b"endtransform" => {
+            b"etrans" | b"endtransform" | b"endtrans" | b"et" => {
                 self.cur().restore();
                 self.reset_color();
             }
-            b"bcolor" | b"begincolor" => {
-                let Some(f) = read_color(&mut p) else {
+            b"bcolor" | b"begincolor" | b"bc" | b"begingray" | b"bgray" | b"bg" => {
+                let Some((f, s)) = self.pdf_colors(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
-                self.doc.colors.push((f.clone(), s.clone()));
-                self.set_colors(Some(f), Some(s));
+                if self.doc.color_push((f.clone(), s.clone())) {
+                    self.set_colors(Some(f), Some(s));
+                }
             }
-            b"scolor" | b"setcolor" => {
-                let Some(f) = read_color(&mut p) else {
+            b"scolor" | b"setcolor" | b"sc" => {
+                let Some((f, s)) = self.pdf_colors(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
+                // the top entry, which is the bottom one when nothing is
+                // pushed
                 match self.doc.colors.last_mut() {
                     Some(top) => *top = (f.clone(), s.clone()),
-                    None => self.doc.colors.push((f.clone(), s.clone())),
+                    None => self.doc.color_base = Some((f.clone(), s.clone())),
                 }
                 self.set_colors(Some(f), Some(s));
             }
-            b"ecolor" | b"endcolor" => {
-                self.doc.colors.pop();
+            b"ecolor" | b"endcolor" | b"ec" | b"endgray" | b"egray" | b"eg" => {
+                self.doc.color_pop();
                 self.reset_color();
             }
-            b"bgcolor" => {
-                if let Some(c) = read_color(&mut p) {
+            b"bgcolor" | b"bgc" | b"bbc" | b"bbg" => {
+                if let Some(c) = read_pdf_color(&mut p) {
                     self.background(c);
                 }
             }
-            b"image" => self.image_special(&mut p, true),
+            b"image" | b"img" | b"epdf" => self.image_special(&mut p, true),
             b"uxobj" | b"usexobj" => self.uxobj(&mut p),
-            b"bxobj" | b"beginxobj" => self.bxobj(&mut p),
-            b"exobj" | b"endxobj" => {
+            b"bxobj" | b"beginxobj" | b"bform" => self.bxobj(&mut p),
+            b"exobj" | b"endxobj" | b"eform" => {
                 let d = match p.object() {
                     Some(Obj::Dict(d)) => Some(self.fixup_dict(d)),
                     _ => None,
@@ -582,7 +801,7 @@ impl<M: Metrics> Builder<'_, M> {
                 match p.object() {
                     Some(o) => {
                         let o = self.fixup(o);
-                        self.doc.named.insert(name, Named::Obj(o));
+                        self.define(name, Named::Obj(o));
                     }
                     None => self
                         .doc
@@ -597,7 +816,7 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"stream" | b"fstream" => self.stream_special(&cmd, &mut p),
             b"ann" | b"annot" | b"annotate" | b"annotation" => self.ann(&mut p),
-            b"xann" => self.xann(&mut p),
+            b"xann" | b"xannot" | b"extendann" => self.xann(&mut p),
             b"link" => self.doc.nolink = false,
             b"nolink" => self.doc.nolink = true,
             b"bann" | b"bannot" | b"beginann" => {
@@ -606,7 +825,7 @@ impl<M: Metrics> Builder<'_, M> {
                         .diag(format!("pdf:bann without a dictionary: `{}'", lossy(r)));
                     return;
                 };
-                let d = self.fixup_dict(d);
+                let d = self.text_dict(d);
                 if self.doc.tracking.is_some() {
                     self.doc.diag("pdf:bann inside another pdf:bann".into());
                     self.break_annot();
@@ -621,25 +840,24 @@ impl<M: Metrics> Builder<'_, M> {
                 self.break_annot();
                 self.doc.tracking = None;
             }
-            b"dest" => {
-                let name = match p.object() {
-                    Some(Obj::Str(s)) | Some(Obj::Name(s)) => s,
-                    _ => {
-                        self.doc
-                            .diag(format!("pdf:dest without a name: `{}'", lossy(r)));
-                        return;
-                    }
-                };
-                let Some(o) = p.object() else {
-                    self.doc
-                        .diag(format!("pdf:dest without a destination: `{}'", lossy(r)));
+            // spc_handler_pdfm_dest: a string and an array, or nothing
+            b"dest" | b"destination" => {
+                let Some(Obj::Str(name)) = p.object() else {
+                    self.doc.diag(format!(
+                        "pdf:dest: PDF string expected for destination name: `{}'",
+                        lossy(r)
+                    ));
                     return;
                 };
-                match self.fixup(o) {
-                    Obj::Array(a) => self.add_dest(name, &a),
-                    o => self.doc.dests.push((name, o)),
+                match p.object().map(|o| self.fixup(o)) {
+                    Some(Obj::Array(a)) => self.add_dest(name, &a),
+                    _ => self.doc.diag(format!(
+                        "pdf:dest: Destination not specified as an array object: `{}'",
+                        lossy(r)
+                    )),
                 }
             }
+            b"names" => self.names_special(&mut p),
             b"outline" | b"out" => {
                 // `[-]`: closed, `[]`: open; without either, dvipdfmx's
                 // default (`-O 0`, TeX Live's `dvipdfmx.cfg`): closed.
@@ -656,7 +874,7 @@ impl<M: Metrics> Builder<'_, M> {
                         .diag(format!("pdf:outline without a dictionary: `{}'", lossy(r)));
                     return;
                 };
-                let d = self.fixup_dict(d);
+                let d = self.text_dict(d);
                 self.doc.outlines.push(Outline {
                     level,
                     open,
@@ -665,14 +883,14 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"docinfo" => {
                 if let Some(Obj::Dict(d)) = p.object() {
-                    let d = self.fixup_dict(d);
+                    let d = self.text_dict(d);
                     self.doc.docinfo.merge(&d);
                 }
             }
             b"docview" => {
                 if let Some(Obj::Dict(d)) = p.object() {
-                    let d = self.fixup_dict(d);
-                    self.doc.catalog.merge(&d);
+                    let d = self.text_dict(d);
+                    docview(&mut self.doc.catalog, d);
                 }
             }
             b"mapline" => {
@@ -705,12 +923,27 @@ impl<M: Metrics> Builder<'_, M> {
             },
             Obj::Array(a) => Obj::Array(a.into_iter().map(|e| self.fixup(e)).collect()),
             Obj::Dict(d) => Obj::Dict(self.fixup_dict(d)),
+            // xdvipdfmx keeps a number as a double (`0.5` is written `.5`)
+            Obj::Num(t) => Obj::Num(super::pdfobj::special_number(&t)),
             o => o,
         }
     }
 
     pub fn fixup_dict(&self, d: Dict) -> Dict {
         Dict(d.0.into_iter().map(|(k, v)| (k, self.fixup(v))).collect())
+    }
+
+    /// The dictionary of `pdf:ann`, `pdf:bann`, `pdf:outline`,
+    /// `pdf:docinfo` and `pdf:docview`: [`fixup_dict`](Self::fixup_dict),
+    /// with its text strings made UTF-16BE ([`text_strings`]).
+    fn text_dict(&mut self, mut d: Dict) -> Dict {
+        if let Err(k) = text_strings(&mut d) {
+            self.doc.diag(format!(
+                "Input string conversion (to UTF16BE) failed for {}...",
+                lossy(&k)
+            ));
+        }
+        self.fixup_dict(d)
     }
 
     /// The current point as `@xpos`/`@ypos` give it: dvipdfmx's device
@@ -721,6 +954,73 @@ impl<M: Metrics> Builder<'_, M> {
             x + Fx(super::page::ORIGIN),
             self.page_height - Fx(super::page::ORIGIN) + y,
         )
+    }
+
+    /// `pdf:put @resources <<...>>` (spc_pdfm.c's safeputresdict): each
+    /// category's entries join the ones there, and an entry already there
+    /// keeps its value ("Object ... already defined in dict! (ignored)");
+    /// a category given by name (`/ExtGState @gs`) takes the entries there
+    /// into that dictionary and replaces them by the name. A category that
+    /// is neither a dictionary nor a name stops the special.
+    fn put_resources(&mut self, d: Dict) {
+        let lossy_k = |k: &[u8]| String::from_utf8_lossy(k).into_owned();
+        for (cat, v) in d.0 {
+            let old = self.cur_ref().sup.resources.get(&cat).cloned();
+            // the entries of `from` that `into` lacks, added to it
+            let join = |this: &mut Self, into: &mut Dict, from: Dict| {
+                for (k, v) in from.0 {
+                    if into.get(&k).is_some() {
+                        this.doc.diag(format!(
+                            "Object \"{}\" already defined in dict! (ignored)",
+                            lossy_k(&k)
+                        ));
+                    } else {
+                        into.0.push((k, v));
+                    }
+                }
+            };
+            match v {
+                Obj::Dict(new) => match old {
+                    Some(Obj::Dict(mut o)) => {
+                        join(self, &mut o, new);
+                        self.cur().sup.resources.set(&cat, Obj::Dict(o));
+                    }
+                    Some(Obj::Named(n)) => {
+                        let mut o = self.doc.named_dict(&n).cloned().unwrap_or_default();
+                        join(self, &mut o, new);
+                        if let Some(Named::Obj(Obj::Dict(d))) = self.doc.named.get_mut(&n) {
+                            *d = o;
+                        }
+                    }
+                    _ => self.cur().sup.resources.set(&cat, Obj::Dict(new)),
+                },
+                Obj::Named(n) => {
+                    if old.as_ref() == Some(&Obj::Named(n.clone())) {
+                        continue;
+                    }
+                    let from = match old {
+                        Some(Obj::Dict(o)) => Some(o),
+                        Some(Obj::Named(m)) => self.doc.named_dict(&m).cloned(),
+                        _ => None,
+                    };
+                    if let Some(from) = from {
+                        let mut o = self.doc.named_dict(&n).cloned().unwrap_or_default();
+                        join(self, &mut o, from);
+                        if let Some(Named::Obj(Obj::Dict(d))) = self.doc.named.get_mut(&n) {
+                            *d = o;
+                        }
+                    }
+                    self.cur().sup.resources.set(&cat, Obj::Named(n));
+                }
+                _ => {
+                    self.doc.diag(format!(
+                        "Invalid type (not DICT) for page/form resource dict entry: key=\"{}\"",
+                        lossy_k(&cat)
+                    ));
+                    return;
+                }
+            }
+        }
     }
 
     fn put(&mut self, p: &mut Parser) {
@@ -736,7 +1036,7 @@ impl<M: Metrics> Builder<'_, M> {
         match name.as_slice() {
             b"resources" => {
                 if let Some(d) = first_dict() {
-                    self.cur().sup.resources.merge(&d);
+                    self.put_resources(d);
                 }
             }
             b"thispage" => {
@@ -776,16 +1076,86 @@ impl<M: Metrics> Builder<'_, M> {
                         "pdf:put to @{}, which is not a dictionary or array",
                         lossy(&name)
                     )),
-                    None => {
-                        // dvipdfmx makes the object on a put to an unknown name
-                        let o = match objs.len() {
-                            1 => objs.pop().expect("one"),
-                            _ => Obj::Array(objs),
-                        };
-                        self.doc.named.insert(name, Named::Obj(o));
-                    }
+                    // spc_handler_pdfm_put: nothing is made
+                    None => self
+                        .doc
+                        .diag(format!("Specified object not exist: {}", lossy(&name))),
                 }
             }
+        }
+    }
+
+    /// `pdf:names /Category [(key) value ...]` or `pdf:names /Category
+    /// (key) value` (spc_pdfm.c's spc_handler_pdfm_names): entries of the
+    /// catalog's name trees. `/Dests` entries are destinations as
+    /// `pdf:dest` makes them; an unknown category, a key that is not a
+    /// string or one already there stops the special (entries before it
+    /// stay).
+    fn names_special(&mut self, p: &mut Parser) {
+        let Some(Obj::Name(cat)) = p.object() else {
+            self.doc
+                .diag("pdf:names: PDF name expected but not found.".into());
+            return;
+        };
+        let pairs: Vec<(Obj, Obj)> = match p.object().map(|o| self.fixup(o)) {
+            Some(Obj::Array(a)) => {
+                if a.len() % 2 != 0 {
+                    self.doc
+                        .diag("pdf:names: Array size not multiple of 2 for pdf:names.".into());
+                    return;
+                }
+                let mut it = a.into_iter();
+                std::iter::from_fn(|| Some((it.next()?, it.next()?))).collect()
+            }
+            Some(Obj::Str(k)) => match p.object() {
+                Some(v) => vec![(Obj::Str(k), self.fixup(v))],
+                None => {
+                    self.doc
+                        .diag("pdf:names: PDF object expected but not found.".into());
+                    return;
+                }
+            },
+            _ => {
+                self.doc
+                    .diag("pdf:names: Invalid object type for pdf:names.".into());
+                return;
+            }
+        };
+        for (k, v) in pairs {
+            let Obj::Str(k) = k else {
+                self.doc
+                    .diag("pdf:names: Name tree key must be string.".into());
+                return;
+            };
+            if !NAME_CATEGORIES.contains(&cat.as_slice()) {
+                self.doc.diag(format!(
+                    "pdf:names: Unknown name dictionary category \"{}\".",
+                    lossy(&cat)
+                ));
+                return;
+            }
+            if cat == b"Dests" {
+                match v {
+                    Obj::Array(a) => self.add_dest(k, &a),
+                    o => self.doc.dests.push((k, o)),
+                }
+                continue;
+            }
+            if self
+                .doc
+                .name_trees
+                .get(&cat)
+                .is_some_and(|t| t.contains_key(&k))
+            {
+                self.doc
+                    .diag(format!("pdf:names: Object @{} already defined.", lossy(&k)));
+                return;
+            }
+            self.doc
+                .name_trees
+                .entry(cat.clone())
+                .or_default()
+                .insert(k, v);
         }
     }
 
@@ -802,9 +1172,30 @@ impl<M: Metrics> Builder<'_, M> {
             ));
             return;
         };
-        let dict = match p.object() {
-            Some(Obj::Dict(d)) => self.fixup_dict(d),
-            _ => Dict::default(),
+        // spc_handler_pdfm_stream_with_type: the data is the stream's
+        // decoded data; of the special's dictionary, /Length is dropped,
+        // or else /Filter (a /Filter given with a /Length stays). A
+        // dictionary that does not read loses the stream.
+        let dict = if p.peek() == Some(b'<') {
+            match p.object() {
+                Some(Obj::Dict(d)) => {
+                    let mut d = self.fixup_dict(d);
+                    if d.remove(b"Length").is_none() {
+                        d.remove(b"Filter");
+                    }
+                    d
+                }
+                _ => {
+                    self.doc.diag(format!(
+                        "pdf:{} @{}: Parsing dictionary failed.",
+                        lossy(cmd),
+                        lossy(&name)
+                    ));
+                    return;
+                }
+            }
+        } else {
+            Dict::default()
         };
         let data = if cmd == b"fstream" {
             let f = String::from_utf8_lossy(&s).into_owned();
@@ -822,7 +1213,19 @@ impl<M: Metrics> Builder<'_, M> {
         } else {
             s
         };
-        self.doc.named.insert(name, Named::Stream(dict, data));
+        self.define(name, Named::Stream(dict, data));
+    }
+
+    /// `pdf:obj`, `pdf:stream`, `pdf:fstream` (specials.c's
+    /// spc_push_object, pdfnames.c's pdf_names_add_object): a name already
+    /// defined keeps its first object ("Object @name already defined.").
+    fn define(&mut self, name: Vec<u8>, o: Named) {
+        if self.doc.named.contains_key(&name) {
+            self.doc
+                .diag(format!("Object @{} already defined.", lossy(&name)));
+            return;
+        }
+        self.doc.named.insert(name, o);
     }
 
     /// `pdf:ann [@name] dims|bbox <<dict>>`: an annotation at the current
@@ -838,7 +1241,7 @@ impl<M: Metrics> Builder<'_, M> {
             self.doc.diag("pdf:ann without a dictionary".into());
             return;
         };
-        let d = self.fixup_dict(d);
+        let d = self.text_dict(d);
         let (x, y) = self.stream_point_device();
         let (x, y) = (x.to_f64(), y.to_f64());
         let r = match t.bbox {
@@ -1294,6 +1697,122 @@ pub fn read_transform(p: &mut Parser) -> Mat {
     m
 }
 
+/// The name trees dvipdfmx writes (pdfdoc.c's `name_dict_categories`, in
+/// its order).
+pub const NAME_CATEGORIES: [&[u8]; 10] = [
+    b"Dests",
+    b"AP",
+    b"JavaScript",
+    b"Pages",
+    b"Templates",
+    b"IDS",
+    b"URLS",
+    b"EmbeddedFiles",
+    b"AlternatePresentations",
+    b"Renditions",
+];
+
+/// `pdf:docview <<...>>` into the catalog (spc_pdfm.c's
+/// spc_handler_pdfm_docview): a `/ViewerPreferences` dictionary merges
+/// into the one the catalog has ("Avoid overriding whole
+/// ViewerPreferences"), every other entry replaces.
+fn docview(catalog: &mut Dict, mut d: Dict) {
+    if let Some(Obj::Dict(old)) = catalog.get_mut(b"ViewerPreferences") {
+        if let Some(Obj::Dict(add)) = d.get(b"ViewerPreferences") {
+            old.merge(add);
+            d.remove(b"ViewerPreferences");
+        }
+    }
+    catalog.merge(&d);
+}
+
+/// The keys whose string values dvipdfmx takes for text strings
+/// (spc_pdfm.c's `default_taintkeys`).
+const TEXT_KEYS: [&[u8]; 11] = [
+    b"Title",
+    b"Author",
+    b"Subject",
+    b"Keywords",
+    b"Creator",
+    b"Producer",
+    b"Contents",
+    b"Subj",
+    b"TU",
+    b"T",
+    b"TM",
+];
+
+/// dvipdfmx's `modify_strings` for an XDV file (spc_pdfm.c): every string
+/// under a text key ([`TEXT_KEYS`]; in an array, under the array's key;
+/// in a nested dictionary, under that dictionary's keys) that has a byte
+/// above 127 and no UTF-16BE byte order mark is read as UTF-8 and written
+/// as UTF-16BE with the mark. A string that is not UTF-8 stops the walk,
+/// as the C's error does (strings after it stay as they are); its key is
+/// the error.
+pub fn text_strings(d: &mut Dict) -> Result<(), Vec<u8>> {
+    for (k, v) in d.0.iter_mut() {
+        text_strings_of(k, v)?;
+    }
+    Ok(())
+}
+
+fn text_strings_of(k: &[u8], v: &mut Obj) -> Result<(), Vec<u8>> {
+    match v {
+        Obj::Str(s) => {
+            if TEXT_KEYS.contains(&k) && !s.starts_with(b"\xfe\xff") && s.iter().any(|&c| c > 127) {
+                match utf8_to_utf16be(s) {
+                    Some(u) => *s = u,
+                    None => return Err(k.to_vec()),
+                }
+            }
+            Ok(())
+        }
+        Obj::Array(a) => a.iter_mut().try_for_each(|e| text_strings_of(k, e)),
+        Obj::Dict(d) => text_strings(d),
+        _ => Ok(()),
+    }
+}
+
+/// `reencode_string_from_utf8_to_utf16be`: the C's UTF-8 reader
+/// (unicode.c's `UC_UTF8_decode_char`: overlong forms accepted, 5- and
+/// 6-byte forms read but out of range), `None` for a string it rejects.
+fn utf8_to_utf16be(s: &[u8]) -> Option<Vec<u8>> {
+    let mut out = vec![0xfe, 0xff];
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i];
+        i += 1;
+        let (mut u, n) = match c {
+            0..=0x7f => (c as u32, 0),
+            _ if c & 0xe0 == 0xc0 => ((c & 31) as u32, 1),
+            _ if c & 0xf0 == 0xe0 => ((c & 0x0f) as u32, 2),
+            _ if c & 0xf8 == 0xf0 => ((c & 0x07) as u32, 3),
+            _ if c & 0xfc == 0xf8 => ((c & 0x03) as u32, 4),
+            _ if c & 0xfe == 0xfc => ((c & 0x01) as u32, 5),
+            _ => return None,
+        };
+        let cont = s.get(i..i + n)?;
+        for &b in cont {
+            if b & 0xc0 != 0x80 {
+                return None;
+            }
+            u = (u << 6) | (b & 0x3f) as u32;
+        }
+        i += n;
+        if u > 0x10ffff || (0xd800..=0xdfff).contains(&u) {
+            return None;
+        }
+        if u <= 0xffff {
+            out.extend_from_slice(&(u as u16).to_be_bytes());
+        } else {
+            let v = u - 0x10000;
+            out.extend_from_slice(&((0xd800 + (v >> 10)) as u16).to_be_bytes());
+            out.extend_from_slice(&((0xdc00 + (v & 0x3ff)) as u16).to_be_bytes());
+        }
+    }
+    Some(out)
+}
+
 fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
@@ -1314,6 +1833,21 @@ mod tests {
             .unwrap();
         assert!((w.to_f64() - 595.2756).abs() < 1e-3);
         assert_eq!(paper_of(b"pdf:dest (x) [@thispage /Fit]"), None);
+    }
+
+    /// Measured (TeX Live 2026 xdvipdfmx): `dvipdfmx:config g 2.5pt` on
+    /// the first page grows the links of every page by 2.4907 bp (`/Rect
+    /// [74.74 704.239 90.182 722.491]` for a box 77.23 706.73 87.691 720),
+    /// a `g 10` on the second page changes nothing.
+    #[test]
+    fn config_grow_lengths() {
+        let g = |s: &str| config_grow(s.as_bytes());
+        let (x, y) = g("dvipdfmx:config g 2.5pt").unwrap();
+        assert!((x - 2.4906600).abs() < 1e-6 && x == y);
+        assert_eq!(g("dvipdfmx:config g 10"), Some((10.0, 10.0)));
+        assert_eq!(g("dvipdfmx:config g 1bp,2bp"), Some((1.0, 2.0)));
+        assert_eq!(g("dvipdfmx:config C 0x0010"), None);
+        assert_eq!(g("pdf:config g 1"), None);
     }
 
     #[test]
@@ -1341,10 +1875,107 @@ mod tests {
         assert_eq!(c("rgb 1 0 0.5"), Some(Col(vec![1.0, 0.0, 0.5])));
         assert_eq!(c("cmyk 0.1 0.8 0.2 0.05").unwrap().0.len(), 4);
         assert_eq!(c("gray 0.5"), Some(Col(vec![0.5])));
-        assert_eq!(c("[1]"), Some(Col(vec![1.0])));
-        assert_eq!(c("[0 0.5 1]"), Some(Col(vec![0.0, 0.5, 1.0])));
         assert_eq!(c("Red"), Some(Col(vec![0.0, 1.0, 1.0, 0.0])));
         assert_eq!(c("hsb 0 1 1"), Some(Col(vec![1.0, 0.0, 0.0])));
+        // spc_util.c's case 6: h = 1 is not red
+        assert_eq!(c("hsb 1 1 1"), Some(Col(vec![1.0, 0.0, 1.0])));
+        // measured (TeX Live 2026 xdvipdfmx): `color push Apricot` is
+        // `0 0.32 0.52 0 k`, `Gray` is `0.5 g`; `grey 0.5`, a bare `0.25`
+        // and arrays are not colours of a `color` special (no colour set)
+        assert_eq!(c("Apricot"), Some(Col(vec![0.0, 0.32, 0.52, 0.0])));
+        assert_eq!(c("Gray"), Some(Col(vec![0.5])));
+        assert_eq!(c("Black"), Some(Col(vec![0.0])));
+        assert_eq!(c("grey 0.5"), None);
+        assert_eq!(c("0.25"), None);
+        assert_eq!(c("[1]"), None);
+        let q = |s: &str| read_pdf_color(&mut Parser::new(s.as_bytes()));
+        assert_eq!(q("[1]"), Some(Col(vec![1.0])));
+        assert_eq!(q("[0 0.5 1]"), Some(Col(vec![0.0, 0.5, 1.0])));
+        assert_eq!(q("0 0.5 1"), Some(Col(vec![0.0, 0.5, 1.0])));
+        // measured: `pdf:bcolor MidnightBlue` is `0.98 0.13 0 0.43 k`
+        assert_eq!(q("MidnightBlue"), Some(Col(vec![0.98, 0.13, 0.0, 0.43])));
+        // measured: `[0.12345 0.0005 0.9996]` is `0.123 0.001 1 rg`
+        assert_eq!(
+            q("[0.12345 0.0005 0.9996]"),
+            Some(Col(vec![0.123, 0.001, 1.0]))
+        );
+        assert_eq!(
+            q("/DeviceCMYK [0 0 0 1]"),
+            Some(Col(vec![0.0, 0.0, 0.0, 1.0]))
+        );
+        assert_eq!(q("[0 1]"), None);
+        assert_eq!(q("[1 0 0"), None);
+    }
+
+    /// Text strings as TeX Live 2026's xdvipdfmx writes them (measured:
+    /// `pdf:docinfo <</Title (Café ü) /Author (plain) /Subject <FEFF00E9>
+    /// /Custom (é)>>` gives `/Title <feff00430061006600e9002000fc>`,
+    /// `/Author (plain)`, `/Subject <feff00e9>`, `/Custom <c3a9>`;
+    /// `pdf:outline 1 <</Title (Sécond) /X <</T (é)>> >>` gives
+    /// `<feff005300e90063006f006e0064>` and `/T <feff00e9>`; `pdf:ann`'s
+    /// `/Contents (Ünï) /NM (é)`, `<feff00dc006e00ef>` and `<c3a9>`).
+    #[test]
+    fn text_strings_are_utf16() {
+        let mut d = match Parser::new(
+            "<</Title (Café ü) /Author (plain) /Subject <FEFF00E9> /Custom (é) \
+             /X <</T (é)>> /Contents [(Ünï)] /NM (é)>>"
+                .as_bytes(),
+        )
+        .object()
+        {
+            Some(Obj::Dict(d)) => d,
+            o => panic!("{o:?}"),
+        };
+        assert_eq!(text_strings(&mut d), Ok(()));
+        let s = |k: &[u8]| d.get(k).unwrap().as_str().unwrap().to_vec();
+        assert_eq!(
+            s(b"Title"),
+            b"\xfe\xff\x00C\x00a\x00f\x00\xe9\x00 \x00\xfc".to_vec()
+        );
+        assert_eq!(s(b"Author"), b"plain".to_vec());
+        assert_eq!(s(b"Subject"), b"\xfe\xff\x00\xe9".to_vec());
+        assert_eq!(s(b"Custom"), "é".as_bytes().to_vec());
+        assert_eq!(s(b"NM"), "é".as_bytes().to_vec());
+        let x = d.get(b"X").unwrap().as_dict().unwrap();
+        assert_eq!(x.get(b"T").unwrap().as_str().unwrap(), b"\xfe\xff\x00\xe9");
+        let c = d.get(b"Contents").unwrap().as_array().unwrap();
+        assert_eq!(c[0].as_str().unwrap(), b"\xfe\xff\x00\xdc\x00n\x00\xef");
+        // beyond the BMP: a surrogate pair; not UTF-8: the key is the error
+        assert_eq!(
+            utf8_to_utf16be("𝔸".as_bytes()),
+            Some(b"\xfe\xff\xd8\x35\xdd\x38".to_vec())
+        );
+        let mut bad = Dict(vec![(b"T".to_vec(), Obj::Str(vec![0xff]))]);
+        assert_eq!(text_strings(&mut bad), Err(b"T".to_vec()));
+    }
+
+    /// Measured (TeX Live 2026 xdvipdfmx): `pdf:docview <</ViewerPreferences
+    /// <</HideToolbar true /FitWindow true>> /PageMode /UseOutlines>>`, then
+    /// `pdf:docview <</ViewerPreferences <</HideMenubar true>> >>`, gives a
+    /// catalog with `/PageMode /UseOutlines` and all three preferences.
+    #[test]
+    fn docview_merges_viewer_preferences() {
+        let dict = |s: &str| match Parser::new(s.as_bytes()).object() {
+            Some(Obj::Dict(d)) => d,
+            o => panic!("{o:?}"),
+        };
+        let mut cat = Dict::default();
+        docview(
+            &mut cat,
+            dict("<</ViewerPreferences <</HideToolbar true /FitWindow true>> /PageMode /UseOutlines>>"),
+        );
+        docview(
+            &mut cat,
+            dict("<</ViewerPreferences <</HideMenubar true>> >>"),
+        );
+        assert_eq!(
+            cat.get(b"PageMode"),
+            Some(&Obj::Name(b"UseOutlines".to_vec()))
+        );
+        let vp = cat.get(b"ViewerPreferences").unwrap().as_dict().unwrap();
+        for k in [&b"HideToolbar"[..], b"FitWindow", b"HideMenubar"] {
+            assert_eq!(vp.get(k), Some(&Obj::Bool(true)), "{}", lossy(k));
+        }
     }
 
     #[test]

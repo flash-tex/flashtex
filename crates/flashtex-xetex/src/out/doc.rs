@@ -184,6 +184,9 @@ pub struct Doc {
     /// Named destinations, in order: the name and the destination array
     /// (with `@page<n>` for its page).
     pub dests: Vec<(Vec<u8>, Obj)>,
+    /// `pdf:names` entries of the other name trees, by category (the
+    /// first entry of a key is kept).
+    pub name_trees: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Obj>>,
     /// Forms by id - 1.
     pub forms: Vec<std::sync::Arc<Built>>,
     /// `pdf:majorversion`, `pdf:minorversion` (dvipdfmx's default 1.7 is
@@ -191,6 +194,10 @@ pub struct Doc {
     pub version: (u32, u32),
     /// dvipdfmx's colour stack: (fill, stroke). It lasts across pages.
     pub colors: Vec<(Col, Col)>,
+    /// The stack's bottom entry (pdfcolor.c's `color_stack.fill[0]`): set
+    /// by `color SPEC` and by `pdf:scolor` with nothing pushed; `None` is
+    /// black.
+    pub color_base: Option<(Col, Col)>,
     pub tracking: Option<Tracking>,
     /// `dvipdfmx:catch_phantom`'s mode.
     pub phantom: Phantom,
@@ -209,6 +216,12 @@ pub struct Doc {
     pub diagnostics: Vec<String>,
     /// The paper size of a page without `pdf:pagesize` (bp).
     pub default_paper: Option<(Fx, Fx)>,
+    /// `dvipdfmx:config g x[,y]` of the first page (dvipdfmx reads the
+    /// first page's config specials before it sets up the document, later
+    /// pages' too late): the margin a `pdf:bann` link's rectangle grows by
+    /// (bp), and whether the first page has been read for it.
+    pub annot_grow: (f64, f64),
+    pub config_read: bool,
     /// The size the last `pdf:pagesize`/`papersize` gave, kept for later
     /// pages (dvipdfmx keeps it).
     pub paper: Option<(Fx, Fx)>,
@@ -230,6 +243,33 @@ impl Doc {
             version: (1, 7),
             ..Doc::default()
         }
+    }
+
+    /// pdfcolor.c's pdf_color_push: at most `DEV_COLOR_STACK_MAX` (128)
+    /// entries with the bottom one; a push beyond is ignored (`false`).
+    pub fn color_push(&mut self, c: (Col, Col)) -> bool {
+        if self.colors.len() >= 127 {
+            self.diag("Color stack overflow. Just ignore.".into());
+            return false;
+        }
+        self.colors.push(c);
+        true
+    }
+
+    /// pdfcolor.c's pdf_color_pop: the bottom entry is not popped.
+    pub fn color_pop(&mut self) {
+        if self.colors.pop().is_none() {
+            self.diag("Color stack underflow. Just ignore.".into());
+        }
+    }
+
+    /// The colour stack's top: (fill, stroke), `None` for the black it
+    /// starts with.
+    pub fn color_current(&self) -> Option<(Col, Col)> {
+        self.colors
+            .last()
+            .cloned()
+            .or_else(|| self.color_base.clone())
     }
 
     pub fn unknown_special(&mut self, what: &str) {
