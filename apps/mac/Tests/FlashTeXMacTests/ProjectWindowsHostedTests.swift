@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import HostedWindows
+import Observation
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -201,9 +202,52 @@ final class ProjectWindowsHostedTests: XCTestCase {
             quiet = ViewBodyProbe.counts.isEmpty ? quiet + 1 : 0
         }
         print("MultiWindowDiag: quiet after \(quietRounds) rounds (quiet=\(quiet)); key window \(String(describing: NSApp.keyWindow)); tv window key \(tv.window?.isKeyWindow ?? false) main \(tv.window?.isMainWindow ?? false); first responder is tv \(tv.window?.firstResponder === tv); policy \(NSApp.activationPolicy().rawValue) active \(NSApp.isActive)")
+        // Which observed property of the OTHER windows' models changes while
+        // window 1 is typed into: one tracker per property EditorPane reads,
+        // re-armed after each change, keeping the mutation's call stack
+        // (onChange runs synchronously in the property's willSet).
+        let log = MutationLog()
+        let reads: [(String, (ShellModel) -> Void)] = [
+            ("liveShare.generation", { _ = $0.liveShare.generation }),
+            ("liveShare.link", { _ = $0.liveShare.link(for: $0.activePath) }),
+            ("liveShare.canEdit", { _ = $0.liveShare.canEdit }),
+            ("activePath", { _ = $0.activePath }),
+            ("documents", { _ = $0.documents }),
+            ("project.readOnlyNote", { _ = $0.project.readOnlyNote(for: $0.activePath) }),
+            ("selection", { _ = $0.selection }),
+            ("pendingEdit", { _ = $0.pendingEdit }),
+            ("editorMarks", { _ = $0.editorMarks }),
+            ("editorRevision", { _ = $0.editorRevision }),
+            ("completionMetadata", { _ = $0.completionMetadata }),
+            ("caretFix", { _ = $0.caretFix }),
+            ("autoClosePairs", { _ = $0.autoClosePairs }),
+            ("prefs.autoCloseBraces", { _ in _ = EditorPreferences.shared.autoCloseBraces }),
+            ("prefs.showLineNumbers", { _ in _ = EditorPreferences.shared.showLineNumbers }),
+            ("editorLanguage", { _ = $0.editorLanguage }),
+            ("anchor", { _ = $0.anchor }),
+            ("proposals", { _ = $0.proposals }),
+            ("captureInboxVisible", { _ = $0.captureInboxVisible }),
+            ("bridgeStatus", { _ = $0.bridgeStatus }),
+            ("bridgeCaptures", { _ = $0.bridgeCaptures }),
+            ("bridgeDestination", { _ = $0.bridgeDestination }),
+        ]
+        for (wi, m) in others.enumerated() {
+            for (name, read) in reads {
+                MutationLog.arm(log, label: "w\(wi + 2) \(name)", model: m, read: read)
+            }
+        }
         ViewBodyProbe.recordsStacks = true
         let three = measure(8)
         ViewBodyProbe.recordsStacks = false
+        log.stop()
+        do {
+            let t0 = keyTimes[0]
+            for e in log.events {
+                print("MultiWindowDiag: CHANGE \(e.label) at \(String(format: "%.1f", Double(e.ns &- t0) / 1e6)) ms main \(e.main)")
+                for f in e.stack.prefix(45) { print("MultiWindowDiag:     \(f)") }
+            }
+            print("MultiWindowDiag: \(log.events.count) changes in the other windows' models")
+        }
         do {
             let names: [ObjectIdentifier: String] = [ObjectIdentifier(a): "w1", ObjectIdentifier(others[0]): "w2", ObjectIdentifier(others[1]): "w3"]
             let t0 = keyTimes[0]
@@ -212,9 +256,6 @@ final class ProjectWindowsHostedTests: XCTestCase {
             for (i, e) in ViewBodyProbe.events.enumerated() {
                 let who = e.model.map { names[$0] ?? "other-\($0.hashValue)" } ?? "?"
                 print("MultiWindowDiag: event \(i) \(e.view) \(who) at \(ms(e.ns)) ms")
-                if e.view == "EditorPane" || e.view == "ProjectSection" {
-                    for f in ViewBodyProbe.stacks[i].prefix(70) { print("MultiWindowDiag:   \(f)") }
-                }
             }
         }
 
@@ -381,5 +422,31 @@ final class ProjectWindowsHostedTests: XCTestCase {
         let pages = models.map(\.engineV3.pageCount)
         print("MultiWindowLarge: {\"windows\": \(n), \"pages\": \(pages), \"all_compiled_s\": \(Int(seconds)), \"host_mb\": \(hosts), \"app_mb\": \(app), "
               + "\"after_warning\": {\"host_mb\": \(hostsTrimmed), \"app_mb\": \(appTrimmed)}}")
+    }
+}
+
+/// DIAG #2151: observed-property changes of a model, with their call stacks.
+final class MutationLog: @unchecked Sendable {
+    struct Event { var label: String; var ns: UInt64; var main: Bool; var stack: [String] }
+    private let lock = NSLock()
+    private var _events: [Event] = []
+    private var stopped = false
+    var events: [Event] { lock.lock(); defer { lock.unlock() }; return _events }
+    func stop() { lock.lock(); stopped = true; lock.unlock() }
+    var isStopped: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+    func add(_ label: String) {
+        let e = Event(label: label, ns: MonotonicClock.nowNs(), main: Thread.isMainThread, stack: Thread.callStackSymbols)
+        lock.lock(); if !stopped { _events.append(e) }; lock.unlock()
+    }
+
+    @MainActor
+    static func arm(_ log: MutationLog, label: String, model: ShellModel, read: @escaping (ShellModel) -> Void) {
+        guard !log.isStopped else { return }
+        nonisolated(unsafe) let m = model
+        nonisolated(unsafe) let r = read
+        withObservationTracking { read(model) } onChange: {
+            log.add(label)
+            DispatchQueue.main.async { MainActor.assumeIsolated { arm(log, label: label, model: m, read: r) } }
+        }
     }
 }
