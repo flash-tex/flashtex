@@ -384,7 +384,7 @@ fn a_formula_before_a_replayed_call_is_not_state() {
             "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
             fonts,
             "\\def\\measure{\\begingroup\\setbox0\\hbox{$x^2$}\\global\\dimen1=\\wd0 \\endgroup}\n\
-             \\def\\one#1{#1\\measure\\message{[\\the\\dimen1]}}\n\
+             \\long\\def\\one#1{#1\\global\\dimen1=0pt \\measure\\message{[\\the\\dimen1]}}\n\
              \\one{}\\one{}\\one{\\setbox3\\hbox{$\\scriptscriptstyle u$}}\n\
              \\one{\\setbox3\\vbox{\\hsize=100pt \\noindent$a$\\par}}\\one{\\setbox3\\hbox{$\\scriptstyle u$}}\\end\n",
         ]
