@@ -197,6 +197,10 @@ final class ShellModel {
     /// outstanding after the watcher's single retry; the late reply consumes
     /// it with one more `watcherFired` (#831; DocumentWatcher.swift).
     @ObservationIgnored var pendingWatcherRecheck = false
+    /// Background disk probes sent by `refreshDiskStatus`, and the last one's
+    /// number and applied state: a burst of requests is answered by one probe.
+    @ObservationIgnored var diskProbesStarted = 0
+    @ObservationIgnored var lastDiskProbe: (number: Int, state: ProjectFilesV1.DiskState?)?
     var appliedCaptureIDs: Set<String> = []
     /// Past proposal decisions with outcomes (ReviewHistory.swift); persisted
     /// under Application Support (`FLASHTEX_REVIEW_HISTORY_DIR` overrides, `off` = memory only).
@@ -865,28 +869,73 @@ final class ShellModel {
             for path in due { if path == entry { saveEntryTex() } else { _ = project.saveDocumentNow(path) } }
             return
         }
-        guard !files.backgroundSavesInFlight else { autosaveAfterBackground = true; return } // the chain in flight re-arms it
+        // A chain in flight (or a ⌘S's background save) re-arms it once none is (`rearmDeferredAutosave`).
+        guard !autosaveChainActive, !files.backgroundSavesInFlight else { autosaveAfterBackground = true; return }
+        autosaveChainActive = true
         autosaveInBackground(due[...], entry: entry, generation: projectGeneration)
     }
 
     /// The timer's autosave asked for while background saves were in flight:
-    /// armed again once they are applied.
+    /// armed again once none is (`rearmDeferredAutosave`).
     @ObservationIgnored private var autosaveAfterBackground = false
+    /// An `autosaveInBackground` chain has documents left (between two of
+    /// its saves none may be in flight): a second chain never starts beside it.
+    @ObservationIgnored private var autosaveChainActive = false
+
+    /// `path` still wants the autosave: dirty, no save of it in flight, no
+    /// unresolved conflict (the entry's `files.conflict`, a member's own, #789).
+    private func autosaveDue(_ path: String, entry: String) -> Bool {
+        guard project.isDirty(path), savesInFlight[path] == nil else { return false }
+        return path == entry ? files.conflict == nil : project.saveConflict(for: path) == nil
+    }
 
     /// Background saves of `due`, one after another (each starts once the
     /// previous one's outcome is applied, so none waits behind another).
+    /// Each document is checked again when its turn comes: one a ⌘S saved
+    /// meanwhile is not written twice.
     private func autosaveInBackground(_ due: ArraySlice<String>, entry: String, generation: Int) {
-        guard projectGeneration == generation else { return }
-        guard let path = due.first else {
-            if autosaveAfterBackground { autosaveAfterBackground = false; scheduleAutosave() }
+        guard projectGeneration == generation else {
+            // Another project: its own edits arm its own autosave.
+            autosaveChainActive = false
+            autosaveAfterBackground = false
             return
         }
+        guard let path = due.first else {
+            autosaveChainActive = false
+            rearmDeferredAutosave()
+            return
+        }
+        let rest = due.dropFirst()
+        guard autosaveDue(path, entry: entry) else { autosaveInBackground(rest, entry: entry, generation: generation); return }
         // (An edit made while it is in flight re-arms the autosave itself.)
+        // The next save starts from a later run-loop turn, never from inside
+        // the outcome just applied: a main-thread operation that settled this
+        // save (a ⌘S, a disk probe) finishes first and never waits for the next.
         let next: @MainActor () -> Void = { [weak self] in
-            self?.autosaveInBackground(due.dropFirst(), entry: entry, generation: generation)
+            // The chain's end needs no later turn (nothing more to start).
+            guard !rest.isEmpty else { self?.autosaveInBackground(rest, entry: entry, generation: generation); return }
+            RunLoop.main.perform(inModes: [.common]) {
+                MainActor.assumeIsolated { self?.autosaveInBackground(rest, entry: entry, generation: generation) }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
         }
         let started = path == entry ? saveEntryTexInBackground(completion: next) : project.saveDocumentInBackground(path, completion: next)
-        if !started { autosaveInBackground(due.dropFirst(), entry: entry, generation: generation) }
+        if !started { autosaveInBackground(rest, entry: entry, generation: generation) }
+    }
+
+    /// An autosave the timer asked for while background saves were in
+    /// flight: armed again once none is and no chain is running.
+    func rearmDeferredAutosave() {
+        guard autosaveAfterBackground, !autosaveChainActive, !files.backgroundSavesInFlight else { return }
+        autosaveAfterBackground = false
+        scheduleAutosave()
+    }
+
+    /// Drops a pending autosave without performing it (quit with Don't Save).
+    func cancelPendingAutosave() {
+        autosaveWork?.cancel()
+        autosaveWork = nil
+        autosaveAfterBackground = false
     }
 
     /// Runs `save` for `path` only after any save of that path already in

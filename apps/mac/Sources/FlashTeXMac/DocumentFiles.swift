@@ -71,7 +71,10 @@ final class DocumentFilesState {
     /// Backend of the most recent file operation (nil before any).
     private(set) var backend: Backend?
     private(set) var status = "no file operation yet"
-    var conflict: DocumentConflict?
+    var conflict: DocumentConflict? { didSet { conflictEpoch &+= 1 } }
+    /// Moves at every write of `conflict` (a save's outcome, a probe's, a
+    /// resolution): a background probe sent before it moved is stale (REVIEW-E #2285).
+    @ObservationIgnored private(set) var conflictEpoch = 0
     /// Durable unsaved-text snapshots found for the open project that still
     /// differ from disk (DirtySnapshots.swift); the UI offers Restore/Discard.
     var offeredSnapshots: [DirtySnapshot] = []
@@ -88,6 +91,10 @@ final class DocumentFilesState {
     /// `helperBusy` true is no longer outstanding. The shell uses it to re-run
     /// a file-watcher check it had to drop while the save was in flight (#831).
     @ObservationIgnored var onSaveSettledLate: (@MainActor () -> Void)?
+    /// Runs on the main actor once the last background save in flight
+    /// (`saveInBackground`) was applied: the shell re-arms an autosave the
+    /// timer asked for meanwhile (`ShellModel.rearmDeferredAutosave`).
+    @ObservationIgnored var onBackgroundSavesDrained: (@MainActor () -> Void)?
 
     @ObservationIgnored fileprivate var client: ProjectFilesClient?
     @ObservationIgnored private let replyQueue = DispatchQueue(label: "flashtex.project-files.replies")
@@ -634,7 +641,11 @@ final class DocumentFilesState {
         late: @escaping @MainActor (Result<Reply, LineProcessFailure>, String) -> Void
     ) {
         backgroundJobs.append(job)
-        let settleOnMain: @MainActor () -> Void = { [weak self] in self?.settle(job, waiting: false) }
+        let settleOnMain: @MainActor () -> Void = { [weak self] in
+            // The window's file state gone: its outcome is still answered, once.
+            guard let self else { job.take(waiting: false)?(); return }
+            settle(job, waiting: false)
+        }
         Self.backgroundSaveQueue.async {
             let (sent, make) = prepare()
             job.lock.withLock { job.sent = sent }
@@ -663,8 +674,12 @@ final class DocumentFilesState {
     /// Every main-thread file operation first settles the saves in flight
     /// (`settleBackgroundSaves`), so it never restarts the helper under an
     /// unanswered save, nor checks a baseline the save is about to move.
+    ///
+    /// `applies` is asked on main when the outcome lands: false (the window
+    /// moved on meanwhile) records no conflict or disk state for it.
     func saveInBackground(_ url: URL, text: String, expectation: @escaping @Sendable () -> ProjectFilesV1.Expected,
-                          recordsState: Bool = true, lateReceipt: @escaping @MainActor (String) -> Void = { _ in },
+                          recordsState: Bool = true, applies: @escaping @MainActor () -> Bool = { true },
+                          lateReceipt: @escaping @MainActor (String) -> Void = { _ in },
                           completion: @escaping @MainActor (SaveResult) -> Void) {
         guard case .client(let client) = acquire(for: url) else {
             completion(save(url, text: text, expected: expectation(), force: false, recordsState: recordsState, lateReceipt: lateReceipt))
@@ -672,8 +687,9 @@ final class DocumentFilesState {
         }
         let name = url.lastPathComponent
         let job = BackgroundRequest<ProjectFilesV1.SaveOutcome>(url: url, isSave: true, timeout: helperTimeout) { [weak self] outcome, sent in
-            guard let self else { return }
-            completion(saveResult(outcome, url: url, sent: sent, recordsState: recordsState))
+            // Always answered, so no caller awaiting it (a member's ⌘S) hangs.
+            guard let self else { return completion(.failed("the window closed before the save of \(name) was answered")) }
+            completion(saveResult(outcome, url: url, sent: sent, recordsState: recordsState && applies()))
             onSaveSettledLate?() // a watcher check parked while this save was in flight runs now
         }
         backgroundSavesSent += 1
@@ -682,7 +698,8 @@ final class DocumentFilesState {
             return (SourceDigest.sha256Hex(text),
                     { ProjectFilesV1.SaveRequest(id: $0, path: name, text: text, expected: expected.wire, force: false) })
         }, late: { [weak self] result, sent in
-            self?.lateSaveReply(result, url: url, sent: sent, recordsState: recordsState, lateReceipt: lateReceipt)
+            guard let self else { return }
+            lateSaveReply(result, url: url, sent: sent, recordsState: recordsState && applies(), lateReceipt: lateReceipt)
         })
     }
 
@@ -701,15 +718,15 @@ final class DocumentFilesState {
         }
         let name = url.lastPathComponent
         let job = BackgroundRequest<ProjectFilesV1.Status>(url: url, isSave: false, timeout: helperTimeout) { [weak self] outcome, _ in
-            guard let self else { return }
+            // Always answered, so the awaiting probe never hangs.
+            guard let self else { return completion(.failure(.init("the window closed before the status of \(name) was answered"))) }
             let result: Result<ProjectFilesV1.Status, StatusFailure>
             switch outcome {
             case .reply(let s): result = .success(s)
             case .failed(let f): result = .failure(.init(f.text))
             case .timedOut(let t): result = .failure(.init("no status reply from the project-files helper within \(String(format: "%.1f", t)) s"))
             }
-            if case .success(let s) = result { lastDiskState = s.state }
-            completion(result)
+            completion(result) // the shell records `lastDiskState` when it applies it (`recordDiskState`)
             onSaveSettledLate?() // a watcher check parked while this probe was in flight runs now
         }
         backgroundStatusesSent += 1
@@ -727,6 +744,12 @@ final class DocumentFilesState {
         guard let finish = job.take(waiting: waiting) else { return }
         backgroundJobs.removeAll { $0 === job }
         finish()
+        if job.isSave, !backgroundSavesInFlight { onBackgroundSavesDrained?() }
+        if backgroundJobs.isEmpty, !settledWaiters.isEmpty {
+            let waiters = settledWaiters
+            settledWaiters = []
+            for w in waiters { w.resume() }
+        }
     }
 
     /// Settles every background request now, waiting (each at most until
@@ -735,9 +758,27 @@ final class DocumentFilesState {
     /// waits only for an operation made inside a request's own window (a ⌘S
     /// just as the autosave fired), which then waits what it used to wait
     /// behind the main-thread request; that outcome is applied first.
+    ///
+    /// Only the requests in flight on entry: a save an applied outcome starts
+    /// (the autosave's next document) is not waited for, and the autosave
+    /// starts its next one from a later run-loop turn anyway
+    /// (`ShellModel.autosaveInBackground`), after the operation that settled.
     func settleBackgroundSaves() {
-        while let job = backgroundJobs.first { settle(job, waiting: true) }
+        for job in backgroundJobs { settle(job, waiting: true) }
     }
+
+    /// Returns once no background request is in flight, without holding the
+    /// main thread meanwhile (`ShellModel.refreshDiskStatus` waits so).
+    func backgroundRequestsSettled() async {
+        guard backgroundRequestsInFlight else { return }
+        await withCheckedContinuation { settledWaiters.append($0) }
+    }
+
+    /// Main thread only: who awaits `backgroundRequestsSettled`.
+    @ObservationIgnored private var settledWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// A background probe's state, recorded once the shell applied it.
+    func recordDiskState(_ state: ProjectFilesV1.DiskState) { lastDiskState = state }
 
     /// Asks whether `url` still matches `expectedSha256` (nil: the editor expects no file).
     func diskStatus(_ url: URL, expectedSha256: String?) -> Result<ProjectFilesV1.Status, StatusFailure> {
@@ -908,6 +949,7 @@ extension ShellModel {
     var files: DocumentFilesState {
         if let existing = objc_getAssociatedObject(self, &Self.filesKey) as? DocumentFilesState { return existing }
         let state = DocumentFilesState()
+        state.onBackgroundSavesDrained = { [weak self] in self?.rearmDeferredAutosave() }
         objc_setAssociatedObject(self, &Self.filesKey, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return state
     }
@@ -960,7 +1002,14 @@ extension ShellModel {
 
     /// Every document with unsaved edits (entry and members, active or not):
     /// what replacing the project would drop (#786).
-    var hasUnsavedDocuments: Bool { isDirty || project.anyDirty }
+    ///
+    /// A background autosave in flight is settled first (it waits for its
+    /// reply, as the main-thread save did), so a Save/Discard question, a
+    /// refused Open or Reload, never counts edits that save is writing.
+    var hasUnsavedDocuments: Bool {
+        files.settleBackgroundSaves()
+        return isDirty || project.anyDirty
+    }
 
     /// Names the dirty documents for a Save/Discard prompt.
     var unsavedDocumentsDescription: String {
@@ -1204,9 +1253,10 @@ extension ShellModel {
               !files.backgroundSaveInFlight(for: url) else { return false }
         let text = entry.text, baseline = savedText, generation = projectGeneration
         files.saveInBackground(url, text: text, expectation: { baseline.map { .hash(SourceDigest.sha256Hex($0)) } ?? .newFile },
+                               applies: { [weak self] in self?.projectGeneration == generation && self?.documentURL == url },
                                lateReceipt: entryLateReceipt(url: url, text: text)) { [weak self] result in
-            guard let self else { return }
             defer { completion() }
+            guard let self else { return }
             guard projectGeneration == generation, documentURL == url else {
                 FlashTeXLog.write("files: an autosave of \(url.lastPathComponent) answered after the window moved on; not applied")
                 return
@@ -1514,11 +1564,31 @@ extension ShellModel {
     /// (`DocumentFilesState.diskStatusInBackground`, lane APP-LAG-AUDIT).
     /// A probe answered after the window moved on (another document, or a
     /// save that moved the baseline) is not applied.
+    ///
+    /// Never blocks the main thread (REVIEW-E #2285): with a request in
+    /// flight (an autosave, an earlier probe) it waits for it off main, and a
+    /// burst (FSEvents of `git checkout`, an external tool's writes) is
+    /// coalesced: a probe sent after this was asked answers it, so the burst
+    /// costs at most one more probe. A probe overtaken by a newer conflict
+    /// or disk state (`conflictEpoch`) is dropped.
     @discardableResult
     func refreshDiskStatus() async -> ProjectFilesV1.DiskState? {
-        files.settleBackgroundSaves() // the baseline compared with is the one after an autosave in flight
+        let asked = diskProbesStarted
+        while files.backgroundRequestsInFlight {
+            await files.backgroundRequestsSettled()
+            if let last = lastDiskProbe, last.number > asked { return last.state }
+        }
         guard let url = documentURL else { return nil }
-        let baseline = savedText, generation = projectGeneration
+        diskProbesStarted += 1
+        let number = diskProbesStarted
+        let state = await probeDiskStatus(url)
+        lastDiskProbe = (number, state)
+        return state
+    }
+
+    /// One background probe of `url` (`refreshDiskStatus`), applied unless stale.
+    private func probeDiskStatus(_ url: URL) async -> ProjectFilesV1.DiskState? {
+        let baseline = savedText, generation = projectGeneration, epoch = files.conflictEpoch
         let result = await withCheckedContinuation { (c: CheckedContinuation<Result<ProjectFilesV1.Status, DocumentFilesState.StatusFailure>, Never>) in
             files.diskStatusInBackground(url, baseline: baseline) { c.resume(returning: $0) }
         }
@@ -1527,7 +1597,7 @@ extension ShellModel {
         case (let a?, let b?): a.sameBytes(as: b)
         default: false
         }
-        guard documentURL == url, projectGeneration == generation, current else {
+        guard documentURL == url, projectGeneration == generation, current, files.conflictEpoch == epoch else {
             FlashTeXLog.write("files: a status probe of \(url.lastPathComponent) answered after the window moved on; not applied")
             return nil
         }
@@ -1536,6 +1606,7 @@ extension ShellModel {
             noteProbeFailure(url, failure.reason)
             return nil
         case .success(let s):
+            files.recordDiskState(s.state)
             applyDiskState(s.state, url: url, sha256: s.sha256, bytes: s.bytes, mtimeUnixMs: s.mtimeUnixMs, viaHelper: files.usesHelper)
             return s.state
         }
@@ -1709,7 +1780,8 @@ extension ShellModel {
             return true
         case .conflict(let conflict):
             captureNote = conflict.summary
-            if url == documentURL { preserveDirtyText(text, at: url, reason: "save refused: file changed on disk") }
+            // The buffer now (a background save's `text` may be older: typed on while it was out).
+            if url == documentURL { preserveDirtyText(entryText, at: url, reason: "save refused: file changed on disk") }
             return false
         case .failed(let reason):
             captureNote = "Save failed: \(reason)"
