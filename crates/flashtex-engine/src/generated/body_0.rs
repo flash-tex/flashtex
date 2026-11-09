@@ -587,7 +587,7 @@ impl Globals {
         self.pdf_trailer_id_toks = null;
         self.gen_faked_interword_space = false;
         self.gen_running_link = true;
-        self.pdf_space_font_name = 1933i32;
+        self.pdf_space_font_name = 1948i32;
         // §1634
         self.pdf_link_stack_ptr = 0i32;
         // §1706
@@ -616,12 +616,12 @@ impl Globals {
         // §1887
         self.mltex_p = false;
         self.mltex_enabled_p = false;
-        // §1895
+        // §1896
         self.synctex_tag_counter = 0i32;
-        // §1902
+        // §1903
         self.halting_on_error_p = false;
         self.kpse_make_tex_discard_errors = false;
-        // §1916
+        // §1917
         self.intr_state[crate::ix::U((100i32) as usize)] = hash_base;
         self.intr_state[crate::ix::U((101i32) as usize)] = frozen_control_sequence;
         self.intr_state[crate::ix::U((102i32) as usize)] = font_id_base;
@@ -645,9 +645,9 @@ impl Globals {
         self.intr_state[crate::ix::U((120i32) as usize)] = hash_prime;
         self.intr_state[crate::ix::U((121i32) as usize)] = eqtb_top;
         self.intr_on = self.flashtex_intr_enabled();
-        // §1921
+        // §1922
         self.ls_cond_depth = 0i32;
-        // §1925
+        // §1926
         self.bm_rec_on = false;
         self.bm_at_switch = false;
         self.bm_font_version = 0i32;
@@ -891,7 +891,7 @@ impl Globals {
         // §578
         self.font_ptr = null_font;
         self.fmem_ptr = 7i32;
-        self.font_name[crate::ix::U((null_font) as usize)] = 968i32;
+        self.font_name[crate::ix::U((null_font) as usize)] = 969i32;
         self.font_area[crate::ix::U((null_font) as usize)] = 345i32;
         self.hyphen_char[crate::ix::U((null_font) as usize)] = 45i32;
         self.skew_char[crate::ix::U((null_font) as usize)] = (1i32).wrapping_neg();
@@ -966,13 +966,13 @@ impl Globals {
         self.trie_c[crate::ix::U((0i32) as usize)] = 0i32;
         self.trie_ptr = 0i32;
         // §1394
-        self.hash[crate::ix::U(((frozen_protection) - 514) as usize)].set_rh(1621i32);
+        self.hash[crate::ix::U(((frozen_protection) - 514) as usize)].set_rh(1623i32);
         // §1479
         if self.ini_version() {
-            self.format_ident = 1695i32;
+            self.format_ident = 1710i32;
         }
         // §1616
-        self.hash[crate::ix::U(((end_write) - 514) as usize)].set_rh(1918i32);
+        self.hash[crate::ix::U(((end_write) - 514) as usize)].set_rh(1933i32);
         __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b1(level_one);
         __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b0(outer_call);
         __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_rh(null);
@@ -980,7 +980,7 @@ impl Globals {
         self.eTeX_mode = 0i32;
         // §1812
         self.max_reg_num = 255i32;
-        self.max_reg_help_line = 799i32;
+        self.max_reg_help_line = 800i32;
         // §1818
         {
             let __for_end_2 = tok_val;
@@ -1823,9 +1823,9 @@ impl Globals {
     /// filename in `full_source_filename_stack`, and if we fail to find
     /// one fall back on the non-file:line:error style.
     /// @<Basic print...
-    // §1904
+    // §1905
     pub fn print_file_line(&mut self) {
-        let mut level: i32 = 0; // §1904
+        let mut level: i32 = 0; // §1905
         level = self.in_open;
         while ((level > 0i32) && (self.full_source_filename_stack[crate::ix::U((level) as usize)] == 0i32)) {
             level = (level).wrapping_sub(1i32);
@@ -1843,7 +1843,7 @@ impl Globals {
                 } else {
                     self.print_int(((self.line_stack[crate::ix::U((((level).wrapping_add(1i32)) - 1) as usize)]) as i64));
                 }
-                self.print(659i32);
+                self.print(660i32);
             }
         }
     }
@@ -2532,7 +2532,7 @@ impl Globals {
                                             }
                                         }
                                     }
-                                    if (a != 327502766i32) {
+                                    if (a != 312141437i32) {
                                         {
                                             {
                                                 crate::system::wr_str(&mut self.term_out, "! TEX.POOL doesn't match; TANGLE me again.");
@@ -3560,7 +3560,7 @@ impl Globals {
                             m = (__av_mem[crate::ix::U((p) as usize)].hh().lh() / 256i32);
                             c = (__av_mem[crate::ix::U((p) as usize)].hh().lh() % 256i32);
                             if (__av_mem[crate::ix::U((p) as usize)].hh().lh() < 0i32) {
-                                self.print_esc(646i32);
+                                self.print_esc(647i32);
                             } else {
                                 // §316
                                 match m {
@@ -3599,11 +3599,11 @@ impl Globals {
                                     }
                                     end_match => {
                                         if (c == 0i32) {
-                                            self.print(647i32);
+                                            self.print(648i32);
                                         }
                                     }
                                     _ => {
-                                        self.print_esc(646i32);
+                                        self.print_esc(647i32);
                                     }
                                 }
                             }
@@ -3632,25 +3632,25 @@ impl Globals {
                 match self.scanner_status {
                     defining => {
                         {
-                            self.print_nl(661i32);
+                            self.print_nl(662i32);
                             p = self.def_ref;
                         }
                     }
                     matching => {
                         {
-                            self.print_nl(662i32);
+                            self.print_nl(663i32);
                             p = temp_head;
                         }
                     }
                     aligning => {
                         {
-                            self.print_nl(663i32);
+                            self.print_nl(664i32);
                             p = hold_head;
                         }
                     }
                     absorbing => {
                         {
-                            self.print_nl(664i32);
+                            self.print_nl(665i32);
                             p = self.def_ref;
                         }
                     }
@@ -3832,7 +3832,7 @@ impl Globals {
                 __av_mem[crate::ix::U((r) as usize)].set_hh_rh(null);
                 self.dl_new_node(r);
                 self.var_used = (self.var_used).wrapping_add(s);
-                // §1891
+                // §1892
                 if (s >= medium_node_size) {
                     {
                         { let __v50 = self.cur_input.synctex_tag_field; __av_mem[crate::ix::U((((r).wrapping_add(s)).wrapping_sub(2i32)) as usize)].set_int(__v50); }
