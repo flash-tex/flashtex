@@ -93,19 +93,62 @@ final class CaptureQueueTests: XCTestCase {
         XCTAssertEqual(mac.hellos[0].pairId, pairId, "reconnect uses the pairing's id with the long-term key")
     }
 
+    /// A second tap on Send / Retry while the first delivery is still out
+    /// (the list kept showing the button: `captures` was copied before the
+    /// queue flipped the row to `sending`) must not start a second delivery.
+    /// Before the fix both taps sent a `capture_submit`, the second restarting
+    /// the attempt count at 1 and racing the first's receipt for the row.
+    func testSecondTapWhileSendingDoesNotSendAgain() async throws {
+        let r = model.draft(CaptureRecord(source: .pencil, png: Self.trianglePNG(), instructions: "once"))
+        async let first: Void = model.send(r.id)
+        async let second: Void = model.send(r.id)
+        _ = await (first, second)
+        XCTAssertEqual(mac.captures.map(\.captureId), [r.id], "one capture_submit for two taps")
+        guard case .received(let ack)? = model.captures.first?.status else {
+            return XCTFail("expected received, got \(String(describing: model.captures.first?.status))")
+        }
+        XCTAssertEqual(ack.captureId, r.id)
+    }
+
+    /// The row says `sending…` as soon as the tap is taken, so the list hides
+    /// Send / Retry for the duration of the delivery.
+    func testRowShowsSendingWhileTheDeliveryIsOut() async throws {
+        let r = model.draft(CaptureRecord(source: .pencil, png: Self.trianglePNG(), instructions: "visible"))
+        let work = Task { await model.send(r.id) }
+        await Task.yield()
+        XCTAssertEqual(model.captures.first?.status, .sending(attempt: 1))
+        await work.value
+        guard case .received? = model.captures.first?.status else { return XCTFail("expected received") }
+    }
+
     func testInvalidImageRefusedLocally() {
         XCTAssertNotNil(CaptureQueue.validate(png: Data([1, 2, 3]), instructions: "x"))
         XCTAssertNotNil(CaptureQueue.validate(png: Self.trianglePNG(), instructions: String(repeating: "a", count: 4097)))
         XCTAssertNil(CaptureQueue.validate(png: Self.trianglePNG(), instructions: "ok"))
     }
 
-    func testNoDestinationIsRefusedNotSent() async throws {
+    /// No pinned insertion point on the Mac: nothing is sent, and the capture
+    /// stays retryable with the same id. Send has already cleared the canvas,
+    /// so a terminal refusal here (as before) lost the drawing: the row had no
+    /// Retry and the strokes could not be sent again once the pin was set.
+    func testNoDestinationIsNotSentAndStaysRetryable() async throws {
         mac.destination = nil
         let r = model.draft(CaptureRecord(source: .pencil, png: Self.trianglePNG(), instructions: "x"))
         await model.send(r.id)
-        guard case .refused(let code, _)? = model.captures.first?.status else { return XCTFail("expected refused") }
-        XCTAssertEqual(code, "invalid_input")
-        XCTAssertTrue(mac.captures.isEmpty)
+        guard case .disconnected(let why, let attempt)? = model.captures.first?.status else {
+            return XCTFail("expected retryable, got \(String(describing: model.captures.first?.status))")
+        }
+        XCTAssertTrue(why.contains("no pinned insertion point"), why)
+        XCTAssertEqual(attempt, 1)
+        XCTAssertTrue(mac.captures.isEmpty, "nothing sent")
+        XCTAssertNil(model.captures.first?.destinationId, "no pin was frozen into the envelope")
+        // The person pins a destination on the Mac and taps Retry.
+        mac.destination = NearbyWire.Destination(destinationId: "dest-10", projectId: "demo", path: "main.tex", baseRevision: 8)
+        await model.send(r.id)
+        guard case .received(let ack)? = model.captures.first?.status else { return XCTFail("expected received") }
+        XCTAssertEqual(ack.captureId, r.id)
+        XCTAssertEqual(mac.captures.map(\.captureId), [r.id])
+        XCTAssertEqual(mac.captures.first?.destinationId, "dest-10")
     }
 
     /// GH #359: `CaptureQueue.records` was a bare Array. `refreshOutcome`/`send`

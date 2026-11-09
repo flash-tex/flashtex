@@ -221,6 +221,14 @@ struct Target {
     /// open_s1`, ships from S₁'s page on; the pages before it come with the
     /// fill): stale until sent.
     missing: std::collections::BTreeSet<u32>,
+    /// Forms the pages shipped this compile draw (`Live::deliver` without
+    /// their forms): the engine writes a form after the first page that
+    /// uses it, and sends it then, unless that compile's output was not
+    /// wanted (superseded: a run from the format stopped in its preamble
+    /// still writes the preamble's `\immediate\pdfxform`s, pgf's shadings,
+    /// unsent). Those the client still lacks go from the cache before the
+    /// next page and before DONE (`Live::pay_forms`; spec §5).
+    owed: Vec<u32>,
 }
 
 impl Target {
@@ -379,17 +387,39 @@ impl Live {
         }
         t.missing.remove(&j);
         if forms {
-            for n in &c.e.forms {
-                if let Some(f) = self.forms.get(n) {
-                    if t.ps.forms.get(n) != Some(&f.e.hash) {
-                        if !t.send(&f.e) {
-                            return;
-                        }
-                        t.ps.forms.insert(*n, f.e.hash);
+            self.send_forms(t, &c.e.forms);
+        } else {
+            t.owed.extend(&c.e.forms);
+        }
+    }
+
+    /// Send the cached forms of `ids` that the client lacks.
+    fn send_forms(&self, t: &mut Target, ids: &[u32]) {
+        for n in ids {
+            if let Some(f) = self.forms.get(n) {
+                if t.ps.forms.get(n) != Some(&f.e.hash) {
+                    if !t.send(&f.e) {
+                        return;
                     }
+                    t.ps.forms.insert(*n, f.e.hash);
                 }
             }
         }
+    }
+
+    /// The forms owed to pages shipped this compile (`Target::owed`) that
+    /// the engine has not sent since: from the cache, which holds what the
+    /// engine wrote last under each id. Called before the next page and
+    /// before DONE, when the engine has written the forms of the pages
+    /// before (a page's new forms are written within its ship-out); also
+    /// when the compile's output is no longer wanted, since the client holds
+    /// the pages that draw them.
+    fn pay_forms(&self, t: &mut Target) {
+        if t.owed.is_empty() || t.broken {
+            return;
+        }
+        let owed = std::mem::take(&mut t.owed);
+        self.send_forms(t, &owed);
     }
 
     /// Deliver the cached pages from `t.next` up to (not including) `end`.
@@ -453,6 +483,8 @@ impl Live {
         let Some(mut t) = self.target.take() else {
             return;
         };
+        // (the forms of the pages shipped before this one are written by now)
+        self.pay_forms(&mut t);
         t.emitted += 1;
         t.forms_after = false;
         self.catch_up(&mut t, i as u32);
@@ -874,11 +906,14 @@ impl Engine {
     fn open(&mut self, job: Job) -> Result<(), String> {
         self.doc = None;
         std::env::set_current_dir(&job.root).map_err(|e| format!("{}: {e}", job.root.display()))?;
-        // (the document's own directories, which the host and the run write
-        // at every compile, are stat'ed at every check: `fswatch`)
-        for d in [job.root.clone(), job.root.join(&job.out_dir)] {
-            crate::fswatch::exclude(&d.to_string_lossy());
-            if let Ok(c) = std::fs::canonicalize(&d) {
+        // (the document's own files are watched like TeX Live's; the output
+        // directory, which the run writes at every compile, is stat'ed at
+        // every check, unless it is the document's directory: `fswatch`)
+        let out = job.root.join(&job.out_dir);
+        let out_c = std::fs::canonicalize(&out).ok();
+        if out_c.is_none() || out_c != std::fs::canonicalize(&job.root).ok() {
+            crate::fswatch::exclude(&out.to_string_lossy());
+            if let Some(c) = out_c {
                 crate::fswatch::exclude(&c.to_string_lossy());
             }
         }
@@ -1027,6 +1062,7 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        ps.peer.span_shift = conn.span_shift;
         // (a save of this S₀ still being written by this process: wait for it)
         // (`FLASHTEX_S1=off`: a reopen never uses a stored S₁, which is
         // still saved)
@@ -1060,8 +1096,9 @@ impl Engine {
             vec![("incremental".to_string(), Json::Bool(incremental))],
         );
         if keep {
-            if let Some(src) = ps.peer.moved_spans() {
-                server::send(&out, kind::SOURCES, &src);
+            // Where the spans the client holds went (SPAN_SHIFT and/or SOURCES).
+            for (k, body) in ps.peer.moved() {
+                server::send(&out, k, &body);
             }
         }
         let old_count = self.live.borrow().pages.len().max(s1_head.unwrap_or(0));
@@ -1095,6 +1132,7 @@ impl Engine {
             first_restore_us: [0; 5],
             first_io: [(0, 0); 8],
             missing: Default::default(),
+            owed: Vec::new(),
         });
         let stop_at = req
             .int_field("viewport")
@@ -1268,6 +1306,8 @@ impl Engine {
         let stopped = matches!(&result, Ok(r) if r.paused);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
+        // (the forms the shipped pages draw, before DONE: spec §5)
+        live.pay_forms(&mut t);
         let (status, exit_code, count, mode, mut extra) = match &result {
             Ok(rep) => {
                 let count = rep.pages;
@@ -2148,8 +2188,35 @@ fn give_back_free_memory() {
 /// signature is still the one the host left, its bytes come from there
 /// instead of a read, and an edit rewrites the file from the edit on
 /// (truncated or extended to the new length) rather than all of it.
+#[cfg(not(unix))]
+fn apply_changes(_: &Path, req: &Json, _: &mut Written) -> Result<(), String> {
+    if ["buffers", "edits"].iter().any(|k| {
+        req.get(k)
+            .and_then(Json::as_array)
+            .is_some_and(|a| !a.is_empty())
+    }) {
+        Err("rooted file operations are unavailable on this platform".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
 fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
     use crate::system::StatSig;
+    use server::rooted as sys;
+    use std::io::Read;
+    let any = |k: &str| {
+        req.get(k)
+            .and_then(Json::as_array)
+            .is_some_and(|a| !a.is_empty())
+    };
+    if !any("buffers") && !any("edits") {
+        return Ok(());
+    }
+    // (the root itself may be a link, `~/thesis -> Dropbox`: followed once
+    // and pinned; every component below it is walked no-follow)
+    let root_fd = sys::open_root(root).map_err(|e| format!("root {}: {e}", root.display()))?;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
@@ -2157,20 +2224,36 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         }
         Ok(root.join(rel))
     };
-    let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
+    let sig = |f: &std::fs::File| -> Option<StatSig> {
+        use std::os::unix::fs::MetadataExt;
+        let m = f.metadata().ok()?;
+        let ctime_ns = m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128;
+        Some(StatSig::of_metadata(
+            &m,
+            ctime_ns,
+            flashtex_runtime::statsig::racy_ns(),
+        ))
+    };
     // The file's bytes now: the host's copy while the file is as it left
     // it, else read. (The copy may be shared with `Doc::texts`.)
     let current = |path: &Path, written: &mut Written| -> std::io::Result<Arc<Vec<u8>>> {
+        let rel = path.strip_prefix(root).expect("target is under root");
+        let mut f = server::open_confined(&root_fd, rel, sys::O_RDONLY)?;
+        if !f.metadata()?.is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
         if let Some((s, d)) = written.remove(path) {
             // (the host's own last write, still in place: exact fields,
             // racy or not -- the file is the host's copy of the editor's
             // text, which nothing else writes, and a racy test here would
             // read the typed file back at every keystroke)
-            if sig(path).is_some_and(|n| n.same_fields(&s)) {
+            if sig(&f).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(d);
             }
         }
-        std::fs::read(path).map(Arc::new)
+        let mut data = Vec::new();
+        f.read_to_end(&mut data)?;
+        Ok(Arc::new(data))
     };
     // Write `data` to `path`, whose bytes before `from` are already these
     // and whose length is `old` (when known). The length is set only where
@@ -2190,12 +2273,19 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 steps[i] += t.elapsed().as_micros() as u64;
                 *t = Instant::now();
             };
-            let r = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-                .and_then(|f| {
+            let rel = path.strip_prefix(root).expect("target is under root");
+            #[cfg(test)]
+            BEFORE_WRITE_OPEN.with(|hook| {
+                let call = hook.borrow_mut().take();
+                if let Some(call) = call {
+                    call();
+                }
+            });
+            let r =
+                server::open_confined(&root_fd, rel, sys::O_WRONLY | sys::O_CREAT).and_then(|f| {
+                    if !f.metadata()?.is_file() {
+                        return Err(std::io::Error::other("not a regular file"));
+                    }
                     lap(0, &mut t);
                     let n = data.len() as u64;
                     let r = match old {
@@ -2216,12 +2306,14 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                         }
                     };
                     lap(1, &mut t);
+                    r?;
+                    let s = sig(&f);
                     drop(f);
                     lap(3, &mut t);
-                    r
+                    Ok(s)
                 });
-            r.map_err(|e| format!("{}: {e}", path.display()))?;
-            let held = sig(path).map(|s| (s, Arc::new(data)));
+            let s = r.map_err(|e| format!("{}: {e}", path.display()))?;
+            let held = s.map(|s| (s, Arc::new(data)));
             lap(4, &mut t);
             APPLY_STEPS.with(|a| {
                 let mut v = a.get();
@@ -2242,7 +2334,9 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let path = target(p)?;
         match current(&path, written) {
             Ok(d) if d.as_slice() == text.as_bytes() => {
-                if let Some(s) = sig(&path) {
+                let f = server::open_confined(&root_fd, Path::new(p), sys::O_RDONLY)
+                    .map_err(|e| format!("{p}: {e}"))?;
+                if let Some(s) = sig(&f) {
                     written.insert(path, (s, d));
                 }
             }
@@ -2263,7 +2357,9 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let old = d.len();
         if d[at..at + del] == *ins.as_bytes() {
             // nothing changes (the file is left alone, as before)
-            if let Some(s) = sig(&path) {
+            let f = server::open_confined(&root_fd, Path::new(p), sys::O_RDONLY)
+                .map_err(|e| format!("{p}: {e}"))?;
+            if let Some(s) = sig(&f) {
                 written.insert(path, (s, d));
             }
             continue;
@@ -2309,6 +2405,11 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         });
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+thread_local! {
+    static BEFORE_WRITE_OPEN: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
 }
 
 /// Where `apply_changes` cuts a file that gets shorter: a multiple of
@@ -2734,6 +2835,7 @@ mod tests {
     /// Edits that shrink, grow and keep a file, near and across the cut's
     /// 16 KB boundaries (`CUT_ALIGN`), leave it holding exactly the edited
     /// text, and the host's copy (`written`) the same bytes.
+    #[cfg(unix)]
     #[test]
     fn edits_leave_the_file_as_the_text() {
         use flashtex_display_list::json::{obj, s as js, Json};
@@ -2782,6 +2884,184 @@ mod tests {
             let (_, held) = written.get(&dir.join("m.tex")).expect("the host's copy");
             assert_eq!(held.as_slice(), text.as_slice(), "edit {k}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Lane TEST-GAPS: the directory-to-link swap raced for real (no seam):
+    /// a thread swaps a project directory for a link out of the project and
+    /// back as fast as it can, while buffers are written into it, new files
+    /// whose names exist outside. The files outside are never written or
+    /// removed, and none is created there.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_directory_swapped_for_a_link_while_buffers_are_written_leaves_the_outside_alone() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let base = std::env::temp_dir().join(format!("ftx-swap-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        const N: usize = 3000;
+        for i in 0..N {
+            std::fs::write(away.join(format!("f{i}.tex")), "outside").unwrap();
+        }
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let swapper = std::thread::spawn({
+            let (root, away, stop) = (root.clone(), away.clone(), stop.clone());
+            move || {
+                let (dir, real) = (root.join("dir"), root.join("real"));
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = std::fs::rename(&dir, &real);
+                    let _ = std::os::unix::fs::symlink(&away, &dir);
+                    std::thread::yield_now();
+                    let _ = std::fs::remove_file(&dir);
+                    let _ = std::fs::rename(&real, &dir);
+                    std::thread::yield_now();
+                }
+            }
+        });
+        let mut written = super::Written::new();
+        let t = std::time::Instant::now();
+        let mut ok = 0;
+        for i in 0..N {
+            if t.elapsed() > std::time::Duration::from_secs(20) {
+                break;
+            }
+            let req = obj([(
+                "buffers",
+                Json::Arr(vec![obj([
+                    ("path", js(format!("dir/f{i}.tex").as_str())),
+                    ("text", js("buffer")),
+                ])]),
+            )]);
+            if super::apply_changes(&root, &req, &mut written).is_ok() {
+                ok += 1;
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        swapper.join().unwrap();
+        let mut bad = vec![];
+        for i in 0..N {
+            let f = away.join(format!("f{i}.tex"));
+            match std::fs::read(&f) {
+                Ok(b) if b == b"outside" => {}
+                Ok(_) => bad.push(format!("f{i}.tex written")),
+                Err(_) => bad.push(format!("f{i}.tex removed")),
+            }
+        }
+        let outside = std::fs::read_dir(&away).unwrap().count();
+        let _ = std::fs::remove_dir_all(&base);
+        eprintln!(
+            "swap race: {ok} buffers written inside, {} outside files harmed",
+            bad.len()
+        );
+        assert!(
+            bad.is_empty() && outside == N,
+            "{outside} files outside: {bad:?}"
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn swapped_directory_leaves_outside_file_intact() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("ftx-buffer-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(away.join("file.tex"), "outside").unwrap();
+        super::BEFORE_WRITE_OPEN.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new({
+                let (root, away) = (root.clone(), away.clone());
+                move || {
+                    std::fs::rename(root.join("dir"), root.join("old-dir")).unwrap();
+                    symlink(&away, root.join("dir")).unwrap();
+                }
+            }));
+        });
+        let req = obj([(
+            "buffers",
+            Json::Arr(vec![obj([
+                ("path", js("dir/file.tex")),
+                ("text", js("buffer")),
+            ])]),
+        )]);
+        assert!(super::apply_changes(&root, &req, &mut super::Written::new()).is_err());
+        assert_eq!(std::fs::read(away.join("file.tex")).unwrap(), b"outside");
+        assert!(!root.join("old-dir/file.tex").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A project opened through a link (`~/thesis -> Dropbox/thesis`) takes
+    /// buffers and edits; a link *below* the root is still refused.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn root_reached_through_symlink_accepts_edits() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("ftx-root-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (real, link, away) = (base.join("real"), base.join("thesis"), base.join("away"));
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(real.join("main.tex"), "hello").unwrap();
+        std::fs::write(away.join("x.tex"), "outside").unwrap();
+        symlink(&real, &link).unwrap();
+        symlink(&away, real.join("out")).unwrap();
+        let mut written = super::Written::new();
+        let req = obj([
+            (
+                "buffers",
+                Json::Arr(vec![obj([
+                    ("path", js("sub/a.tex")),
+                    ("text", js("new file")),
+                ])]),
+            ),
+            (
+                "edits",
+                Json::Arr(vec![obj([
+                    ("path", js("main.tex")),
+                    ("offset", Json::Int(5)),
+                    ("delete", Json::Int(0)),
+                    ("insert", js(" world")),
+                ])]),
+            ),
+        ]);
+        super::apply_changes(&link, &req, &mut written).unwrap();
+        assert_eq!(
+            std::fs::read(real.join("main.tex")).unwrap(),
+            b"hello world"
+        );
+        assert_eq!(std::fs::read(real.join("sub/a.tex")).unwrap(), b"new file");
+        let below = obj([(
+            "buffers",
+            Json::Arr(vec![obj([("path", js("out/x.tex")), ("text", js("in"))])]),
+        )]);
+        assert!(super::apply_changes(&link, &below, &mut written).is_err());
+        assert_eq!(std::fs::read(away.join("x.tex")).unwrap(), b"outside");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Hosts without a rooted walk must refuse edits instead of relying on
+    /// an unavailable post-open path lookup.
+    #[cfg(not(unix))]
+    #[test]
+    fn edits_fail_closed_without_rooted_operations() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        let dir = std::env::temp_dir().join(format!("ftx-no-rooted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.tex");
+        std::fs::write(&path, "before").unwrap();
+        let req = obj([(
+            "buffers",
+            Json::Arr(vec![obj([("path", js("main.tex")), ("text", js("after"))])]),
+        )]);
+        assert!(super::apply_changes(&dir, &req, &mut super::Written::new()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"before");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

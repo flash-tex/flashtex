@@ -103,6 +103,8 @@ Given an operation with id `(r, c)` and length n, and the document's state vecto
    dependency**.
 4. Insert: if both origins exist and `index(L) ≥ index(R)`: **malformed**.
 5. If stored content (UTF-8 bytes, tombstones included) would exceed 8 MiB: **document full**.
+   Otherwise, if the stored content of all the project's text documents together would exceed
+   64 MiB (63 MiB for this replica's own edit): **project full** (§2.4a).
 6. Integrate (§2.3) or tombstone, then `sv[r] = c + n`.
 
 Every rejection is deterministic given the same applied set, so all replicas reject alike (the
@@ -116,6 +118,37 @@ buffer holds each distinct operation once (an exact redelivery is not parked aga
 by count (65 536) and by bytes (16 MiB, counting each operation as its variable payload, insert
 content, path or media type, plus 64); an operation over either bound is refused as
 **pending full**, and the session should resynchronise that peer instead.
+
+### 2.4a Project caps
+
+A project holds at most **4096 file-map entries** (deleted ones included, since a deleted entry is
+kept) and at most **64 MiB of stored text** (UTF-8 bytes, tombstones included, summed over every
+text document). A remote create past the first, or remote text past the second, is refused as
+**project full**. Deleting frees nothing.
+
+**Local headroom.** A replica's own edits stop short of the caps: a local create is refused once the
+project holds `4096 − 64` entries, and local text once it would exceed `64 MiB − 1 MiB`
+(`LOCAL_FILE_HEADROOM`, `LOCAL_TEXT_HEADROOM`). Undo's re-insertion of deleted text is a local edit
+and skips a piece that does not fit, as it does at 8 MiB. Remote operations are taken up to the
+caps themselves. So edits made concurrently near the caps, before each replica has seen the
+others', still fit everywhere and converge, as long as together they stay within the headroom:
+64 creates and 1 MiB of text across all participants between syncs.
+
+**Past the headroom.** If concurrent edits still go past a cap, some replica refuses a remote
+operation as **project full**, and then no longer holds what its peers hold. The session must not
+continue diverged: it resynchronises that replica or ends its part of the session. collab-v1's
+Live Share does the second. A guest that refuses an operation from the hub ends its session, and
+its copy is kept. A hub that refuses an operation from a guest relays none of it and closes that
+guest's connection with the error `project_full`. The guest then ends the same way. A resync could
+not help, because the refused operation would be refused again.
+
+These caps bound what a peer can make a replica hold. Without them a hostile Live Share hub could
+create files, or fill many documents each under 8 MiB, until the guest ran out of memory. Live
+Share hosts share at most 200 files and 32 MiB of sources (`LiveShare.maxSharedFiles`,
+`maxSharedBytes`). The file cap is about 20 times that, which leaves room for a long session's
+deletes and re-creates. The text cap is twice that, which leaves room for tombstones. Tests may
+construct a project with smaller caps (`ProjectCaps`, `CollabProject.Caps`); the values here are the
+default and the wire contract.
 
 ### 2.5 Relative positions
 
@@ -138,7 +171,7 @@ Each op consumes one counter. `lamport` ≥ 1; a replica's next op uses `max(lam
 are last-writer-wins registers ordered by stamp `(lamport, replica)`; the kind is fixed at creation;
 `create` sets `path` and `deleted = false` with its stamp. A set on an unknown file waits (**unknown
 file**); a second create of the same file id is an **id conflict**; `set_blob` on a text file and an
-invalid path are **malformed**. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
+invalid path are **malformed**; a create past the file cap (§2.4a) is **project full**, checked after both. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
 `..` segment, no `\` and no NUL. **The rule is over UTF-8 bytes**, never over grapheme clusters: a
 combining mark after `/` or `\` forms one grapheme with it, so a grapheme-based check would accept
 `../\u{301}etc/passwd` or `a\\\u{301}b` (the `hostile-paths` fixture has these). Comparisons are
@@ -216,13 +249,13 @@ expected: {project_digest, filemap_digest, files: [{file, path, kind, text?, dig
 rejected: [{doc, replica, counter, kind}], pending}}`. Each order (forward, reversed, shuffled with
 duplicates; forward only where the outcome depends on arrival, as for id conflicts) delivered to a
 fresh replica must reach `expected`: the same state, the same distinct refusals (`doc` is `files` or
-the file-id in hex; `kind` is `malformed`, `id_conflict`, `unknown_file`, `document_full` or
+the file-id in hex; `kind` is `malformed`, `id_conflict`, `unknown_file`, `document_full`, `project_full` or
 `pending_full`), and the same number of operations still waiting. Every frame must re-encode to the
 same bytes. Besides the scenario fixtures there are `hostile-paths`, `rejected-ops` and the legacy
 suites restated in collab-v1 (`legacy-*`: `adversarial.rs`, `interrupted_delivery.rs`,
 `id_reuse_divergence.rs`).
 
-`tests/fixtures/collab-v1-bulk/bulk-200.json` (format `collab-v1-bulk/1`, `{scenarios: [fixture…]}`)
+`crates/collaboration-core/tests/fixtures/collab-v1-bulk/bulk-200.json` (format `collab-v1-bulk/1`, `{scenarios: [fixture…]}`)
 is the bulk differential: 200 random simulation scenarios (two to five peers, edits, undo and redo,
 file and blob operations, refused attacks, partitions) that the Swift suite replays in all three
 orders. The oracle's test fails if the committed file differs from what it generates. A larger run on
