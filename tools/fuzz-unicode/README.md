@@ -160,3 +160,16 @@ The pure-logic tests (determinism, balanced lines, ddmin) always run; with
 | #2432 | Thai `\XeTeXlinebreaklocale` breaks of non-dictionary text (fragments, merged words) differ from ICU's ThaiBreakEngine (documented gap: ICU4X segmenter) | open |
 | #2391 | not a difference: xetex segfaults and the port panics on `width(font_glue[f])` of null under `\XeTeXinterwordspaceshaping` | open (decision: keep the crash or deviate) |
 | #2382 | `\XeTeXinputencoding` with an ICU converter name (`latin1`, `cp1252`, ...) reads raw bytes (a documented gap: no ICU converters) | open; the grammar uses XeTeX's built-in names only |
+
+Measured 2026-11-09 on mac-m5pro-kabir. The oracle was MacTeX 2026: xetex 0.999998, ICU 78.2 and xdvipdfmx. The candidate was main ca202f597 with #2340 and #2410, except that the replay runs used #2251's head.
+
+| run | documents | differences |
+|---|---|---|
+| plain | 5,600 | 3, all #2432 |
+| plain, `--narrow` | 1,600 | 1, #2432 |
+| dense areas | 18 runs, 1,640 | 76 in the first encoding run, all #2382; none after the grammar change |
+| LaTeX (fontspec, hyperref, siunitx, unicode-math) | 760 | 0 |
+| PDF | 366 | #2409, and otherwise only the xdvipdfmx and writer kinds above |
+| replay | 540 | 0, in 2,015 replayed calls, each also verified |
+
+The "differences" column leaves out the neutral outcomes: xetex segfaulting (about 3% of plain documents, mostly #2391), both engines hanging, and both dying by the same signal.
