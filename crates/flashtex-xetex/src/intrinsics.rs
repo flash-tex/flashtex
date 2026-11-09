@@ -474,6 +474,9 @@ impl Globals {
             ("State", c.mode_field.abs()),
             ("State", self.nest_ptr),
             ("State", c.tail_field),
+            // `new_graf` sets the list's `prev_graf` outside `eq_define`: an
+            // empty paragraph the call starts and ends resets it (#2261)
+            ("State", c.pg_field),
             ("State", self.scanner_status),
             ("Output", self.file_offset),
             ("Output", self.term_offset),
