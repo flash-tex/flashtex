@@ -624,6 +624,11 @@ struct Obs {
     budget: usize,
     dense: usize,
     cursor: usize,
+    /// `Session::view`: a second window kept dense, the shown page's.
+    view: Option<usize>,
+    /// `Session::idle_run`: no edit, so its held segment checkpoints are
+    /// taken where retention keeps them (`take_held_segment`).
+    idle: bool,
     s0: Option<CheckpointId>,
     keep_r: Option<CheckpointId>,
     /// `Options::branch_window`, and the pages before each checkpoint the
@@ -788,6 +793,7 @@ impl Obs {
             self.budget,
             self.dense,
             self.cursor,
+            self.view,
             self.s0,
             self.keep_r,
             &pages,
@@ -3200,7 +3206,9 @@ impl Observer for Obs {
             self.held_stop = true;
             return true;
         }
-        let take = if self.first_incremental && !self.edit_out {
+        // (an idle run has no edit: before #2248's review it took none, and
+        // the shown page got its timed checkpoints back only)
+        let take = if self.first_incremental && !self.edit_out && !self.idle {
             self.before_the_edit(g)
         } else {
             // Elsewhere (a run from scratch, a later pass, the background
@@ -3210,7 +3218,7 @@ impl Observer for Obs {
             // away, was most of the 10.8 % a cold open of Infinite Descent x2
             // spent on checkpoints (lane COLD-OPEN, 2026-10-24). Which
             // checkpoints exist changes nothing a run computes.
-            self.pages_so_far().abs_diff(self.cursor) <= self.dense
+            self.near_cursor()
         };
         if !take {
             self.ticks += 1;
@@ -3226,8 +3234,7 @@ impl Observer for Obs {
     /// of `thin` (lane COLD-FIRST-2). A held one counts as one taken for
     /// retention's pace, as a held segment does.
     fn take_held_timed(&mut self, _g: &mut Globals) -> bool {
-        let take = (self.first_incremental && !self.edit_out)
-            || self.pages_so_far().abs_diff(self.cursor) <= self.dense;
+        let take = (self.first_incremental && !self.edit_out) || self.near_cursor();
         if !take {
             self.ticks += 1;
         }
@@ -3493,6 +3500,14 @@ impl Observer for Obs {
 }
 
 impl Obs {
+    /// Within `dense` pages of the cursor, or of the shown page a VIEWPORT
+    /// made dense (`Session::view`): where `thin` keeps segment checkpoints.
+    fn near_cursor(&self) -> bool {
+        let j = self.pages_so_far();
+        j.abs_diff(self.cursor) <= self.dense
+            || self.view.is_some_and(|v| j.abs_diff(v) <= self.dense)
+    }
+
     /// Newer work may not stop the run yet (`protect_edit`); a cancel
     /// always may.
     fn protecting(&self) -> bool {
@@ -3613,6 +3628,15 @@ pub struct Session {
     paused: Option<Paused>,
     /// The page of the last edit (retention keeps checkpoints dense there).
     cursor: usize,
+    /// The page a VIEWPORT's idle run made dense (`redensify`): retention
+    /// keeps a second window there, as dense as the cursor's, so that the
+    /// next key back at the last edit keeps its segment checkpoints too
+    /// (two windows at most: a later VIEWPORT moves this one).
+    view: Option<usize>,
+    /// `redensify`'s compile is running: it takes no change (`compile_pass`),
+    /// runs no later pass, and leaves the cursor and the next key's restart
+    /// point (`last_restart`, `next_edits`) where the last edit put them.
+    idle_run: bool,
     /// PDF file position corrections of checkpoints inherited from an old
     /// run at a convergence, applied after a restore: each convergence's
     /// (`Step`) composed into one per checkpoint (`Reloc`).
@@ -3819,6 +3843,8 @@ impl Session {
             opts,
             paused: None,
             cursor: 0,
+            view: None,
+            idle_run: false,
             reloc: HashMap::new(),
             seen_memo: SeenMemo::default(),
             defpatch: HashMap::new(),
@@ -4820,17 +4846,29 @@ impl Session {
     /// where retention keeps the page checkpoints and no segment ones
     /// (`thin`), run again with nothing changed from a page checkpoint
     /// `REDENSIFY_BACK` pages or more before it, through it and the page after (no convergence test
-    /// before), so that their checkpoints, segment ones too, are taken (the
-    /// cursor goes there) and a key there restarts close by. The run then
-    /// converges with the old one and jumps to its end, as an edit's run
-    /// does; its pages are the old ones. `None`: nothing to do. The
-    /// caller's `set_preempt` stops it for newer work, and the next compile
-    /// drops it (`Paused::idle`).
+    /// before), so that their checkpoints, segment ones too, are taken
+    /// (`view`: retention keeps them, and the cursor's as well) and a key
+    /// there restarts close by. The run then converges with the old one and
+    /// jumps to its end, as an edit's run does; its pages are the old ones.
+    /// The cursor and the next key's restart point stay at the last edit
+    /// (REVIEW-E's MAJOR on #2248: a key back there after a glance at a far
+    /// page restarted from a page checkpoint). `None`: nothing to do, or
+    /// something changed (a `.bbl` a tool wrote, an edit not compiled yet):
+    /// the next compile's, not this run's. The caller's `set_preempt` stops
+    /// it for newer work, and the next compile drops it (`Paused::idle`).
     pub fn redensify(&mut self, page: usize) -> Result<Option<Report>, String> {
         if self.paused.is_some() || self.g.is_none() || page >= self.pages.len() {
             return Ok(None);
         }
-        if page.abs_diff(self.cursor) <= self.opts.dense || page <= REDENSIFY_BACK {
+        // (pages a display holds to ship again: the next compile's)
+        if self.reemit_from.is_some() {
+            return Ok(None);
+        }
+        let dense = self.opts.dense;
+        if page.abs_diff(self.cursor) <= dense
+            || self.view.is_some_and(|v| page.abs_diff(v) <= dense)
+            || page <= REDENSIFY_BACK
+        {
             return Ok(None);
         }
         // (`pages[k].ckpt` is taken after page `k`: the start of `k + 1`)
@@ -4847,14 +4885,35 @@ impl Session {
         // edit), and its stop says nothing of the keys' compiles: the next
         // one is protected as it would be without it (`starved`).
         let starved = std::mem::take(&mut self.starved);
+        let revalidated_to = self.revalidated_to;
+        let view = self.view.replace(page);
+        self.idle_run = true;
         let r = self.compile(None);
+        self.idle_run = false;
         self.starved = starved;
+        // (the last edit's: `prepare_next` prepares its restore again)
+        self.revalidated_to = revalidated_to;
         // (never the next edit's: a run that returned before its tests)
         self.tests_from = None;
-        if let Some(p) = self.paused.as_mut() {
-            p.idle = true;
+        match r {
+            Ok(rep) if rep.mode == IDLE_TOOK_NOTHING => {
+                self.view = view;
+                self.reemit_from = None;
+                Ok(None)
+            }
+            Ok(rep) => {
+                if let Some(p) = self.paused.as_mut() {
+                    p.idle = true;
+                    // (dropped by the next compile, its checkpoints too)
+                    self.view = view;
+                }
+                Ok(Some(rep))
+            }
+            Err(e) => {
+                self.view = view;
+                Err(e)
+            }
         }
-        r.map(Some)
     }
 
     /// Compile the document as it is now. With `stop_at`, stop once that
@@ -4972,7 +5031,9 @@ impl Session {
             pp.report.passes = 1;
             pp.report.pass_modes = rep.pass_modes.clone();
         }
-        if !rep.paused {
+        // (an idle run, nothing changed, runs no later pass: those the last
+        // compile held for its tools stay theirs, P4-MULTIPASS)
+        if !rep.paused && !self.idle_run {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
         }
@@ -5229,6 +5290,17 @@ impl Session {
         v
     }
 
+    /// `redensify`'s run did not start: something changed, or it would run
+    /// from scratch.
+    fn idle_took_nothing(&mut self) -> Report {
+        self.before_pass = None;
+        Report {
+            mode: IDLE_TOOK_NOTHING.into(),
+            pages: self.pages.len(),
+            ..Report::default()
+        }
+    }
+
     /// One pass: from scratch, or from the newest checkpoint before what
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
@@ -5264,6 +5336,10 @@ impl Session {
                 Some("a compile arrived while one was paused".into()),
             );
         }
+        // (an idle run never runs from scratch: `redensify`)
+        if self.idle_run && (self.force_cold.is_some() || self.s0.is_none()) {
+            return Ok(self.idle_took_nothing());
+        }
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
         }
@@ -5279,6 +5355,9 @@ impl Session {
         let mut pre: Option<(CheckpointId, Vec<Edit>, Vec<String>)> = None;
         let s0_check = s0.key.check_refresh(clock, &first_line);
         if let Err(why) = s0_check.and_then(|()| self.written_before_s0_changed_outside()) {
+            if self.idle_run {
+                return Ok(self.idle_took_nothing());
+            }
             // (S₁ opened from disk: no checkpoint before S₀, and no history
             // before S₁ to converge with)
             if self.s1_open.is_some() {
@@ -5297,11 +5376,42 @@ impl Session {
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = self.s0.as_ref().map(|s| s.id).ok_or("no S0")?;
         let pre_r = pre.as_ref().map(|p| p.0);
+        // An idle run (`redensify`) takes no change: one it finds (a `.bbl`
+        // a tool wrote while the user looked at a far page, an external
+        // edit before the client's COMPILE) is the next compile's, which
+        // ships its pages and diagnostics. `changes` takes it into the
+        // journal: put back as it was, and the run does not start
+        // (REVIEW-E's MINOR on #2248).
+        let before_changes = self.idle_run.then(|| {
+            (
+                self.journal.clone(),
+                self.line_shifts.clone(),
+                self.dirs_seen.clone(),
+                self.changed_lookup_last,
+                self.aux_appeared,
+            )
+        });
         let changes = match pre {
             // (`preamble_restart` ran `changes`)
             Some((_, e, c)) => Ok((e, c, None)),
             None => self.changes(),
         };
+        if let Some((journal, shifts, seen, lookup_last, aux_appeared)) = before_changes {
+            let found = changes
+                .as_ref()
+                .map_or(true, |(_, c, bad)| !c.is_empty() || bad.is_some());
+            if found {
+                self.journal = journal;
+                self.line_shifts = shifts;
+                self.dirs_seen = seen;
+                self.changed_lookup_last = lookup_last;
+                self.aux_appeared = aux_appeared;
+                if self.opts.debug {
+                    eprintln!("[incr] an idle run found a change: not run ({changes:?})");
+                }
+                return Ok(self.idle_took_nothing());
+            }
+        }
         self.dirs_checked = self.dirs_seen.clone();
         // (cleared when this pass has run; a cold run below uses them)
         let fixed = self.fixed_inputs.clone();
@@ -6745,6 +6855,8 @@ impl Session {
             budget: self.opts.budget,
             dense: self.opts.dense,
             cursor: self.cursor,
+            view: self.view,
+            idle: self.idle_run,
             s0: self.s0.as_ref().map(|s| s.id),
             keep_r: None,
             branch_window: self.opts.branch_window,
@@ -6915,12 +7027,13 @@ impl Session {
         // not where the next keystroke comes (#1573's review: an `.aux`
         // pass moved it to page 0, and the edited page lost its segment
         // checkpoints).
-        if self.pass == 1 {
+        // (an idle run's restart is not where the user types: `redensify`)
+        if self.pass == 1 && !self.idle_run {
             self.cursor = base;
-        }
-        self.last_restart = Some(r);
-        if self.pass == 1 {
             self.next_edits = edits.clone();
+        }
+        if !self.idle_run {
+            self.last_restart = Some(r);
         }
         let journal = self.journal.as_ref().ok_or("no journal")?;
         // (a close reads nothing: the convergence test checks the streams
@@ -8140,6 +8253,7 @@ impl Session {
             budget,
             dense,
             cursor,
+            self.view,
             s0,
             self.s1_open,
             &pages,
@@ -8413,6 +8527,9 @@ pub const DEFAULT_DENSE: usize = 16;
 /// paragraph that breaks it).
 const REDENSIFY_BACK: usize = 2;
 
+/// `Report::mode` of a `redensify` run that did not start (`idle_took_nothing`).
+const IDLE_TOOK_NOTHING: &str = "idle-took-nothing";
+
 /// Segment checkpoints at least this far apart by default (seconds of
 /// engine time). Measured on the benchmark documents
 /// (docs/evidence/p4-l5-2026-09-29): every `build_page` with a line read
@@ -8451,11 +8568,19 @@ fn thin(
     budget: usize,
     dense: usize,
     cursor: usize,
+    view: Option<usize>,
     s0: Option<CheckpointId>,
     keep_also: Option<CheckpointId>,
     pages: &HashMap<CheckpointId, usize>,
     ck_pages: &HashMap<CheckpointId, usize>,
 ) {
+    // A page's distance from the nearer window: the cursor's, and the
+    // shown page's a VIEWPORT made dense (`Session::view`, lane MEMORY).
+    let dist = |j: usize| {
+        view.map_or(j.abs_diff(cursor), |v| {
+            j.abs_diff(cursor).min(j.abs_diff(v))
+        })
+    };
     let (aux_done, aux_point) = (g.layer().aux_done, g.layer().aux_point);
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
@@ -8491,10 +8616,7 @@ fn thin(
             || preamble.contains(&id)
     };
     let near = |id: CheckpointId| {
-        pages.contains_key(&id)
-            || ck_pages
-                .get(&id)
-                .is_some_and(|&p| p.abs_diff(cursor) <= dense)
+        pages.contains_key(&id) || ck_pages.get(&id).is_some_and(|&p| dist(p) <= dense)
     };
     if g.checkpoints().iter().any(|&id| !pinned(id) && !near(id)) {
         g.retain_checkpoints(&|id| pinned(id) || near(id));
@@ -8506,7 +8628,7 @@ fn thin(
     let octave = |d: usize| (usize::BITS - 1 - (d / dense.max(1)).leading_zeros()) as usize;
     let far = pages
         .values()
-        .map(|&j| j.abs_diff(cursor))
+        .map(|&j| dist(j))
         .filter(|&d| d > dense)
         .map(octave)
         .max()
@@ -8537,7 +8659,7 @@ fn thin(
             }
             match pages.get(&id) {
                 Some(&j) => {
-                    let d = j.abs_diff(cursor);
+                    let d = dist(j);
                     if s == 0 || d <= dense {
                         return true;
                     }
@@ -8553,7 +8675,7 @@ fn thin(
                 }
                 None => ck_pages
                     .get(&id)
-                    .is_some_and(|&p| s <= 1 && p.abs_diff(cursor) <= dense),
+                    .is_some_and(|&p| s <= 1 && dist(p) <= dense),
             }
         };
         g.retain_checkpoints(&keep);

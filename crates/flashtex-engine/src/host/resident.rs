@@ -655,12 +655,21 @@ impl Engine {
         // with the VIEWPORT waited 15-24 ms for the re-densify's restore and
         // start, which cannot stop, then 2-17 ms to abandon it.
         let mut pending_vp: Option<(Arc<server::Conn>, usize, Instant)> = None;
+        // One that could not run then (a compile queued or paused, the
+        // tools running or due): waits again after the next request
+        // (REVIEW-E's MINOR on #2248: never lost behind COMPILEs).
+        let mut parked_vp: Option<(Arc<server::Conn>, usize)> = None;
         let grace = viewport_grace();
         loop {
             if let Some((_, _, at)) = &pending_vp {
                 if at.elapsed() >= grace {
                     let (conn, page, _) = pending_vp.take().unwrap();
-                    self.viewport(conn, page);
+                    if self.viewport(conn.clone(), page) {
+                        // (what the idle run allocated goes back as after a compile)
+                        trim_due = true;
+                    } else {
+                        parked_vp = Some((conn, page));
+                    }
                     continue;
                 }
             }
@@ -745,6 +754,7 @@ impl Engine {
                 },
             };
             let compiled = matches!(req, Req::Compile { .. });
+            let viewport_req = matches!(req, Req::Viewport { .. });
             match req {
                 Req::Warm(done) => {
                     let _ = done.send(self.warm());
@@ -764,8 +774,8 @@ impl Engine {
                     }
                 }
                 Req::Compile { conn, req, t0 } => {
-                    // (newer work: a waiting VIEWPORT's re-densify is off)
-                    pending_vp = None;
+                    // (newer work first: a waiting VIEWPORT's grace starts
+                    // again after it, below)
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     let c = conn.clone();
                     self.compile(conn, req, t0, None);
@@ -788,7 +798,19 @@ impl Engine {
                     id,
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
-                Req::Viewport { conn, page } => pending_vp = Some((conn, page, Instant::now())),
+                Req::Viewport { conn, page } => {
+                    parked_vp = None;
+                    pending_vp = Some((conn, page, Instant::now()));
+                }
+            }
+            // A VIEWPORT waiting (or parked) starts its grace again once the
+            // request it waited behind is done.
+            if !viewport_req {
+                if let Some((conn, page)) = parked_vp.take() {
+                    pending_vp = Some((conn, page, Instant::now()));
+                } else if let Some(v) = pending_vp.as_mut() {
+                    v.2 = Instant::now();
+                }
             }
             if compiled && self.profile.keep_warm_ms > 0 {
                 hot_until = Some(
@@ -847,20 +869,31 @@ impl Engine {
     /// `page` exist when a key comes (`incr::Session::redensify`). A
     /// COMPILE from the client stops it at its next stop point, and that
     /// compile drops it. Never a compile of its own: no reply, and the
-    /// pages it ships go to the cache only, as they were.
-    fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) {
+    /// pages it ships go to the cache only, as they were. `false`: not now
+    /// (a compile queued or paused, the tools running or due, whose `.bbl`
+    /// and later passes are a compile's: REVIEW-E's MINOR on #2248); the
+    /// caller asks again after its next request.
+    fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) -> bool {
         let debug = std::env::var_os("FLASHTEX_INCR_DEBUG").is_some()
             || std::env::var_os("FLASHTEX_VIEWPORT_DEBUG").is_some();
-        let Some(d) = self.doc.as_mut() else { return };
-        if d.session.is_paused() || conn.queued.load(Ordering::SeqCst) > 0 {
+        let Some(d) = self.doc.as_mut() else {
+            return true;
+        };
+        if d.session.is_paused()
+            || conn.queued.load(Ordering::SeqCst) > 0
+            || d.tools.running
+            || d.tools.deferred.is_some()
+        {
             if debug {
                 eprintln!(
-                    "[host] VIEWPORT {page}: not now (paused {}, queued {})",
+                    "[host] VIEWPORT {page}: not now (paused {}, queued {}, tools {}/{})",
                     d.session.is_paused(),
-                    conn.queued.load(Ordering::SeqCst)
+                    conn.queued.load(Ordering::SeqCst),
+                    d.tools.running,
+                    d.tools.deferred.is_some()
                 );
             }
-            return;
+            return false;
         }
         let c = conn.clone();
         d.session
@@ -882,6 +915,15 @@ impl Engine {
                 t.elapsed().as_secs_f64() * 1e3
             );
         }
+        // The idle run restored elsewhere: the restore prepared for the
+        // last edit's restart point is spent. Prepared again, as after a
+        // compile's DONE (REVIEW-E's MAJOR on #2248).
+        if matches!(&r, Ok(Some(r)) if !r.paused) && self.profile.prepare {
+            let _busy = crate::busy::enter(crate::busy::Part::Prepare);
+            d.session
+                .prepare_next(&mut || conn.queued.load(Ordering::SeqCst) > 0);
+        }
+        true
     }
 
     /// The resident engine's options under the current performance mode.

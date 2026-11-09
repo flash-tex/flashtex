@@ -832,9 +832,17 @@ makes the engine's restart points around that page dense again (far from
 the last edit the host keeps fewer, lane MEMORY), so that the first keystroke
 there restarts close by. The host starts that work only after about 50 ms
 with nothing else arriving, so a key sent right after the `VIEWPORT` finds
-it not started. A `COMPILE` that arrives while it runs stops it at its next
+it not started (it starts 50 ms after that compile instead). A `COMPILE` that arrives while it runs stops it at its next
 stop point and drops it: the pages it typesets again are the ones the client
-holds (they are not sent), so nothing is lost but the restart points. A client sends `VIEWPORT`
+holds (they are not sent), so nothing is lost but the restart points. A
+`VIEWPORT` that arrives while a compile is queued or paused, or while the
+external tools run or are due, waits until the host is idle again; the
+idle work never takes a changed input (a `.bbl` a tool wrote): the next
+compile does, and ships its pages and diagnostics. The restart points
+around the last edit stay dense as well, so the next key back there
+restarts as close as it would without the `VIEWPORT` (two dense windows
+at most: a later `VIEWPORT` moves the shown page's). A client sends `VIEWPORT`
+after the `COMPILE`s it queued before it, never ahead of them, and
 when scrolling settles (about 150 ms after the last scroll), and at once
 after a jump (a search result, an outline click, a SyncTeX reveal), so that
 the host hears of the jump before the next key. It is cheap: sending it

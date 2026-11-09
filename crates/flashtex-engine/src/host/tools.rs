@@ -442,7 +442,7 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         // as the socket host does after each compile's DONE (and so that
         // the soundness sweeps run through prepared restores);
         // FLASHTEX_NO_PREPARE=1 leaves it out
-        if line.starts_with("compile") && profile.prepare {
+        if (line.starts_with("compile") || line.starts_with("redensify")) && profile.prepare {
             match stop_prepare {
                 None => {
                     s.prepare_next(&mut || false);
