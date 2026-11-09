@@ -27,6 +27,10 @@ sys.path.insert(0, HERE)
 
 import gen  # noqa: E402
 
+# --grammar align: tools/fuzz-parity/gen_align.py, alignments and output
+# routines inside \measure (shared with the parity fuzzer).
+_AL = os.path.join(os.path.dirname(HERE), "fuzz-parity")
+
 REPO = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_POOL = os.path.join(REPO, "crates", "flashtex-engine", "pdftex.pool")
 TIMEOUT = 20
@@ -209,8 +213,35 @@ def find_tfms():
     return tuple(paths)
 
 
-def fuzz_seed(engine, pool, seed, fonts, tfms, work):
-    files = gen.generate(seed, fonts=fonts)
+_ALIGN = []
+
+
+def load_align():
+    """fuzz-parity's gen_align, loaded once (before any worker thread): it
+    imports fuzz-parity's own gen.py, which shares this gen.py's name."""
+    if not _ALIGN:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("gen_align", os.path.join(_AL, "gen_align.py"))
+        mod = importlib.util.module_from_spec(spec)
+        saved = sys.modules.pop("gen")
+        sys.path.insert(0, _AL)
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path.remove(_AL)
+            sys.modules["gen"] = saved
+        _ALIGN.append(mod)
+    return _ALIGN[0]
+
+
+def generate(seed, fonts, grammar="default"):
+    if grammar == "align":
+        return load_align().generate_replay(seed, fonts=fonts)
+    return gen.generate(seed, fonts=fonts)
+
+
+def fuzz_seed(engine, pool, seed, fonts, tfms, work, grammar="default"):
+    files = generate(seed, fonts, grammar)
     d = tempfile.mkdtemp(prefix=f"s{seed}-", dir=work)
     try:
         write_case(d, files, tfms if fonts else ())
@@ -238,6 +269,8 @@ def cmd_run(a):
         except OSError:  # already at the lowest priority, or not permitted
             pass
     tfms = find_tfms() if a.fonts else ()
+    if a.grammar == "align":
+        load_align()
     fonts = bool(tfms)
     os.makedirs(a.out, exist_ok=True)
     work = tempfile.mkdtemp(prefix="fr-work-", dir=a.work or None)
@@ -246,7 +279,7 @@ def cmd_run(a):
     totals = {"cases": 0, "hits_bm": 0, "hits_d9": 0, "cases_hit_bm": 0, "cases_hit_d9": 0}
     try:
         with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-            futs = [ex.submit(fuzz_seed, a.engine, a.pool, s, fonts, tfms, work)
+            futs = [ex.submit(fuzz_seed, a.engine, a.pool, s, fonts, tfms, work, a.grammar)
                     for s in seeds]
             for fu in concurrent.futures.as_completed(futs):
                 seed, files, res = fu.result()
@@ -307,6 +340,8 @@ def main(argv=None):
     r.add_argument("--fonts", action="store_true",
                    help="copy cmr10/cmr7 from kpsewhich and generate font items")
     r.add_argument("--nice", action="store_true")
+    r.add_argument("--grammar", choices=("default", "align"), default="default",
+                   help="align: tools/fuzz-parity/gen_align.py's replay cases")
     r.add_argument("--quiet", action="store_true")
     c = sp.add_parser("check")
     c.add_argument("--engine", required=True)

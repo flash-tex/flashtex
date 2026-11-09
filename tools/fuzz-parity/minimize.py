@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import fuzz  # noqa: E402
 import gen  # noqa: E402
+import gen_align  # noqa: E402
 
 PLAIN_HEAD = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\\input plain\n"
 
@@ -105,6 +106,7 @@ def main(argv=None):
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--any", action="store_true")
+    ap.add_argument("--grammar", choices=("default", "align"), default="default")
     ap.add_argument("--formats", default=None)
     args = ap.parse_args(argv)
     if args.formats:
@@ -113,7 +115,8 @@ def main(argv=None):
     args.candidate = os.path.abspath(args.candidate)
     fuzz.cap_output()
     if args.seed is not None:
-        text = gen.generate(args.seed, latex=None if args.formats else False).render()
+        mod = gen_align if args.grammar == "align" else gen
+        text = mod.generate(args.seed, latex=None if args.formats else False).render()
     else:
         with open(args.tex, encoding="latin-1") as fh:
             text = fh.read()

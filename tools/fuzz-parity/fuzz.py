@@ -33,6 +33,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "parity"))
 import gen  # noqa: E402
+import gen_align  # noqa: E402
+
+# --grammar: which generator makes the documents.
+GRAMMARS = {"default": gen, "align": gen_align}
 
 _spec = importlib.util.spec_from_file_location(
     "lockstep_run", os.path.join(HERE, "..", "lockstep", "run.py"))
@@ -183,7 +187,7 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
 
 
 def fuzz_seed(seed, args):
-    doc = gen.generate(seed, latex=None if args.formats else False)
+    doc = GRAMMARS[args.grammar].generate(seed, latex=None if args.formats else False)
     text = doc.render()
     work = tempfile.mkdtemp(prefix="fzp-%d-" % seed, dir=args.tmp)
     try:
@@ -222,6 +226,8 @@ def main(argv=None):
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--grammar", choices=sorted(GRAMMARS), default="default",
+                    help="align: gen_align.py (alignments, page builder, output routines)")
     ap.add_argument("--formats", default=None,
                     help="dir holding the candidate's own pdflatex.fmt; without it no LaTeX documents")
     args = ap.parse_args(argv)
