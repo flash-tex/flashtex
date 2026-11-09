@@ -51,6 +51,16 @@ fn read<T>(a: &[T], i: usize) -> &T {
     }
 }
 
+impl<T> Arr<T> {
+    /// A read of element `i` of a fixed-length array of length `N`
+    /// (web2rust's reads of such an array that is not viewed): checked as
+    /// [`read`] checks, against the constant `N`.
+    #[inline(always)]
+    pub fn at<const N: usize>(&self, i: U) -> &T {
+        self.at_n::<N>(i.0, CHECKED)
+    }
+}
+
 impl<T> Index<U> for Arr<T> {
     type Output = T;
     #[inline(always)]

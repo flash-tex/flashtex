@@ -138,6 +138,12 @@ struct E<'a> {
     /// length (a Rust expression of type `usize`: the view's const
     /// parameter), and whether the routine being emitted does.
     views: HashMap<String, String>,
+    /// The other fixed-length arena arrays, with their lengths: an element
+    /// read is `Arr::at::<LEN>`, checked against the constant length.
+    fixed: HashMap<String, String>,
+    /// Set while an assignment's target is emitted with `ex`: a place, so
+    /// no `Arr::at` (which reads) in it.
+    in_place: std::cell::Cell<bool>,
     view_on: bool,
     /// The views the routine being emitted uses.
     used_views: std::cell::RefCell<std::collections::BTreeSet<String>>,
@@ -610,6 +616,27 @@ impl<'a> E<'a> {
         }
     }
 
+    /// `Some((global, length))` when a read of `b[...]` with `dims`
+    /// subscripts is `Arr::at` of a fixed-length arena array (not viewed).
+    fn fixed_read(&self, b: &Expr, dims: usize) -> Option<(String, String)> {
+        match b {
+            Expr::Var(g)
+                if dims == 1
+                    && !self.in_place.get()
+                    && self.index_type.is_some()
+                    && self.lookup_local(g).is_none() =>
+            {
+                let len = self.fixed.get(g)?;
+                if len.bytes().all(|c| c.is_ascii_digit()) {
+                    Some((rid(g), len.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// A use of the macro constant `n`.
     fn macro_const(&self, n: &str) -> String {
         self.used_macros.borrow_mut().insert(n.to_string());
@@ -663,13 +690,23 @@ impl<'a> E<'a> {
                 // call (tex.ch's `char_info`, whose subscript calls
                 // `effective_char`). Pascal evaluates the subscript before
                 // the element is read anyway.
+                let at = self.fixed_read(b, ix.len());
                 if ix.len() == 1 && self.has_call(&ix[0]) {
                     let n = self.fresh();
+                    if let Some((g, len)) = &at {
+                        return format!(
+                            "{{ let __s{n} = {idx}; (*self.{g}.at::<{len}>({})) }}",
+                            self.subscript(format!("__s{n}"))
+                        );
+                    }
                     return format!(
                         "{{ let __s{n} = {idx}; {}[{}] }}",
                         self.view_of(b).unwrap_or_else(|| self.ex(b)),
                         self.subscript(format!("__s{n}"))
                     );
+                }
+                if let Some((g, len)) = &at {
+                    return format!("(*self.{g}.at::<{len}>({}))", self.subscript(idx));
                 }
                 let mut s = format!(
                     "{}[{}]",
@@ -1565,7 +1602,7 @@ impl<'a> E<'a> {
                     let d = self.default_of(&self.named_ty(&a[0]));
                     return format!(
                         "{} = vec![{d}; (({}) as usize) + 1];",
-                        self.ex(lhs),
+                        self.ex_place(lhs),
                         self.ex(&a[1])
                     );
                 }
@@ -1575,7 +1612,7 @@ impl<'a> E<'a> {
                     return format!(
                         "{{ let __n{n} = (({}) as usize) + 1; {}.resize(__n{n}, {d}); }}",
                         self.ex(&a[2]),
-                        self.ex(lhs)
+                        self.ex_place(lhs)
                     );
                 }
                 _ => {}
@@ -1660,13 +1697,24 @@ impl<'a> E<'a> {
                     Expr::Str(txt) => format!("{txt:?}"),
                     other => self.ex(other),
                 };
-                return format!("crate::system::copy_str(&mut {}, {src});", self.ex(lhs));
+                return format!(
+                    "crate::system::copy_str(&mut {}, {src});",
+                    self.ex_place(lhs)
+                );
             }
         }
         if matches!(lhs, Expr::Index(..)) && self.mentions_self(rhs) {
             return self.hoist_rhs(lhs, rhs, &want, None);
         }
-        format!("{} = {};", self.ex(lhs), self.coerce(rhs, &want))
+        format!("{} = {};", self.ex_place(lhs), self.coerce(rhs, &want))
+    }
+
+    /// `ex` of an assignment's target (see `in_place`).
+    fn ex_place(&self, e: &Expr) -> String {
+        let was = self.in_place.replace(true);
+        let s = self.ex(e);
+        self.in_place.set(was);
+        s
     }
 
     /// A procedure call statement, including the Pascal I/O built-ins.
@@ -1977,6 +2025,8 @@ pub fn emit(
         index_type: index_type.map(str::to_string),
         inline: inline.iter().cloned().collect(),
         views: HashMap::new(),
+        fixed: HashMap::new(),
+        in_place: std::cell::Cell::new(false),
         view_on: false,
         used_views: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         total_division,
@@ -2006,6 +2056,8 @@ pub fn emit(
                     return Err(format!("--array-view {}: not a fixed-length array", g.name));
                 }
                 e.views.insert(g.name.clone(), len.clone());
+            } else if len == cap && !allocs.contains_key(&g.name) {
+                e.fixed.insert(g.name.clone(), len.clone());
             }
         }
         kinds.push(k);
