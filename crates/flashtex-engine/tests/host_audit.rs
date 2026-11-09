@@ -74,20 +74,65 @@ fn fmt_dir() -> PathBuf {
     fmt
 }
 
+/// The audited host: `AUDIT_HOST_ENV` (`K=V,K=V`, e.g.
+/// `FLASHTEX_PROFILE=lean`) adds to its environment.
 fn start_host(name: &str) -> Host {
+    start_host_with(name, None, None)
+}
+
+/// The fresh run's host: BOX-MEMO off (the plain engine is the reference).
+fn start_fresh_host() -> Host {
+    start_host_env(
+        "fresh",
+        None,
+        None,
+        &[("FLASHTEX_BOXMEMO".into(), "off".into())],
+    )
+}
+
+/// `AUDIT_HOST_ENV`'s pairs.
+fn audit_env() -> Vec<(String, String)> {
+    std::env::var("AUDIT_HOST_ENV")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// An audited host with the S₀/S₁ cache `cache`, its later stdout lines
+/// (its `flashtex-host: {...}` notes) sent to `lines`.
+fn start_host_with(
+    name: &str,
+    cache: Option<&Path>,
+    lines: Option<std::sync::mpsc::Sender<String>>,
+) -> Host {
+    start_host_env(name, cache, lines, &audit_env())
+}
+
+fn start_host_env(
+    name: &str,
+    cache: Option<&Path>,
+    lines: Option<std::sync::mpsc::Sender<String>>,
+    env: &[(String, String)],
+) -> Host {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let sock = PathBuf::from(format!("/tmp/fta-{}-{n}-{name}.sock", std::process::id()));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-host"))
-        .args(["--socket", sock.to_str().unwrap()])
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
+    cmd.args(["--socket", sock.to_str().unwrap()])
         .env("FLASHTEX_POOL", pool())
         .env("FLASHTEX_FORMATS", fmt_dir())
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
-        .env_remove("FLASHTEX_S0_CACHE")
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .env_remove("FLASHTEX_S0_CACHE");
+    if let Some(c) = cache {
+        cmd.env("FLASHTEX_S0_CACHE", c);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.stdout(Stdio::piped()).spawn().unwrap();
     let mut out = BufReader::new(child.stdout.take().unwrap());
     loop {
         let mut line = String::new();
@@ -98,7 +143,13 @@ fn start_host(name: &str) -> Host {
             break;
         }
     }
-    std::thread::spawn(move || for _ in out.lines().map_while(Result::ok) {});
+    std::thread::spawn(move || {
+        for l in out.lines().map_while(Result::ok) {
+            if let Some(tx) = &lines {
+                let _ = tx.send(l);
+            }
+        }
+    });
     Host(child, sock)
 }
 
@@ -116,6 +167,25 @@ fn drain(c: &mut Client, n: usize) -> Vec<Json> {
 }
 
 /// What the passes and the tools write; never copied to the fresh run.
+/// Read events until the compile `id`'s tool cycle is `settled`
+/// (protocol 3.2): its last `DONE`.
+fn settle_tools(c: &mut Client, id: i64) -> Json {
+    let mut last = None;
+    loop {
+        match c.next_event().unwrap().expect("host closed the connection") {
+            Event::Done(d) => last = Some(d),
+            Event::Tool(t) => {
+                eprintln!("tool: {t}");
+                if t.str_field("event") == Some("settled") && t.int_field("id") == Some(id) {
+                    return last.expect("settled before DONE");
+                }
+            }
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    }
+}
+
 /// What the passes write, by extension: a source of the fresh run only
 /// when it starts from the host's (`keep_aux`).
 const PASS_FILES: &[&str] = &["aux", "toc", "lof", "lot", "out", "fls", "synctex"];
@@ -292,6 +362,14 @@ fn prose(seed: usize, n: usize) -> String {
     s
 }
 
+/// `AUDIT_VIEWPORT`: the page the audited host's compiles name as the
+/// viewport (L4: typeset first, the rest after).
+fn viewport() -> Option<u32> {
+    std::env::var("AUDIT_VIEWPORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+}
+
 /// One case: a project at `<base>/a`, a resident host holding it.
 struct Audit {
     name: String,
@@ -302,6 +380,9 @@ struct Audit {
     main: String,
     jobname: Option<String>,
     includeonly: Option<Vec<String>>,
+    /// The request's `external_tools` (`auto`: the host runs bibtex and
+    /// makeindex itself; a compile then waits for the cycle to settle).
+    tools: Option<String>,
     _host: Host,
     c: Client,
     id: i64,
@@ -334,6 +415,7 @@ impl Audit {
             main: "main.tex".into(),
             jobname: None,
             includeonly: None,
+            tools: None,
             _host: host,
             c,
             id: 0,
@@ -354,6 +436,7 @@ impl Audit {
         r.incremental = true;
         r.jobname = self.jobname.clone();
         r.includeonly = self.includeonly.clone();
+        r.external_tools = self.tools.clone();
         r.edits = edits;
         r
     }
@@ -361,9 +444,14 @@ impl Audit {
     /// One compile of the project with `edits`; its `DONE`.
     fn compile(&mut self, edits: Vec<Edit>) -> Json {
         let a = self.a.clone();
-        let r = self.request(&a, edits);
+        let mut r = self.request(&a, edits);
+        r.viewport = viewport();
         self.c.compile(&r).unwrap();
-        let d = drain(&mut self.c, 1).pop().unwrap();
+        let d = if self.tools.as_deref() == Some("auto") {
+            settle_tools(&mut self.c, r.id)
+        } else {
+            drain(&mut self.c, 1).pop().unwrap()
+        };
         eprintln!("{}: compile {}: {d}", self.name, self.id);
         d
     }
@@ -373,7 +461,8 @@ impl Audit {
         let a = self.a.clone();
         let n = edits.len();
         for e in edits {
-            let r = self.request(&a, e);
+            let mut r = self.request(&a, e);
+            r.viewport = viewport();
             self.c.compile(&r).unwrap();
         }
         let d = drain(&mut self.c, n);
@@ -439,11 +528,13 @@ impl Audit {
         let _ = std::fs::remove_dir_all(&b);
         copy_inputs(&self.a, &b, &self.job(), keep_aux);
         std::fs::create_dir_all(self.out_dir(&b)).unwrap();
-        let host = start_host("fresh");
+        let host = start_fresh_host();
         let mut c = Client::connect(&host.1).unwrap();
         let mut settled = false;
         for k in 0..8 {
-            let r = self.request(&b, vec![]);
+            let mut r = self.request(&b, vec![]);
+            // (the tools' outputs are the host's, copied as sources)
+            r.external_tools = Some("off".into());
             c.compile(&r).unwrap();
             let d = drain(&mut c, 1).pop().unwrap();
             if k == 0 {
@@ -1431,14 +1522,14 @@ fn audit_jobname_switch() {
     t.check("open");
     t.jobname = Some("other".into());
     t.compile(vec![]);
-    t.check("jobname other");
+    t.check_with("jobname other", true);
     let e = t.splice("main.tex", "Paragraph 1.3 ", "Paragraph 1.3 again ");
     t.compile(vec![e]);
-    t.check("an edit under jobname other");
+    t.check_with("an edit under jobname other", true);
     t.jobname = None;
     let e = t.splice("main.tex", "Paragraph 1.3 again ", "Paragraph 1.3 ");
     t.compile(vec![e]);
-    t.check("back to main, the edit undone");
+    t.check_with("back to main, the edit undone", true);
     t.oracle();
 }
 
@@ -1465,4 +1556,594 @@ fn audit_write_then_input() {
     t.compile(vec![e]);
     t.check("an edit before the write");
     t.oracle();
+}
+
+/// A preamble configuration file that does not exist at first
+/// (`\InputIfFileExists` before `\begin{document}`, read before S₀),
+/// created, changed and deleted between compiles.
+#[test]
+fn audit_preamble_optional_file() {
+    let main = format!(
+        "{PRE}\\newcommand\\thing{{default}}\n\\InputIfFileExists{{local.cfg}}{{}}{{}}\n\\begin{{document}}\n{}The \\thing.\n\n{}\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let Some(mut t) = Audit::new("precfg", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    std::fs::write(t.a.join("local.cfg"), "\\renewcommand\\thing{configured}\n").unwrap();
+    t.compile(vec![]);
+    t.check("local.cfg created");
+    t.rewrite("local.cfg", "{configured}", "{reconfigured}");
+    t.compile(vec![]);
+    t.check("local.cfg changed");
+    std::fs::remove_file(t.a.join("local.cfg")).unwrap();
+    t.compile(vec![]);
+    t.check("local.cfg deleted");
+    t.oracle();
+}
+
+/// Another program changes an input file while a compile runs: the next
+/// compile must see it.
+#[test]
+fn audit_change_during_compile() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}\\input{{part}}\n{}\\end{{document}}\n",
+        prose(1, 30),
+        prose(2, 30)
+    );
+    let part = prose(3, 6);
+    let Some(mut t) = Audit::new(
+        "during",
+        &[("main.tex", main.as_bytes()), ("part.tex", part.as_bytes())],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    for round in 0..3 {
+        let e = t.splice(
+            "main.tex",
+            "Paragraph 1.2 ",
+            &format!("Paragraph 1.2 r{round} "),
+        );
+        let a = t.a.clone();
+        let r = t.request(&a, vec![e]);
+        t.c.compile(&r).unwrap();
+        // while it runs (a few ms in), part.tex changes
+        std::thread::sleep(std::time::Duration::from_millis(3 + 4 * round as u64));
+        t.rewrite(
+            "part.tex",
+            "Paragraph 3.1 ",
+            &format!("Paragraph 3.1 changed{round} "),
+        );
+        drain(&mut t.c, 1);
+        t.compile(vec![]);
+        t.check(&format!("part.tex changed during compile, round {round}"));
+    }
+    t.oracle();
+}
+
+/// Rapid edits in two files of a long document, each burst cancelling
+/// the compile before it, with another program's edit between bursts.
+#[test]
+fn audit_rapid_edits_two_files() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n\\tableofcontents\n\\section{{A}}\\label{{a}}\n{}\\input{{part}}\n\\section{{B}}\\label{{b}}\nSee page~\\pageref{{a}} and~\\pageref{{c}}.\n\n{}\\section{{C}}\\label{{c}}\n{}\\end{{document}}\n",
+        prose(1, 40),
+        prose(2, 40),
+        prose(5, 10)
+    );
+    let part = prose(3, 20);
+    let Some(mut t) = Audit::new(
+        "rapid2",
+        &[("main.tex", main.as_bytes()), ("part.tex", part.as_bytes())],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    for round in 0..3 {
+        let e1 = t.splice(
+            "part.tex",
+            "Paragraph 3.5 ",
+            &format!("{}Paragraph 3.5 ", prose(20 + round, 3)),
+        );
+        let e2 = t.splice("main.tex", "Paragraph 2.30 ", "Paragraph 2.30 qq ");
+        let e3 = t.splice("main.tex", "Paragraph 1.1 ", "Paragraph 1.1 w ");
+        let ds = t.burst(vec![vec![e1], vec![e2], vec![e3]]);
+        let cancelled = ds
+            .iter()
+            .filter(|d| d.str_field("status") == Some("cancelled"))
+            .count();
+        eprintln!("rapid2: round {round}: {cancelled} cancelled");
+        t.check(&format!("a burst in two files, round {round}"));
+        t.rewrite(
+            "part.tex",
+            "Paragraph 3.10 ",
+            &format!("Paragraph 3.10 out{round}\n\n"),
+        );
+        t.compile(vec![]);
+        t.check(&format!("another program's edit after round {round}"));
+    }
+    t.oracle();
+}
+
+/// A reopen from the persisted S₀/S₁ (§5.1) after the project changed
+/// while no host ran: an input file read after S₁, one read before it, a
+/// graphic replaced, an optional file created, the `.bbl` rewritten.
+#[test]
+fn audit_reopen_after_changes_while_closed() {
+    let mut body = String::new();
+    for s in 1..=16 {
+        body.push_str(&format!(
+            "\\section{{S{s}}}\\label{{s{s}}}\n{}",
+            prose(s, 3)
+        ));
+        if s == 2 {
+            body.push_str("\\includegraphics{pic}\n\n\\IfFileExists{opt.tex}{\\input{opt}}{No opt.}\n\n\\input{early}\n");
+        }
+        if s == 14 {
+            body.push_str("\\input{late}\nAs \\cite{knuth} says.\n\n");
+        }
+    }
+    let main = format!(
+        "{PRE}\\usepackage{{graphicx}}\n\\begin{{document}}\n\\tableofcontents\n{body}\\bibliographystyle{{plain}}\n\\bibliography{{refs}}\n\\end{{document}}\n"
+    );
+    let variants: &[(&str, &dyn Fn(&Path))] = &[
+        ("nothing", &|_| {}),
+        ("late.tex changed", &|a| {
+            std::fs::write(
+                a.join("late.tex"),
+                "The late file, changed while closed.\n\n",
+            )
+            .unwrap()
+        }),
+        ("early.tex changed", &|a| {
+            std::fs::write(
+                a.join("early.tex"),
+                "The early file, changed while closed.\n\n",
+            )
+            .unwrap()
+        }),
+        ("pic.png replaced", &|a| {
+            std::fs::write(a.join("pic.png"), gray_png(30, 20, 99)).unwrap()
+        }),
+        ("opt.tex created", &|a| {
+            std::fs::write(a.join("opt.tex"), "An optional file.\n\n").unwrap()
+        }),
+        ("main.bbl rewritten", &|a| {
+            let p = a.join("main.bbl");
+            let b = std::fs::read_to_string(&p).unwrap();
+            std::fs::write(&p, b.replacen("Knuth", "Knooth", 1)).unwrap()
+        }),
+    ];
+    let Some(mut t) = Audit::new(
+        "reopen",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("early.tex", b"The early file.\n\n"),
+            ("late.tex", b"The late file.\n\n"),
+            ("pic.png", &gray_png(8, 6, 10)),
+            ("refs.bib", BIB.as_bytes()),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    let cache = t.base.join("s0");
+    std::fs::create_dir_all(&cache).unwrap();
+    // the bibliography made (the audited host, no cache)
+    t.compile(vec![]);
+    t.tool(&["bibtex", "main"]);
+    for _ in 0..6 {
+        if t.compile(vec![]).str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // store: a host with the cache opens the settled project at a viewport
+    // (a run with no `.aux` patches, which S₁ refuses) and is left idle
+    // until S₁ is saved
+    {
+        let (tx, notes) = std::sync::mpsc::channel();
+        let host = start_host_with("store", Some(&cache), Some(tx));
+        let mut c = Client::connect(&host.1).unwrap();
+        let a = t.a.clone();
+        let go = |t: &mut Audit, c: &mut Client| {
+            let mut r = t.request(&a, vec![]);
+            r.viewport = Some(10);
+            c.compile(&r).unwrap();
+            drain(c, 1).pop().unwrap()
+        };
+        for _ in 0..6 {
+            if go(&mut t, &mut c).str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        let mut said = None;
+        while said.is_none() && std::time::Instant::now() < deadline {
+            if let Ok(l) = notes.recv_timeout(std::time::Duration::from_millis(200)) {
+                if l.contains("\"saved_s1\"") || l.contains("\"no_s1\"") {
+                    said = Some(l);
+                }
+            }
+        }
+        eprintln!("reopen: store: {said:?}");
+        assert!(
+            said.as_ref().is_some_and(|l| l.contains("saved_s1")),
+            "no S1 was saved: {said:?}"
+        );
+        let _ = c.bye();
+    }
+    let bak = t.base.join("bak");
+    let _ = std::fs::remove_dir_all(&bak);
+    for (from, to) in [(&t.a, bak.join("a")), (&cache, bak.join("s0"))] {
+        copy_inputs(from, &to, "\u{0}", true);
+    }
+    for (what, change) in variants {
+        for (to, from) in [(&t.a, bak.join("a")), (&cache, bak.join("s0"))] {
+            let _ = std::fs::remove_dir_all(to);
+            copy_inputs(&from, to, "\u{0}", true);
+        }
+        change(&t.a);
+        let host = start_host_with("open", Some(&cache), None);
+        t.c = Client::connect(&host.1).unwrap();
+        t._host = host;
+        let a = t.a.clone();
+        let mut r = t.request(&a, vec![]);
+        r.viewport = Some(10);
+        t.c.compile(&r).unwrap();
+        let d = drain(&mut t.c, 1).pop().unwrap();
+        eprintln!(
+            "reopen: {what}: mode {:?}, s1_pages {:?}",
+            d.str_field("mode"),
+            d.int_field("s1_pages")
+        );
+        t.check(&format!("reopened after {what}"));
+    }
+    t.oracle();
+}
+
+/// A paragraph of one unbreakable run (an overfull box, logged with its
+/// input lines).
+const OVERFULL: &str = "\\hbox to 2cm{Averyveryverylongwordthatcannotbreak andmore}\n\n";
+
+/// Line numbers the log prints for pages after an edit that adds lines
+/// but changes no page: overfull boxes (`in paragraph at lines`),
+/// undefined references (`on input line`), in the main file and in an
+/// input file; and `\the\inputlineno` typeset.
+#[test]
+fn audit_log_line_numbers() {
+    let mut body = String::new();
+    for s in 1..=6 {
+        body.push_str(&prose(s, 2));
+        body.push_str(OVERFULL);
+        body.push_str(&format!(
+            "See \\ref{{missing{s}}}. Line \\the\\inputlineno.\n\n"
+        ));
+        if s == 3 {
+            body.push_str("\\input{part}\n");
+        }
+    }
+    let main = format!("{PRE}\\begin{{document}}\n{body}\\end{{document}}\n");
+    let part = format!(
+        "{}{OVERFULL}See \\ref{{inpart}}.\n\n{}",
+        prose(8, 2),
+        prose(9, 2)
+    );
+    let Some(mut t) = Audit::new(
+        "lines",
+        &[("main.tex", main.as_bytes()), ("part.tex", part.as_bytes())],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let e = t.splice("main.tex", "Paragraph 1.1 ", "%\n%\nParagraph 1.1 ");
+    t.compile(vec![e]);
+    t.check("two comment lines added in main.tex, early");
+    let e = t.splice("main.tex", "Paragraph 4.0 ", "Paragraph 4.0\n");
+    t.compile(vec![e]);
+    t.check("a space made a line end in main.tex, late");
+    let e = t.splice("part.tex", "Paragraph 8.1 ", "%\nParagraph 8.1 ");
+    t.compile(vec![e]);
+    t.check("a comment line added in part.tex");
+    let e = t.splice("main.tex", "%\n%\nParagraph 1.1 ", "Paragraph 1.1 ");
+    t.compile(vec![e]);
+    t.check("the comment lines removed");
+    t.oracle();
+}
+
+/// An error introduced and fixed (nonstopmode recovers), and a fatal one:
+/// an `\input` of a file that does not exist ends the job, then the file
+/// is created.
+#[test]
+fn audit_errors_and_recovery() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}MARK\n\n{}\\end{{document}}\n",
+        prose(1, 8),
+        prose(2, 8)
+    );
+    let Some(mut t) = Audit::new("errors", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let e = t.splice("main.tex", "MARK", "\\undefinedmacro MARK");
+    t.compile(vec![e]);
+    t.check("an undefined control sequence");
+    let e = t.splice("main.tex", "\\undefinedmacro MARK", "MARK");
+    t.compile(vec![e]);
+    t.check("fixed");
+    let e = t.splice("main.tex", "MARK", "\\input{notyet} MARK");
+    t.compile(vec![e]);
+    t.check("an input file that does not exist (fatal)");
+    std::fs::write(t.a.join("notyet.tex"), "Now it exists.\n").unwrap();
+    t.compile(vec![]);
+    t.check("the input file created");
+    let e = t.splice(
+        "main.tex",
+        "\\end{document}",
+        "\\begin{itemize}\\end{document}",
+    );
+    t.compile(vec![e]);
+    t.check("an environment left open at the end");
+    let e = t.splice(
+        "main.tex",
+        "\\begin{itemize}\\end{document}",
+        "\\end{document}",
+    );
+    t.compile(vec![e]);
+    t.check("closed again");
+    t.oracle();
+}
+
+/// Text edits of the awkward kinds: multi-byte UTF-8 inserted and
+/// deleted, a CRLF file, the last line without a line end, an edit in
+/// `verbatim` and inside a comment.
+#[test]
+fn audit_awkward_text() {
+    let main = format!(
+        "{PRE}\\usepackage[utf8]{{inputenc}}\n\\begin{{document}}\n{}Caf\u{e9} na\u{ef}ve.\n\n\\begin{{verbatim}}\nverbatim   text\n\\end{{verbatim}}\n%comment here\n{}\\input{{crlf}}\n\\input{{noeol}}\n\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let crlf = prose(3, 4).replace('\n', "\r\n");
+    let noeol = "The last line has no line end";
+    let Some(mut t) = Audit::new(
+        "awkward",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("crlf.tex", crlf.as_bytes()),
+            ("noeol.tex", noeol.as_bytes()),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let e = t.splice("main.tex", "Caf\u{e9}", "Caf\u{e9}s \u{fc}ber \u{e0}");
+    t.compile(vec![e]);
+    t.check("UTF-8 inserted");
+    let e = t.splice("main.tex", "na\u{ef}ve", "naive");
+    t.compile(vec![e]);
+    t.check("a two-byte letter replaced by one byte");
+    let e = t.splice("main.tex", "verbatim   text", "verbatim \\text {}");
+    t.compile(vec![e]);
+    t.check("an edit in verbatim");
+    let e = t.splice("main.tex", "%comment here", "%comment there, changed");
+    t.compile(vec![e]);
+    t.check("an edit in a comment");
+    let e = t.splice("crlf.tex", "Paragraph 3.2 ", "Paragraph 3.2 crlf\r\n\r\n");
+    t.compile(vec![e]);
+    t.check("CRLF lines added");
+    let e = t.splice("noeol.tex", "no line end", "no line end, still none");
+    t.compile(vec![e]);
+    t.check("the last line without a line end edited");
+    t.rewrite("noeol.tex", "still none", "now one\n");
+    t.compile(vec![]);
+    t.check("a line end added at the end");
+    t.oracle();
+}
+
+/// `latexmk -c`: every file the passes wrote deleted (`.aux`, `.toc`,
+/// `.out`, `.lof`), with hyperref.
+#[test]
+fn audit_clean_between_compiles() {
+    let mut body = String::new();
+    for s in 1..=4 {
+        body.push_str(&format!(
+            "\\section{{Sec {s}}}\\label{{s{s}}}\nSee \\ref{{s{}}}.\n\n{}\\begin{{figure}}[h]\\rule{{1cm}}{{1cm}}\\caption{{F{s}}}\\end{{figure}}\n",
+            5 - s,
+            prose(s, 3)
+        ));
+    }
+    let main = format!(
+        "{PRE}\\usepackage{{hyperref}}\n\\begin{{document}}\n\\tableofcontents\n\\listoffigures\n{body}\\end{{document}}\n"
+    );
+    let Some(mut t) = Audit::new("clean", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    for f in ["main.aux", "main.toc", "main.out", "main.lof"] {
+        std::fs::remove_file(t.a.join(f)).unwrap();
+    }
+    t.compile(vec![]);
+    t.check("every pass file deleted");
+    std::fs::remove_file(t.a.join("main.toc")).unwrap();
+    let e = t.splice("main.tex", "\\section{Sec 2}", "\\section{Sec two}");
+    t.compile(vec![e]);
+    t.check("the .toc deleted and a title edited");
+    t.oracle();
+}
+
+/// The harness itself: a byte of the host's PDF, a line of its log or
+/// of its `.aux` changed is a difference.
+#[test]
+fn audit_harness_sees_a_difference() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n\\section{{A}}\\label{{a}}\n{}\\end{{document}}\n",
+        prose(1, 4)
+    );
+    let Some(mut t) = Audit::new("selftest", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    assert_eq!(t.try_check(true), Ok(()));
+    for (f, from, to) in [
+        ("main.pdf", "/Type /Page", "/Type /Pagf"),
+        ("main.log", "LaTeX2e", "LaTeX2f"),
+        ("main.aux", "newlabel", "newlabem"),
+    ] {
+        let p = t.a.join(f);
+        let b = std::fs::read(&p).unwrap();
+        std::fs::write(&p, replace_all(&b, from.as_bytes(), to.as_bytes())).unwrap();
+        let e = t.try_check(true);
+        assert!(e.as_ref().is_err_and(|e| e.contains(f)), "{f}: {e:?}");
+        std::fs::write(&p, &b).unwrap();
+    }
+    assert_eq!(t.try_check(false), Ok(()));
+}
+
+/// Saves that keep the size and the time: an atomic save (another file
+/// renamed over the input, its time set to the old one's), and a symbolic
+/// link pointed at another file of the same size and time.
+#[test]
+fn audit_atomic_save_and_symlink() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}\\input{{saved}}\n\n\\input{{linked}}\n{}\\end{{document}}\n",
+        prose(1, 5),
+        prose(2, 5)
+    );
+    let Some(mut t) = Audit::new(
+        "atomic",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("saved.tex", b"Saved text, version one.\n"),
+            ("v1.tex", b"Linked text, version one.\n"),
+            ("v2.tex", b"Linked text, version two.\n"),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    std::os::unix::fs::symlink("v1.tex", t.a.join("linked.tex")).unwrap();
+    let time = |p: &Path| std::fs::metadata(p).unwrap().modified().unwrap();
+    let set = |p: &Path, m| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(m)
+            .unwrap()
+    };
+    set(&t.a.join("v2.tex"), time(&t.a.join("v1.tex")));
+    t.compile(vec![]);
+    t.check("open");
+    // the atomic save: same length, the old time
+    let saved = t.a.join("saved.tex");
+    let m = time(&saved);
+    let tmp = t.a.join(".saved.tex.tmp");
+    std::fs::write(&tmp, b"Saved text, version two.\n").unwrap();
+    set(&tmp, m);
+    std::fs::rename(&tmp, &saved).unwrap();
+    t.compile(vec![]);
+    t.check("saved.tex replaced by a rename, size and time kept");
+    // the link pointed elsewhere
+    let l = t.a.join("linked.tex");
+    std::fs::remove_file(&l).unwrap();
+    std::os::unix::fs::symlink("v2.tex", &l).unwrap();
+    t.compile(vec![]);
+    t.check("linked.tex pointed at v2.tex (same size and time)");
+    t.oracle();
+}
+
+/// A project file that appears and shadows TeX Live's (`xspace.sty`),
+/// and a graphic that appears ahead of `\graphicspath`'s.
+#[test]
+fn audit_shadowing_files_appear() {
+    let main = format!(
+        "{PRE}\\usepackage{{graphicx}}\n\\usepackage{{xspace}}\n\\graphicspath{{{{./}}{{img/}}}}\n\\newcommand\\ft{{FlashTeX\\xspace}}\n\\begin{{document}}\n{}The \\ft is here. \\includegraphics{{pic}}\n\n{}\\end{{document}}\n",
+        prose(1, 5),
+        prose(2, 5)
+    );
+    let Some(mut t) = Audit::new(
+        "shadow",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("img/pic.png", &gray_png(8, 6, 10)),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    std::fs::write(
+        t.a.join("xspace.sty"),
+        "\\ProvidesPackage{xspace}[2099/01/01 local]\n\\def\\xspace{ (shadowed) }\n",
+    )
+    .unwrap();
+    t.compile(vec![]);
+    t.check("a local xspace.sty appeared");
+    std::fs::write(t.a.join("pic.png"), gray_png(16, 6, 200)).unwrap();
+    t.compile(vec![]);
+    t.check("a pic.png appeared ahead of img/");
+    std::fs::remove_file(t.a.join("xspace.sty")).unwrap();
+    std::fs::remove_file(t.a.join("pic.png")).unwrap();
+    t.compile(vec![]);
+    t.check("both removed");
+    t.oracle();
+}
+
+/// The host's own external tools (`"external_tools": "auto"`, protocol
+/// 3.2): bibtex and makeindex after the compile, then the host's
+/// follow-up compiles, through citations and index entries added, the
+/// `.bib` changed and the tools' outputs deleted.
+#[test]
+fn audit_external_tools_auto() {
+    let main = format!(
+        "{PRE}\\usepackage{{makeidx}}\n\\makeindex\n\\begin{{document}}\n{}As \\cite{{knuth}} says\\index{{Knuth}}.\n\n{}Also\\index{{alpha}} here.\n\n\\bibliographystyle{{plain}}\n\\bibliography{{refs}}\n\\printindex\n\\end{{document}}\n",
+        prose(1, 4),
+        prose(2, 4)
+    );
+    for out in [None, Some("out")] {
+        let Some(mut t) = Audit::new(
+            if out.is_some() { "tools-out" } else { "tools" },
+            &[("main.tex", main.as_bytes()), ("refs.bib", BIB.as_bytes())],
+            out,
+        ) else {
+            return;
+        };
+        t.tools = Some("auto".into());
+        t.compile(vec![]);
+        t.check("open (the host ran bibtex and makeindex)");
+        let e = t.splice("main.tex", "\\cite{knuth}", "\\cite{knuth,lamport}");
+        t.compile(vec![e]);
+        t.check("a citation added");
+        let e = t.splice(
+            "main.tex",
+            "Also\\index{alpha}",
+            "Also\\index{alpha}\\index{beta}",
+        );
+        t.compile(vec![e]);
+        t.check("an index entry added");
+        t.rewrite("refs.bib", "{Donald Knuth}", "{Donald E. Knuth}");
+        t.compile(vec![]);
+        t.check("refs.bib changed");
+        let o = t.out_dir(&t.a);
+        std::fs::remove_file(o.join("main.bbl")).unwrap();
+        std::fs::remove_file(o.join("main.ind")).unwrap();
+        t.compile(vec![]);
+        t.check("the .bbl and .ind deleted");
+        t.oracle();
+    }
 }
