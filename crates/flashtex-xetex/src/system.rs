@@ -1094,7 +1094,8 @@ impl Globals {
         let name = self.raw_file_name();
         let absolute = name.starts_with('/');
         let mut fname = name.clone();
-        if let Some(dir) = run().output_directory {
+        let out_dir = run().output_directory;
+        if let Some(dir) = &out_dir {
             if !absolute {
                 fname = format!("{dir}/{name}");
             }
@@ -1105,6 +1106,15 @@ impl Globals {
             r.guard_out(&fname);
         }
         let mut f = File::create(&fname).ok();
+        if f.is_none() && !absolute {
+            // (the host's runs: `chapters/one.aux` under the output
+            // directory, `flashtex_engine::system::make_output_subdir`)
+            if let Some(dir) = &out_dir {
+                if flashtex_engine::system::make_output_subdir(dir, &name) {
+                    f = File::create(&fname).ok();
+                }
+            }
+        }
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");

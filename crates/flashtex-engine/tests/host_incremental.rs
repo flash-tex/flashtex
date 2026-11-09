@@ -1506,6 +1506,85 @@ fn export_runs_the_engine_as_a_child() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `\include{chapters/one}` with the output directory elsewhere (#1654):
+/// pdfTeX with `-output-directory` stops at `\openout` of
+/// `chapters/one.aux` (the directory is not there; TeX Live 2026, measured),
+/// and the host makes it, so that the run is pdflatex's in the project
+/// directory: the same `.aux` files, resident and exported.
+#[test]
+fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-subdir-include");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, here) = (base.join("proj"), base.join("out"), base.join("here"));
+    for d in [&proj, &here] {
+        std::fs::create_dir_all(d.join("chapters/deeper")).unwrap();
+        std::fs::write(
+            d.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\nSee \\ref{one} and \\ref{two}.\n\
+             \\include{chapters/one}\n\\include{chapters/deeper/two}\n\\end{document}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("chapters/one.tex"),
+            "\\section{One}\\label{one}\nText.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("chapters/deeper/two.tex"),
+            "\\section{Two}\\label{two}\nMore.\n",
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(&out).unwrap();
+    // pdflatex's run, twice, in the project directory (no output directory)
+    let argv: Vec<String> = ["pdflatex", "-interaction=nonstopmode", "main.tex"]
+        .map(String::from)
+        .to_vec();
+    run_engine(&argv, &here);
+    run_engine(&argv, &here);
+    let host = start_host("i");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    for id in 1..=4 {
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        assert_eq!(
+            o.done.str_field("status"),
+            Some("ok"),
+            "compile {id}: {}",
+            o.done
+        );
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    for aux in ["main.aux", "chapters/one.aux", "chapters/deeper/two.aux"] {
+        let want = std::fs::read(here.join(aux)).unwrap();
+        let got = std::fs::read(out.join(aux)).unwrap_or_else(|e| panic!("{aux}: {e}"));
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            String::from_utf8_lossy(&want),
+            "{aux}"
+        );
+        assert!(!proj.join(aux).exists(), "{aux} written in the project");
+    }
+    // an export (the engine as a child) into a fresh output directory
+    let out2 = base.join("out2");
+    std::fs::create_dir_all(&out2).unwrap();
+    let mut r = CompileRequest::new(9, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out2.to_str().unwrap().into());
+    r.export = true;
+    let o = compile(&mut c, &mut View::default(), &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "export: {}", o.done);
+    assert!(out2.join("chapters/deeper/two.aux").is_file());
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Every parity fixture through the socket host (run with `--ignored`; it
 /// takes minutes): a word replaced at the middle of the document, a comment
 /// line inserted early and a word replaced late; after every compile every

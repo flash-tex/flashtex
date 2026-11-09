@@ -153,6 +153,10 @@ pub fn main(argv: Vec<String>) -> i32 {
     if matches!(name.as_str(), "xetex" | "xelatex") {
         crate::driver::run(argv);
     }
+    // The host's output directory is its own: `\include{chapters/one}`
+    // makes `chapters/` there, in a compile in this process as in a run of
+    // its own (`compile::engine_command`), #1654.
+    flashtex_engine::system::set_output_subdirs(true);
     if argv.get(1).map(String::as_str) == Some("--bundle-font-index") {
         return bundle_font_index(&argv[2..]);
     }
