@@ -43,6 +43,12 @@ pub struct Image {
     pub page: i32,
     pub page_box: &'static str,
     pub rotate: i32,
+    /// PDF: xdvipdfmx's form `/Matrix` (`set_transform_matrix`, from
+    /// `/Rotate`) and the box `pdf_ximage_scale_image` fits
+    /// (`I->attr.bbox`, [`pic::dpx_form_bounds`]). Raster images:
+    /// the identity and `bbox`.
+    pub matrix: [f64; 6],
+    pub attr_bbox: [f64; 4],
     pub info: Json,
 }
 
@@ -81,9 +87,9 @@ impl Images {
     }
 
     /// The image of file `path` (found already), PDF page `page` (0: the
-    /// first) and box `pagebox` (0: crop).
+    /// first) and box `pagebox` (0: none given).
     pub fn load(&mut self, path: &str, page: i32, pagebox: i32) -> Result<u32, String> {
-        let page = page.max(1);
+        let page = if page == 0 { 1 } else { page };
         let k = (path.to_string(), page, pagebox);
         if let Some(&id) = self.by.get(&k) {
             return Ok(id);
@@ -120,9 +126,17 @@ impl Images {
         h.update(&pagebox.to_le_bytes());
         let key = h.finish();
         let image = if kind == Kind::Pdf {
-            let p = pic::pdf_page(path, page, pagebox)
+            // xdvipdfmx's page, box and /Rotate (pdf_doc_get_page), not
+            // XeTeX's own (pic::pdf_page sizes the box TeX sees)
+            let p = pic::dvipdfmx_page(path, page, pagebox)
                 .ok_or_else(|| format!("{path}: cannot read page {page} of the PDF file"))?;
             let [lx, ly, rx, ry] = p.bbox;
+            let rotate = match p.matrix {
+                [_, b, _, _, _, _] if b == -1.0 => 90,
+                [a, _, _, _, _, _] if a == -1.0 => 180,
+                [_, b, _, _, _, _] if b == 1.0 => 270,
+                _ => 0,
+            };
             let info = Json::Obj(vec![
                 ("id".into(), Json::Int(id as i64)),
                 ("key".into(), Json::Str(hex(&key))),
@@ -130,7 +144,7 @@ impl Images {
                 ("file".into(), Json::Str(path.into())),
                 ("width".into(), Json::Num(rx - lx)),
                 ("height".into(), Json::Num(ry - ly)),
-                ("rotate".into(), Json::Int(p.rotate as i64)),
+                ("rotate".into(), Json::Int(rotate as i64)),
                 ("page".into(), Json::Int(p.page as i64)),
                 ("page_box".into(), Json::Str(pagebox_name(pagebox).into())),
                 ("orig_x".into(), Json::Num(lx)),
@@ -146,7 +160,9 @@ impl Images {
                 res: (72.0, 72.0),
                 page: p.page,
                 page_box: pagebox_name(pagebox),
-                rotate: p.rotate,
+                rotate,
+                matrix: p.matrix,
+                attr_bbox: p.attr_bbox,
                 info,
             }
         } else {
@@ -181,6 +197,8 @@ impl Images {
                 page: 1,
                 page_box: "crop",
                 rotate: 0,
+                matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                attr_bbox: [0.0, 0.0, w, h],
                 info,
             }
         };

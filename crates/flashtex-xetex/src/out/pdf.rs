@@ -966,7 +966,13 @@ impl<'a> Writer<'a> {
         let x = match img.kind {
             Kind::Png => flashtex_pdf::images::from_png(&data),
             Kind::Jpeg => flashtex_pdf::images::from_jpeg(&data),
-            Kind::Pdf => flashtex_pdf::images::from_pdf_page(&data, img.page.max(1) as u32),
+            // xdvipdfmx's box (`set_bounding_box`); the placement
+            // (special.rs `place_image`) makes up for /Matrix's convention
+            Kind::Pdf => flashtex_pdf::images::from_pdf_page_box(
+                &data,
+                img.page.max(1) as u32,
+                Some(img.bbox),
+            ),
             Kind::Bmp => Err("BMP images are not written yet".into()),
         };
         let x = match x {

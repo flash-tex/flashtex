@@ -464,6 +464,18 @@ impl Importer<'_> {
 
 /// Page `page` (1-based) of a PDF as a Form XObject.
 pub fn from_pdf_page(bytes: &[u8], page: u32) -> Result<ImageXObject, String> {
+    from_pdf_page_box(bytes, page, None)
+}
+
+/// [`from_pdf_page`] with the form's `/BBox` given (`[llx, lly, urx,
+/// ury]` as the caller chose it, e.g. xdvipdfmx's `set_bounding_box`) in
+/// place of the CropBox cut to the MediaBox. `/Matrix` follows `/Rotate`
+/// over that box as [`from_pdf_page`] writes it.
+pub fn from_pdf_page_box(
+    bytes: &[u8],
+    page: u32,
+    bbox_override: Option<[f64; 4]>,
+) -> Result<ImageXObject, String> {
     let file = PdfFile::parse(bytes).map_err(|e| format!("PDF: {e}"))?;
     if file.trailer.contains_key("Encrypt") {
         return Err("PDF: encrypted documents are not imported".into());
@@ -512,9 +524,15 @@ pub fn from_pdf_page(bytes: &[u8], page: u32) -> Result<ImageXObject, String> {
             ]
         }
     };
-    if bbox[2].0 <= bbox[0].0 || bbox[3].0 <= bbox[1].0 {
-        return Err("PDF: the page's CropBox and MediaBox do not overlap".into());
-    }
+    let bbox = match bbox_override {
+        Some(b) => b.map(|v| (v, real_token(v))),
+        None => {
+            if bbox[2].0 <= bbox[0].0 || bbox[3].0 <= bbox[1].0 {
+                return Err("PDF: the page's CropBox and MediaBox do not overlap".into());
+            }
+            bbox
+        }
+    };
     let rotate = match file.page_attr(p, "Rotate").map(|o| file.resolve(o)) {
         None => 0,
         Some(o) => {
@@ -617,6 +635,17 @@ pub fn from_pdf_page(bytes: &[u8], page: u32) -> Result<ImageXObject, String> {
 }
 
 /// Negates a PDF number token without going through `f64`.
+/// `v` as a PDF real token (at most 5 decimals, no trailing zeros).
+fn real_token(v: f64) -> String {
+    let t = format!("{v:.5}");
+    let t = t.trim_end_matches('0').trim_end_matches('.');
+    if t == "-0" || t.is_empty() {
+        "0".to_string()
+    } else {
+        t.to_string()
+    }
+}
+
 fn neg(t: &str) -> String {
     match t.strip_prefix('-') {
         Some(rest) => rest.to_string(),
