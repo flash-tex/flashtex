@@ -2673,82 +2673,6 @@ mod tests {
         assert!(image_color_space(Kind::Jpeg, &[0xFF, 0xD8, 0xFF, 0xD9]).is_none());
     }
 
-    /// RULE_GEOMETRY is the numbers the content stream draws each rule with.
-    #[test]
-    fn rule_geometry_is_what_the_content_stream_draws() {
-        let mut p = Page::new(StreamKind::Page, 0);
-        p.pdf_box = [0.0, 0.0, 612.0, 792.0];
-        let (x, y, w, h) = (21851747, 22122140, 2095109, 44560);
-        for kind in [RuleKind::Fill, RuleKind::StrokeH, RuleKind::StrokeV] {
-            p.items.push(Item::Rule { kind, x, y, w, h });
-        }
-        let g = rule_geometry(&p);
-        assert_eq!(g.len(), 3);
-        let (l, t) = (x as f64 / K, 792.0 - y as f64 / K);
-        let (wb, hb) = (w as f64 / K, h as f64 / K);
-        let r = |v: f64| n(v, 5).parse::<f64>().unwrap();
-        assert_eq!(g[0], [0.0, 0.0, r(l), r(t - hb), r(wb), r(hb), 0.0]);
-        let ym = t - hb + hb / 2.0;
-        assert_eq!(g[1], [0.0, 0.0, r(l), r(ym), r(l + wb), r(ym), r(hb)]);
-        assert_eq!(g[1][2], 332.1855);
-        let xm = l + wb / 2.0;
-        assert_eq!(g[2], [0.0, 0.0, r(xm), r(t - hb), r(xm), r(t), r(wb)]);
-    }
-
-    /// A form that only a named object refers to is written: pgf's soft
-    /// mask is a `pdf:bxobj @pgfsmask5` form that no page draws, named
-    /// only by `pdf:put @pgfextgs << /pgfsmask5 << /SMask << /G @pgfsmask5
-    /// >> >> >>` (beamer's shadowed title block, u11-beamer-fontspec in
-    /// the M3 export gate). It was referenced but written as `null`.
-    #[test]
-    fn a_form_only_a_named_object_names_is_written() {
-        use super::super::page::tests::{page_bytes, special, NoTfm};
-        use super::super::page::Builder;
-        let mut doc = Doc::new();
-        let mut body = special("pdf:obj @pgfextgs <<>>");
-        body.extend(special("pdf:put @resources << /ExtGState @pgfextgs >>"));
-        body.extend(special(
-            "pdf:bxobj @pgfsmask5 width 20pt height 10pt depth 0pt",
-        ));
-        body.push(137); // put_rule inside the form
-        body.extend_from_slice(&(5i32 << 16).to_be_bytes());
-        body.extend_from_slice(&(10i32 << 16).to_be_bytes());
-        body.extend(special(
-            "pdf:exobj <</Group <</S/Transparency /CS/DeviceGray>> >>",
-        ));
-        body.extend(special(
-            "pdf:put @pgfextgs << /pgfsmask5 << /SMask << /S /Luminosity /G @pgfsmask5>> >> >>",
-        ));
-        body.extend(special("pdf:code /pgfsmask5 gs"));
-        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
-        doc.pages.push(std::sync::Arc::new(built));
-        let opts = Options {
-            producer: "test".into(),
-            date: None,
-            compress: false,
-        };
-        let bytes = write(&doc, &opts).unwrap().0;
-        let text = String::from_utf8_lossy(&bytes);
-        let at = text.find("/G ").expect("the soft mask's /G");
-        let num: String = text[at + 3..]
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        assert!(text[at + 3 + num.len()..].starts_with(" 0 R"), "{text}");
-        let obj = text
-            .find(&format!("\n{num} 0 obj\n"))
-            .map(|i| &text[i..])
-            .expect("the form's object");
-        let body = &obj[..obj.find("endobj").unwrap()];
-        assert!(
-            body.contains("/Subtype /Form") || body.contains("/Subtype/Form"),
-            "{body}"
-        );
-        assert!(body.contains("/Transparency"), "{body}");
-        let pdf = PdfFile::parse(&bytes).unwrap();
-        assert_eq!(pdf.pages().unwrap().len(), 1);
-    }
-
     /// The outline written for `entries` (level, `[]`, title): the root's
     /// `/Count`, whether it has `/Type`, and each entry in order as
     /// "depth title /Count".
@@ -2867,5 +2791,81 @@ mod tests {
                 "2 G2",
             ]
         );
+    }
+
+    /// RULE_GEOMETRY is the numbers the content stream draws each rule with.
+    #[test]
+    fn rule_geometry_is_what_the_content_stream_draws() {
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 612.0, 792.0];
+        let (x, y, w, h) = (21851747, 22122140, 2095109, 44560);
+        for kind in [RuleKind::Fill, RuleKind::StrokeH, RuleKind::StrokeV] {
+            p.items.push(Item::Rule { kind, x, y, w, h });
+        }
+        let g = rule_geometry(&p);
+        assert_eq!(g.len(), 3);
+        let (l, t) = (x as f64 / K, 792.0 - y as f64 / K);
+        let (wb, hb) = (w as f64 / K, h as f64 / K);
+        let r = |v: f64| n(v, 5).parse::<f64>().unwrap();
+        assert_eq!(g[0], [0.0, 0.0, r(l), r(t - hb), r(wb), r(hb), 0.0]);
+        let ym = t - hb + hb / 2.0;
+        assert_eq!(g[1], [0.0, 0.0, r(l), r(ym), r(l + wb), r(ym), r(hb)]);
+        assert_eq!(g[1][2], 332.1855);
+        let xm = l + wb / 2.0;
+        assert_eq!(g[2], [0.0, 0.0, r(xm), r(t - hb), r(xm), r(t), r(wb)]);
+    }
+
+    /// A form that only a named object refers to is written: pgf's soft
+    /// mask is a `pdf:bxobj @pgfsmask5` form that no page draws, named
+    /// only by `pdf:put @pgfextgs << /pgfsmask5 << /SMask << /G @pgfsmask5
+    /// >> >> >>` (beamer's shadowed title block, u11-beamer-fontspec in
+    /// the M3 export gate). It was referenced but written as `null`.
+    #[test]
+    fn a_form_only_a_named_object_names_is_written() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let mut body = special("pdf:obj @pgfextgs <<>>");
+        body.extend(special("pdf:put @resources << /ExtGState @pgfextgs >>"));
+        body.extend(special(
+            "pdf:bxobj @pgfsmask5 width 20pt height 10pt depth 0pt",
+        ));
+        body.push(137); // put_rule inside the form
+        body.extend_from_slice(&(5i32 << 16).to_be_bytes());
+        body.extend_from_slice(&(10i32 << 16).to_be_bytes());
+        body.extend(special(
+            "pdf:exobj <</Group <</S/Transparency /CS/DeviceGray>> >>",
+        ));
+        body.extend(special(
+            "pdf:put @pgfextgs << /pgfsmask5 << /SMask << /S /Luminosity /G @pgfsmask5>> >> >>",
+        ));
+        body.extend(special("pdf:code /pgfsmask5 gs"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes);
+        let at = text.find("/G ").expect("the soft mask's /G");
+        let num: String = text[at + 3..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        assert!(text[at + 3 + num.len()..].starts_with(" 0 R"), "{text}");
+        let obj = text
+            .find(&format!("\n{num} 0 obj\n"))
+            .map(|i| &text[i..])
+            .expect("the form's object");
+        let body = &obj[..obj.find("endobj").unwrap()];
+        assert!(
+            body.contains("/Subtype /Form") || body.contains("/Subtype/Form"),
+            "{body}"
+        );
+        assert!(body.contains("/Transparency"), "{body}");
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        assert_eq!(pdf.pages().unwrap().len(), 1);
     }
 }
