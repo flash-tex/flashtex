@@ -282,6 +282,84 @@ fn env_overrides_path(format: Format, progname: &str) -> bool {
         .any(|n| set(&format!("{n}.{progname}")) || set(&format!("{n}_{progname}")) || set(n))
 }
 
+/// One `texmf.cnf` file's assignments, kpathsea's cnf.c syntax
+/// (`read_line`, `do_line`): `VAR[.prog] [=] value`; `%` and `#` lines are
+/// comments; a line ending in a backslash continues on the next.
+fn cnf_assignments(text: &str) -> Vec<(String, Option<String>, String)> {
+    let mut out = vec![];
+    let mut line = String::new();
+    for raw in text.lines() {
+        if let Some(head) = raw.strip_suffix('\\') {
+            line.push_str(head);
+            continue;
+        }
+        line.push_str(raw);
+        let whole = std::mem::take(&mut line);
+        let l = whole.trim_start();
+        if l.is_empty() || l.starts_with(['%', '#']) {
+            continue;
+        }
+        let end = l
+            .find(|c: char| c.is_whitespace() || c == '=' || c == '.')
+            .unwrap_or(l.len());
+        let (var, mut rest) = l.split_at(end);
+        let mut prog = None;
+        if let Some(r) = rest.strip_prefix('.') {
+            let e = r
+                .find(|c: char| c.is_whitespace() || c == '=')
+                .unwrap_or(r.len());
+            prog = Some(r[..e].to_string());
+            rest = &r[e..];
+        }
+        let rest = rest.trim_start();
+        let value = rest.strip_prefix('=').unwrap_or(rest).trim();
+        if !var.is_empty() {
+            out.push((var.to_string(), prog, value.to_string()));
+        }
+    }
+    out
+}
+
+/// The search paths of [`PATH_ENVS`] that a user's `texmf.cnf` (one on
+/// `TEXMFCNF` outside the TeX Live installation) sets for program `prog`,
+/// each with the value the installation's own files give it (the first
+/// `VAR.prog`, else the first `VAR`, as kpathsea's `kpathsea_cnf_get`
+/// takes it; `None` where they give none). The format is built and checked
+/// without the user's value, as without the environment's (#2327).
+fn user_cnf_paths(r: &mut dyn FileResolver, prog: &str) -> Vec<(Format, String, Option<String>)> {
+    let files = r.find_all("texmf.cnf", Format::Cnf);
+    // TeX Live's `texmf-dist/web2c/texmf.cnf` is read last; its root's
+    // `texmf.cnf` is the installation's too.
+    let Some(root) = files
+        .last()
+        .and_then(|f| f.parent()?.parent()?.parent())
+        .map(Path::to_path_buf)
+    else {
+        return vec![];
+    };
+    let read = |f: &PathBuf| cnf_assignments(&fs::read_to_string(f).unwrap_or_default());
+    let (dist, user): (Vec<&PathBuf>, Vec<&PathBuf>) =
+        files.iter().partition(|f| f.starts_with(&root));
+    let user: Vec<_> = user.into_iter().flat_map(read).collect();
+    let dist: Vec<_> = dist.into_iter().flat_map(read).collect();
+    let mut out = vec![];
+    for (format, vars) in PATH_ENVS {
+        for var in *vars {
+            let applies = |p: &Option<String>| p.as_deref().is_none_or(|p| p == prog);
+            if !user.iter().any(|(v, p, _)| v == var && applies(p)) {
+                continue;
+            }
+            let pick = |want: Option<&str>| {
+                dist.iter()
+                    .find(|(v, p, _)| v == var && p.as_deref() == want)
+                    .map(|(_, _, x)| x.clone())
+            };
+            out.push((*format, var.to_string(), pick(Some(prog)).or_else(|| pick(None))));
+        }
+    }
+    out
+}
+
 /// The line that builds `fmt` with this engine (`pdftex`), from the
 /// resolver's `fmtutil.cnf` files, and its command line.
 pub fn fmtutil_line_for(
@@ -613,6 +691,8 @@ pub struct FormatCache {
     /// Environment for the INITEX runs, beyond the inherited one.
     pub env: Vec<(String, String)>,
     pub last: EnsureStats,
+    /// [`user_cnf_paths`] for the format being ensured.
+    cnf_paths: Vec<(Format, String, Option<String>)>,
 }
 
 impl FormatCache {
@@ -622,6 +702,7 @@ impl FormatCache {
             engine_exe: None,
             env: vec![],
             last: EnsureStats::default(),
+            cnf_paths: vec![],
         }
     }
 
@@ -700,7 +781,9 @@ impl FormatCache {
                 };
                 // The build searched without the environment's override of
                 // this path (`PATH_ENVS`); this process cannot repeat it.
-                if env_overrides_path(format, progname) {
+                if env_overrides_path(format, progname)
+                    || self.cnf_paths.iter().any(|(f, _, _)| *f == format)
+                {
                     continue;
                 }
                 self.last.lookups_checked += 1;
@@ -744,6 +827,9 @@ impl FormatCache {
         let engine = engine_id().to_string();
         let resolver = r.describe();
         let slot = self.slot(&engine, &resolver, fmt);
+        self.cnf_paths = command_progname(&command)
+            .map(|p| user_cnf_paths(r, p))
+            .unwrap_or_default();
         let (v, m) = self.validate(&slot, &engine, &command, progname, r);
         if let (Validity::Valid { refresh }, Some(m)) = (&v, &m) {
             if *refresh {
@@ -878,6 +964,13 @@ impl FormatCache {
         for (k, _) in std::env::vars_os() {
             if k.to_str().is_some_and(is_path_env) {
                 c.env_remove(&k);
+            }
+        }
+        // A user's texmf.cnf value of one gives way to the installation's,
+        // set in the variable kpathsea reads first (#2327).
+        for (_, var, dist) in &self.cnf_paths {
+            if let Some(d) = dist {
+                c.env(var, d);
             }
         }
         for (k, v) in &self.env {
@@ -1031,6 +1124,25 @@ pub fn ensure_format(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cnf_assignments_read_as_kpathsea_does() {
+        let a = cnf_assignments(
+            "% c\n  # c\nTEXINPUTS.pdftex = ./sub:./\nTEXINPUTS $TEXMF//\nX=a\\\nb\n",
+        );
+        let a: Vec<_> = a
+            .iter()
+            .map(|(v, p, x)| (v.as_str(), p.as_deref(), x.as_str()))
+            .collect();
+        assert_eq!(
+            a,
+            [
+                ("TEXINPUTS", Some("pdftex"), "./sub:./"),
+                ("TEXINPUTS", None, "$TEXMF//"),
+                ("X", None, "ab"),
+            ]
+        );
+    }
 
     #[test]
     fn path_env_spellings_are_kpathseas() {

@@ -109,3 +109,84 @@ fn texinputs_without_default_path_compiles_as_in_tex_live() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// The same override in a user's `texmf.cnf` (`TEXINPUTS.pdftex = ./sub:./`
+/// in a directory put first on `TEXMFCNF`), against TeX Live's `pdftex`
+/// (#2327). The format is built and checked with the installation's
+/// `TEXINPUTS`; the job still reads `y` through the user's.
+#[test]
+fn texmf_cnf_texinputs_without_default_path_compiles_as_in_tex_live() {
+    let Some(texbin) = find_texlive_bin() else {
+        common::no_texlive();
+        return;
+    };
+    let d = common::fresh_dir("flashtex-fmt-cnf-texinputs");
+    let _ = std::fs::remove_dir_all(&d);
+    for s in ["bin", "cache", "cnf", "tex/sub", "ours/sub"] {
+        std::fs::create_dir_all(d.join(s)).unwrap();
+    }
+    let bin = d.join("bin").join(flashtex_engine::os::exe_name("pdftex"));
+    flashtex_engine::os::link_executable(env!("CARGO_BIN_EXE_flashtex-initex").as_ref(), &bin)
+        .unwrap();
+    for s in ["tex", "ours"] {
+        std::fs::write(d.join(s).join("sub/y.tex"), "\\message{CNF}").unwrap();
+        std::fs::write(d.join(s).join("main.tex"), "\\input y \\bye\n").unwrap();
+    }
+    std::fs::write(d.join("cnf/texmf.cnf"), "TEXINPUTS.pdftex = ./sub:./\n").unwrap();
+    // The installation's own cnf path, after the user's directory.
+    let base = std::env::var("TEXMFCNF").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| {
+        let out = Command::new(texbin.join("kpsewhich"))
+            .args(["-var-value", "TEXMFCNF"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    });
+    let cnf = format!("{}:{base}", d.join("cnf").display());
+    let run_cnf = |bin: &Path, dir: &Path| {
+        let out = Command::new(bin)
+            .args(["-interaction=nonstopmode", "main.tex"])
+            .current_dir(dir)
+            .env(
+                "FLASHTEX_POOL",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/pdftex.pool"),
+            )
+            .env("FLASHTEX_FORMAT_CACHE_DIR", d.join("cache"))
+            .env("FLASHTEX_DEBUG_FORMATS", "1")
+            .env("TEXMFCNF", &cnf)
+            .env_remove("FLASHTEX_FORMATS")
+            .env_remove("FLASHTEX_FORMAT_CACHE")
+            .env_remove("TEXINPUTS")
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FORCE_SOURCE_DATE", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let theirs = run_cnf(&texbin.join("pdftex"), &d.join("tex"));
+    let want = log_tail(&d.join("tex"));
+    assert_eq!(theirs.0, Some(0), "TeX Live's pdftex: {}", theirs.1);
+    assert!(want.contains("(./sub/y.tex CNF)"), "TeX Live's log: {want}");
+    // Cold cache, then warm.
+    for (pass, how) in [(1, "built"), (2, "cache hit")] {
+        let _ = std::fs::remove_file(d.join("ours/main.log"));
+        let ours = run_cnf(&bin, &d.join("ours"));
+        assert_eq!(
+            ours.0, theirs.0,
+            "pass {pass}: exit status; stderr:\n{}",
+            ours.1
+        );
+        assert_eq!(log_tail(&d.join("ours")), want, "pass {pass}: log");
+        assert!(
+            ours.1.contains(&format!("[formats] pdftex: {how}")),
+            "pass {pass}: want {how}; stderr:\n{}",
+            ours.1
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
