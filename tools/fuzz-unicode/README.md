@@ -86,7 +86,11 @@ TrueType fonts (its `/W` widths are rounded; tools/xetex-pdfparity/README.md,
 "xdvipdfmx's precision"), so a `glyph-position` just over the tolerance in
 a large TrueType font (Charis SIL, Amiri) is xdvipdfmx's, not the writer's.
 The writer marks vertical native fonts (`:vertical`) unsupported and draws
-them upright (`glyph-matrix`, `src/out/page.rs`). A run where xdvipdfmx
+them upright (`glyph-matrix`, `src/out/page.rs`). A `\XeTeXglyph` past the
+font's last glyph has no advance in TeX, but xdvipdfmx gives it a `/W`
+width (the CFF default, e.g. 280) and the rest of its `TJ` drifts by that
+much (`glyph-width` with `glyph-position`); the writer keeps TeX's
+positions. A run where xdvipdfmx
 itself fails ("driver return code") is not compared.
 
 Neutral outcomes, not failures: `both-hang`, `both-signal` (the same signal
@@ -150,5 +154,6 @@ The pure-logic tests (determinism, balanced lines, ddmin) always run; with
 | issue | what | fix |
 |---|---|---|
 | #2329 | `\XeTeXinputnormalization` ignored: `input_line` never called the TECkit normalizer | #2340 (crates/flashtex-xetex/src/system.rs) |
+| #2409 | PDF writer: `embolden=` stroke width scaled by the font size twice (only 10 pt right) | #2410 (crates/flashtex-xetex/src/out/page.rs) |
 | #2391 | not a difference: xetex segfaults and the port panics on `width(font_glue[f])` of null under `\XeTeXinterwordspaceshaping` | open (decision: keep the crash or deviate) |
 | #2382 | `\XeTeXinputencoding` with an ICU converter name (`latin1`, `cp1252`, ...) reads raw bytes (a documented gap: no ICU converters) | open; the grammar uses XeTeX's built-in names only |
