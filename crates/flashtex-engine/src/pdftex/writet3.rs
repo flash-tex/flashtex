@@ -460,8 +460,10 @@ impl Globals {
                 } else {
                     None
                 };
+                // `t3_font_scale <= 0 || t3_font_scale > 1000` fails: a NaN
+                // (`\pdffontscale nan`) passes both tests, as in C
                 match scale {
-                    Some(s) if s > 0.0 && s <= 1000.0 => t.font_scale = s,
+                    Some(s) if !(s <= 0.0 || s > 1000.0) => t.font_scale = s,
                     _ => self.pdftex_fail("missing or invalid font scale"),
                 }
                 while !file.eof {
