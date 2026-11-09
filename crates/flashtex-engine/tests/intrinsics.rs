@@ -29,11 +29,16 @@ struct Run {
 
 /// Run `\input t` in INITEX with the intrinsics in `mode`.
 fn run(dir: &Path, mode: &str, names: &str) -> Run {
+    run_args(dir, mode, names, &["-ini", "\\input t"])
+}
+
+/// [`run`] with the command line `args`.
+fn run_args(dir: &Path, mode: &str, names: &str, args: &[&str]) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .args(["-ini", "\\input t"])
+        .args(args)
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")
@@ -71,11 +76,20 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_with(tag, src, &[], &["-ini", "\\input t"])
+}
+
+/// [`check`] with `files` (name, bytes) next to `t.tex`, and the command
+/// line `args`.
+fn check_with(tag: &str, src: &str, files: &[(&str, &[u8])], args: &[&str]) -> String {
     let d = scratch(tag);
+    for (n, b) in files {
+        std::fs::write(d.join(n), b).unwrap();
+    }
     std::fs::write(d.join("t.tex"), src).unwrap();
-    let off = run(&d, "off", "hook");
-    let on = run(&d, "on", "hook");
-    let verify = run(&d, "verify", "hook");
+    let off = run_args(&d, "off", "hook", args);
+    let on = run_args(&d, "on", "hook", args);
+    let verify = run_args(&d, "verify", "hook", args);
     assert_eq!(off.log, on.log, "{tag}: log with intrinsics on differs");
     assert_eq!(
         off.log, verify.log,
@@ -174,6 +188,27 @@ fn impure_macro_is_not_replayed() {
         let s = check(tag, &src);
         assert_eq!(stat(&s, "replays"), 0, "{tag}: {s}");
     }
+}
+
+#[test]
+fn everyeof_read_past_the_run_is_not_the_runs() {
+    // (#2199) `\\count1=5` reads on past the body for more digits; at the
+    // end of `u.tex` e-TeX pushes `\\everyeof` at the input level the body
+    // had, so `7\\relax` looked like the run's own. Once `\\everyeof` is
+    // `8\\relax` the count is 58, not the recorded 57: such a read is past
+    // the run and abandons the recording. (`\\relax` first: a call that is
+    // the first token of an `\\input` file is not offered.)
+    let s = check_with(
+        "everyeof",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\hook{\\global\\count1=5}\\def\\show{\\message{[\\the\\count1]}}\n\
+         \\everyeof{7\\relax}\\input u \\show\\input u \\show\\input u \\show\n\
+         \\everyeof{8\\relax}\\input u \\show\\input u \\show\\end\n",
+        &[("u.tex", &b"\\relax\\hook\n"[..])],
+        &["-ini", "-etex", "\\input t"],
+    );
+    assert_eq!(stat(&s, "replays"), 0, "{s}");
+    assert!(stat(&s, "Level") >= 1, "{s}");
 }
 
 #[test]
