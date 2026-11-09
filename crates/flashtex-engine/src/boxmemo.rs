@@ -3755,6 +3755,18 @@ impl Globals {
         .contains(&c)
         {
             false
+        } else if (c == k::par_end || c == k::math_shift)
+            && self.nest_ptr == outer
+            && self.cur_list.mode_field == k::hmode
+        {
+            // the paragraph the call was made in ends (`end_graf`, or a
+            // display's `line_break`, tex.web §1096, §1145): `pop_nest`
+            // frees its head, which the next paragraph's `push_nest` takes
+            // back from `get_avail`, so the end check would find the same
+            // list where its lines and `\\parskip` went to the enclosing
+            // one (#2268). (In a paragraph the call may append nothing, so
+            // this costs no replay.)
+            false
         } else if c == k::leader_ship {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
