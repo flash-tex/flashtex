@@ -43,10 +43,7 @@ fn first_page_config_grows_links() {
         [69.509, 704.239, 84.951, 722.491],
     ];
     for (pg, w) in pages.iter().zip(want) {
-        let annots = pdf
-            .page_attr(*pg, "Annots")
-            .and_then(Obj::as_array)
-            .unwrap();
+        let annots = pdf.page_attr(pg, "Annots").and_then(Obj::as_array).unwrap();
         let a = pdf.resolve(&annots[0]).as_dict().unwrap();
         let r: Vec<f64> = a
             .get("Rect")
