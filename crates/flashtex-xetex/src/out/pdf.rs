@@ -1070,21 +1070,15 @@ impl<'a> Writer<'a> {
         used: &BTreeSet<u16>,
     ) -> Result<(), String> {
         let font = data.font.as_ref().map_err(String::clone)?;
-        let upm = font.units_per_em as f64;
-        let k = 1000.0 / upm;
         let info = FaceInfo::read(&r.program, index);
         // the codes of the content stream: glyph ids, or the CIDs of a
         // CID-keyed CFF font (its charset)
         let cids = self.cids.get(&r.id).cloned();
         let code_of = |g: u16| cids.as_ref().and_then(|m| m.get(&g)).copied().unwrap_or(g);
-        // the program, unless the font's licence forbids embedding it
-        let file = if info.embedding_forbidden() {
-            self.warnings.push(format!(
-                "{ps_name}: the font's OS/2 fsType ({:#06x}) does not allow embedding; it is not embedded",
-                info.fs_type
-            ));
-            None
-        } else {
+        // the program, whatever the font's licence says: XeTeX runs
+        // `xdvipdfmx -q -E`, and `-E` (ignore_font_license) makes
+        // tt_get_fontdesc embed every font, silently (measured: fsType 2)
+        let file = {
             // (the last run's, when it drew the same glyphs)
             let made = {
                 let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
@@ -1099,8 +1093,24 @@ impl<'a> Writer<'a> {
             };
             let (file_key, sub, program, subset) = made.as_ref().as_ref().map_err(String::clone)?;
             let ff = self.alloc();
-            self.stream(ff, sub.as_bytes(), program, true);
-            Some((format!(" /{file_key} {ff} 0 R"), *subset))
+            // a TrueType program's `/Length1` (sfnt_create_FontFile_stream)
+            let dict = if *file_key == "FontFile2" {
+                format!("{sub}/Length1 {}", program.len())
+            } else {
+                sub.to_string()
+            };
+            self.stream(ff, dict.as_bytes(), program, true);
+            // the `/CIDSet` of a PDF before 2.0
+            let cid_set = if self.doc.version.0 < 2 {
+                let codes: BTreeSet<u16> = used.iter().map(|&g| code_of(g)).collect();
+                let set = cid_set(&r.program, index, cff, used, &codes);
+                let cs = self.alloc();
+                self.stream(cs, b"", &set, true);
+                format!(" /CIDSet {cs} 0 R")
+            } else {
+                String::new()
+            };
+            Some((format!(" /{file_key} {ff} 0 R{cid_set}"), *subset))
         };
         // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
         let name = if ps_name.is_empty() { "Font" } else { ps_name };
@@ -1110,44 +1120,23 @@ impl<'a> Writer<'a> {
         };
         let file = file.map(|f| f.0);
         let fd = self.alloc();
-        let [bx0, by0, bx1, by1] = font.bbox;
-        let mut d = String::new();
-        let _ = write!(
-            d,
-            "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {}{}>>",
-            info.flags(font.italic_angle),
-            n(bx0 as f64 * k, 3),
-            n(by0 as f64 * k, 3),
-            n(bx1 as f64 * k, 3),
-            n(by1 as f64 * k, 3),
-            n(font.italic_angle, 3),
-            n(font.ascender as f64 * k, 3),
-            n(font.descender as f64 * k, 3),
-            n(font.cap_height.unwrap_or(font.ascender) as f64 * k, 3),
-            info.stem_v(),
+        // a CFF font's own StdVW (CIDFont_type0_t1cdofont), not a
+        // CID-keyed one's
+        let std_vw = if cff && cids.is_none() {
+            font.cff_table()
+                .and_then(|t| super::cffcid::private_value(t, 11))
+        } else {
+            None
+        };
+        let d = format!(
+            "<</Type /FontDescriptor /FontName /{base}{}{}>>",
+            info.descriptor_entries(std_vw),
             file.unwrap_or_default(),
         );
         self.object(fd, d.as_bytes());
-        // widths
-        let mut wa = String::from("[");
-        let mut prev: Option<u16> = None;
+        // widths, as xdvipdfmx writes them
         let by_code: BTreeMap<u16, u16> = used.iter().map(|&g| (code_of(g), g)).collect();
-        for (&c, &g) in &by_code {
-            let w = n(font.advance(g) as f64 * k, 3);
-            if prev.is_some_and(|p| p + 1 == c) {
-                let _ = write!(wa, " {w}");
-            } else {
-                if prev.is_some() {
-                    wa.push(']');
-                }
-                let _ = write!(wa, " {c} [{w}");
-            }
-            prev = Some(c);
-        }
-        if prev.is_some() {
-            wa.push(']');
-        }
-        wa.push_str(" ]");
+        let (dw, wa) = cid_widths(font, &r.program, index, cff, &by_code);
         // a CID-keyed font's own character collection, else Identity
         let ros = if cids.is_some() {
             font.cff_table().and_then(super::cffcid::ros)
@@ -1176,9 +1165,10 @@ impl<'a> Writer<'a> {
         let mut d = String::new();
         let _ = write!(
             d,
-            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo {csi} /FontDescriptor {fd} 0 R /DW {} /W {wa}{}>>",
+            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo {csi} /FontDescriptor {fd} 0 R /DW {}{}{}>>",
             if cff { "CIDFontType0" } else { "CIDFontType2" },
-            n(font.advance(0) as f64 * k, 3),
+            fmt_num(dw, 8),
+            wa.map(|w| format!(" /W {w}")).unwrap_or_default(),
             if cff { "" } else { " /CIDToGIDMap /Identity" }
         );
         self.object(cid, d.as_bytes());
@@ -1212,7 +1202,9 @@ impl<'a> Writer<'a> {
         let mut d = String::new();
         let _ = write!(
             d,
-            "<</Type /Font /Subtype /Type0 /BaseFont /{base} /Encoding /Identity-H /DescendantFonts [{cid} 0 R]{tu}>>"
+            "<</Type /Font /Subtype /Type0 /BaseFont /{base}{} /Encoding /Identity-H /DescendantFonts [{cid} 0 R]{tu}>>",
+            // a CIDFontType0's Type0 font is named with its CMap (type0.c)
+            if cff { "-Identity-H" } else { "" }
         );
         self.object(num, d.as_bytes());
         Ok(())
@@ -1699,6 +1691,184 @@ fn font_program(
     })
 }
 
+/// `PDFUNIT` (cidtype0.c, cidtype2.c): `v` font units in thousandths of
+/// an em, rounded to an integer (`ROUND(1000.0*v/unitsPerEm, 1)`).
+fn pdfunit(v: f64, upm: u16) -> f64 {
+    (1000.0 * v / upm as f64 + 0.5).floor()
+}
+
+/// The `/DW` and `/W` of a CIDFont whose glyph `g` has CID `code_of(g)`,
+/// as xdvipdfmx writes them: every width `PDFUNIT`-rounded, `/DW` that of
+/// `.notdef` for CFF outlines (`add_CIDHMetrics`, cidtype0.c) and for
+/// TrueType outlines the advance most of the subset's glyphs have
+/// (`tt_build_tables`, tt_glyf.c: `.notdef`, the used glyphs and their
+/// composite components, each once; the smallest such advance on a tie,
+/// none above the em), CIDs whose width is `/DW`'s left out of `/W`, the
+/// others grouped in runs of consecutive CIDs (`c [w1 w2 ...]`), no `/W`
+/// when none is left (`add_TTCIDHMetrics`, cidtype2.c).
+fn cid_widths(
+    font: &flashtex_pdf::truetype::TrueTypeFont,
+    program: &[u8],
+    index: u32,
+    cff: bool,
+    by_code: &BTreeMap<u16, u16>,
+) -> (f64, Option<String>) {
+    let upm = font.units_per_em;
+    let mut dw = font.advance(0) as f64;
+    if !cff {
+        let used: BTreeSet<u16> = by_code.values().copied().collect();
+        let mut count: BTreeMap<u16, u32> = BTreeMap::new();
+        for g in glyf_closure(program, index, &used) {
+            let a = font.advance(g);
+            if a <= upm {
+                *count.entry(a).or_default() += 1;
+            }
+        }
+        // the first (smallest) advance with the highest count
+        let mut best: Option<(u16, u32)> = None;
+        for (&a, &c) in &count {
+            if best.is_none_or(|(_, b)| c > b) {
+                best = Some((a, c));
+            }
+        }
+        if let Some((a, _)) = best {
+            if a != 0 {
+                dw = a as f64;
+            }
+        }
+    }
+    let dw = pdfunit(dw, upm);
+    let mut wa = String::from("[");
+    let mut prev: Option<u16> = None;
+    for (&c, &g) in by_code {
+        let w = pdfunit(font.advance(g) as f64, upm);
+        if w == dw {
+            if prev.take().is_some() {
+                wa.push(']');
+            }
+            continue;
+        }
+        if prev.is_some_and(|p| p + 1 == c) {
+            let _ = write!(wa, " {}", fmt_num(w, 8));
+        } else {
+            if prev.is_some() {
+                wa.push(']');
+            }
+            let _ = write!(wa, " {c} [{}", fmt_num(w, 8));
+        }
+        prev = Some(c);
+    }
+    if prev.is_some() {
+        wa.push(']');
+    }
+    if wa == "[" {
+        return (dw, None);
+    }
+    wa.push_str(" ]");
+    (dw, Some(wa))
+}
+
+/// The bytes of a CIDFont's `/CIDSet` (bit `7 - c % 8` of byte `c / 8`
+/// for CID `c`), as xdvipdfmx writes it. For CFF outlines
+/// (`CIDFont_type0_add_CIDSet`, cidtype0.c): `.notdef` and the CIDs
+/// `codes`, through the largest. For TrueType outlines (cidtype2.c): every
+/// glyph id from 1 through the subset's last, the subset holding the used
+/// glyphs at their ids and each further composite component in the lowest
+/// free slot (`find_empty_slot`, tt_glyf.c).
+fn cid_set(
+    program: &[u8],
+    index: u32,
+    cff: bool,
+    used: &BTreeSet<u16>,
+    codes: &BTreeSet<u16>,
+) -> Vec<u8> {
+    if cff {
+        let last = codes.last().copied().unwrap_or(0) as usize;
+        let mut set = vec![0u8; last / 8 + 1];
+        for c in std::iter::once(0).chain(codes.iter().copied()) {
+            set[c as usize / 8] |= 1 << (7 - c % 8);
+        }
+        return set;
+    }
+    let held: BTreeSet<u16> = std::iter::once(0).chain(used.iter().copied()).collect();
+    let mut extra = glyf_closure(program, index, used).difference(&held).count();
+    let mut last = held.last().copied().unwrap_or(0) as usize;
+    let mut slot = 0usize;
+    while extra > 0 {
+        slot += 1;
+        if !held.contains(&(slot as u16)) {
+            extra -= 1;
+            last = last.max(slot);
+        }
+    }
+    let mut set = vec![0u8; last / 8 + 1];
+    for g in 1..=last {
+        set[g / 8] |= 1 << (7 - g % 8);
+    }
+    set
+}
+
+/// `.notdef`, the glyphs of `used` and every glyph their composite glyphs
+/// draw (`glyf`/`loca` of face `index`): the glyphs a TrueType subset of
+/// `used` holds.
+fn glyf_closure(data: &[u8], index: u32, used: &BTreeSet<u16>) -> BTreeSet<u16> {
+    use super::tounicode::table;
+    let rd16 = |t: &[u8], o: usize| t.get(o..o + 2).map(|s| u16::from_be_bytes([s[0], s[1]]));
+    let rd32 = |t: &[u8], o: usize| {
+        t.get(o..o + 4)
+            .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+    };
+    let mut out = BTreeSet::new();
+    let (Some(head), Some(loca), Some(glyf)) = (
+        table(data, index, b"head"),
+        table(data, index, b"loca"),
+        table(data, index, b"glyf"),
+    ) else {
+        out.insert(0);
+        out.extend(used);
+        return out;
+    };
+    let long = rd16(head, 50) == Some(1);
+    let at = |g: u16| -> Option<(usize, usize)> {
+        let (s, e) = if long {
+            (rd32(loca, 4 * g as usize)?, rd32(loca, 4 * g as usize + 4)?)
+        } else {
+            (
+                2 * rd16(loca, 2 * g as usize)? as u32,
+                2 * rd16(loca, 2 * g as usize + 2)? as u32,
+            )
+        };
+        Some((s as usize, e as usize))
+    };
+    let mut stack: Vec<u16> = std::iter::once(0).chain(used.iter().copied()).collect();
+    while let Some(g) = stack.pop() {
+        if !out.insert(g) {
+            continue;
+        }
+        let Some((s, e)) = at(g) else { continue };
+        let Some(d) = glyf.get(s..e) else { continue };
+        if d.len() < 10 || (rd16(d, 0).unwrap_or(0) as i16) >= 0 {
+            continue;
+        }
+        let mut p = 10;
+        while let (Some(flags), Some(part)) = (rd16(d, p), rd16(d, p + 2)) {
+            stack.push(part);
+            p += 4 + if flags & 1 != 0 { 4 } else { 2 };
+            if flags & 8 != 0 {
+                p += 2;
+            } else if flags & 0x40 != 0 {
+                p += 4;
+            } else if flags & 0x80 != 0 {
+                p += 8;
+            }
+            if flags & 0x20 == 0 {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// What the PDF writer last made for one face (`super::fonts::FaceData`),
 /// with the input it made it from: each a function of the face and that
 /// input, used again when a later run asks with the same input (a
@@ -1747,67 +1917,179 @@ fn cid_map(
     )
 }
 
-/// What the font descriptor takes from a face's `OS/2`, `post` and `head`.
-#[derive(Default)]
+/// What the font descriptor takes from a face's `OS/2`, `post` and
+/// `head`, read as xdvipdfmx's `tt_read_os2__table`, `tt_read_post_table`
+/// and `tt_read_head_table` read them (tt_table.c).
 struct FaceInfo {
-    fs_type: u16,
+    /// The `OS/2` table's fields; a face without one has
+    /// `tt_read_os2__table`'s stand-ins (version 0, weight 400, typo
+    /// ascender 880 and descender -120, the rest 0).
+    os2_version: u16,
+    avg_width: i16,
     weight: u16,
-    family_class: u16,
+    family_class: i16,
+    panose: [u8; 10],
+    fs_selection: u16,
+    /// 0 when the table is shorter than 78 bytes (C leaves them unset).
+    typo_ascender: i16,
+    typo_descender: i16,
+    /// Read for an `OS/2` of version 2 and later only.
+    x_height: i16,
+    cap_height: i16,
+    /// `head`: units per em and the bounding box.
+    upm: u16,
+    bbox: [i16; 4],
+    /// `post`: `italicAngle` and `isFixedPitch`.
+    italic_angle: f64,
     fixed_pitch: bool,
-    italic_style: bool,
+}
+
+impl Default for FaceInfo {
+    fn default() -> Self {
+        FaceInfo {
+            os2_version: 0,
+            avg_width: 0,
+            weight: 400,
+            family_class: 0,
+            panose: [0; 10],
+            fs_selection: 0,
+            typo_ascender: 880,
+            typo_descender: -120,
+            x_height: 0,
+            cap_height: 0,
+            upm: 1000,
+            bbox: [0; 4],
+            italic_angle: 0.0,
+            fixed_pitch: false,
+        }
+    }
 }
 
 impl FaceInfo {
     fn read(data: &[u8], index: u32) -> FaceInfo {
         use super::tounicode::table;
         let rd16 = |t: &[u8], o: usize| t.get(o..o + 2).map(|s| u16::from_be_bytes([s[0], s[1]]));
-        let mut f = FaceInfo {
-            weight: 400,
-            ..FaceInfo::default()
-        };
+        let i16_at = |t: &[u8], o: usize| rd16(t, o).unwrap_or(0) as i16;
+        let mut f = FaceInfo::default();
         if let Some(os2) = table(data, index, b"OS/2") {
-            f.weight = rd16(os2, 4).unwrap_or(400);
-            f.fs_type = rd16(os2, 8).unwrap_or(0);
-            f.family_class = rd16(os2, 30).unwrap_or(0);
-            f.italic_style = rd16(os2, 62).is_some_and(|s| s & 1 != 0);
-        }
-        if let Some(post) = table(data, index, b"post") {
-            f.fixed_pitch = post.get(12..16).is_some_and(|s| s.iter().any(|&b| b != 0));
+            f.os2_version = rd16(os2, 0).unwrap_or(0);
+            f.avg_width = i16_at(os2, 2);
+            f.weight = rd16(os2, 4).unwrap_or(0);
+            f.family_class = i16_at(os2, 30);
+            for (k, p) in f.panose.iter_mut().enumerate() {
+                *p = os2.get(32 + k).copied().unwrap_or(0);
+            }
+            f.fs_selection = rd16(os2, 62).unwrap_or(0);
+            let long = os2.len() >= 78;
+            f.typo_ascender = if long { i16_at(os2, 68) } else { 0 };
+            f.typo_descender = if long { i16_at(os2, 70) } else { 0 };
+            if long && f.os2_version > 1 {
+                f.x_height = i16_at(os2, 86);
+                f.cap_height = i16_at(os2, 88);
+            }
         }
         if let Some(head) = table(data, index, b"head") {
-            f.italic_style |= rd16(head, 44).is_some_and(|m| m & 2 != 0);
+            f.upm = rd16(head, 18).unwrap_or(1000);
+            for (k, b) in f.bbox.iter_mut().enumerate() {
+                *b = i16_at(head, 36 + 2 * k);
+            }
+        }
+        if let Some(post) = table(data, index, b"post") {
+            let fixed = post
+                .get(4..8)
+                .map_or(0, |s| i32::from_be_bytes([s[0], s[1], s[2], s[3]]));
+            f.italic_angle = fixed as f64 / 65536.0;
+            f.fixed_pitch = post.get(12..16).is_some_and(|s| s.iter().any(|&b| b != 0));
         }
         f
     }
 
-    /// `fsType` (OpenType spec, OS/2): "Restricted License embedding"
-    /// (only bit 1 of the usage bits) or "Bitmap embedding only" (bit 9).
-    fn embedding_forbidden(&self) -> bool {
-        self.fs_type & 0x000F == 0x0002 || self.fs_type & 0x0200 != 0
+    /// `PDFUNIT`: font units to thousandths of an em, rounded to an integer
+    /// (`ROUND(1000.0*v/unitsPerEm, 1)`).
+    fn pdfunit(&self, v: f64) -> f64 {
+        (1000.0 * v / self.upm as f64 + 0.5).floor()
     }
 
-    /// The descriptor's `/Flags` (PDF 32000-1 Table 123): FixedPitch,
-    /// Serif (an `sFamilyClass` of 1-5 or 7), Symbolic (a font drawn by
-    /// glyph id has no standard encoding), Italic.
-    fn flags(&self, italic_angle: f64) -> u32 {
+    /// The descriptor's `/Flags` as `tt_get_fontdesc` sets them: Symbolic,
+    /// Italic and ForceBold from `fsSelection`, Serif unless the
+    /// `sFamilyClass` class is 8 (sans serif), Script for class 10,
+    /// FixedPitch from `post`.
+    fn flags(&self) -> u32 {
         let mut f = 4;
+        if self.fs_selection & 1 != 0 {
+            f |= 64;
+        }
+        if self.fs_selection & (1 << 5) != 0 {
+            f |= 1 << 18;
+        }
+        let class = (self.family_class >> 8) & 0xff;
+        if class != 8 {
+            f |= 2;
+        }
+        if class == 10 {
+            f |= 8;
+        }
         if self.fixed_pitch {
             f |= 1;
         }
-        if matches!(self.family_class >> 8, 1..=5 | 7) {
-            f |= 2;
-        }
-        if self.italic_style || italic_angle != 0.0 {
-            f |= 64;
-        }
         f
     }
 
-    /// `/StemV` from the weight class, as PDF writers estimate it when the
-    /// font gives none: 50 + (weight / 65)².
-    fn stem_v(&self) -> u32 {
+    /// `/StemV` as `tt_get_fontdesc` estimates it from the weight class,
+    /// `(w/65.)*(w/65.)+50` stored in an `int` (truncated).
+    fn stem_v(&self) -> f64 {
         let w = self.weight as f64 / 65.0;
-        (50.0 + w * w).round() as u32
+        (w * w + 50.0) as i32 as f64
+    }
+
+    /// The `FontDescriptor`'s entries after `/FontName`, as
+    /// `tt_get_fontdesc` (tt_aux.c) writes them for a CID-keyed font:
+    /// `/Ascent`, `/Descent`, `/StemV` (`stem_v`, or a CFF's own `StdVW`),
+    /// `/CapHeight` (and `/XHeight`) from an `OS/2` of version 2 exactly,
+    /// else the typo ascender, `/AvgWidth` when not 0, `/FontBBox` from
+    /// `head`, `/ItalicAngle` from `post`, `/Flags`, `/Style` with the
+    /// Panose bytes. Numbers to eight decimals, as dvipdfmx's `p_dtoa`.
+    fn descriptor_entries(&self, stem_v: Option<f64>) -> String {
+        let u = |v: i16| fmt_num(self.pdfunit(v as f64), 8);
+        let mut d = String::new();
+        let _ = write!(
+            d,
+            " /Ascent {} /Descent {} /StemV {}",
+            u(self.typo_ascender),
+            u(self.typo_descender),
+            fmt_num(stem_v.unwrap_or_else(|| self.stem_v()), 8)
+        );
+        if self.os2_version == 2 {
+            let _ = write!(
+                d,
+                " /CapHeight {} /XHeight {}",
+                u(self.cap_height),
+                u(self.x_height)
+            );
+        } else {
+            let _ = write!(d, " /CapHeight {}", u(self.typo_ascender));
+        }
+        if self.avg_width != 0 {
+            let _ = write!(d, " /AvgWidth {}", u(self.avg_width));
+        }
+        let [x0, y0, x1, y1] = self.bbox;
+        let _ = write!(
+            d,
+            " /FontBBox [{} {} {} {}] /ItalicAngle {} /Flags {}",
+            u(x0),
+            u(y0),
+            u(x1),
+            u(y1),
+            fmt_num(self.italic_angle, 8),
+            self.flags()
+        );
+        let mut panose = Vec::with_capacity(12);
+        panose.extend_from_slice(&self.family_class.to_be_bytes());
+        panose.extend_from_slice(&self.panose);
+        let mut s = Vec::new();
+        super::pdfobj::write_string(&panose, &mut s);
+        let _ = write!(d, " /Style <</Panose {}>>", String::from_utf8_lossy(&s));
+        d
     }
 }
 
@@ -2433,8 +2715,10 @@ mod tests {
             .resolve(&f.get("DescendantFonts").and_then(Obj::as_array).unwrap()[0])
             .as_dict()
             .unwrap();
-        let w = d.get("W").and_then(Obj::as_array).unwrap();
-        assert_eq!(w[0].as_number(), Some(cid.to_string().as_str()));
+        // a full-width glyph: its width is .notdef's, so `/DW`'s, and
+        // xdvipdfmx writes no `/W` (measured with FandolSong)
+        assert_eq!(d.get("DW").and_then(Obj::as_number), Some("1000"));
+        assert!(d.get("W").is_none());
         let fd = pdf
             .resolve(d.get("FontDescriptor").unwrap())
             .as_dict()
@@ -2590,29 +2874,139 @@ mod tests {
         );
     }
 
-    /// `/Flags`, `/StemV` and the embedding permission from the face: LM
-    /// Mono is fixed pitch, regular weight, installable.
+    /// `/DW` and `/W` as xdvipdfmx writes them, measured (TeX Live 2026
+    /// xetex + xdvipdfmx 20260317, the text drawn by `\font\f="[path]"`):
+    /// JetBrains Mono (in the repository) has every width `/DW`'s, so no
+    /// `/W`; Georgia (macOS) and DejaVu Sans (TeX Live), when present, have
+    /// a `/DW` most of the subset's glyphs share, composite components
+    /// counted, and integer widths in runs.
     #[test]
-    fn font_descriptors_say_what_the_face_is() {
-        let path = concat!(
+    fn cid_widths_are_xdvipdfmxs() {
+        let widths = |path: &str, text: &str| -> Option<(f64, Option<String>)> {
+            let data = std::fs::read(path).ok()?;
+            let font = flashtex_pdf::truetype::TrueTypeFont::parse(data.clone()).unwrap();
+            let by_code: BTreeMap<u16, u16> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| font.glyph_id(c).unwrap())
+                .map(|g| (g, g))
+                .collect();
+            Some(cid_widths(&font, &data, 0, false, &by_code))
+        };
+        let jb = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/mac/Fonts/lmmono10-regular.otf"
+            "/../../apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-Regular.ttf"
         );
-        let info = FaceInfo::read(&std::fs::read(path).unwrap(), 0);
-        assert_eq!(info.flags(0.0) & 1, 1, "fixed pitch");
-        assert_eq!(info.flags(-9.0) & 64, 64, "italic");
-        assert_eq!(info.stem_v(), 88); // weight 400
-        assert!(!info.embedding_forbidden());
-        let restricted = FaceInfo {
-            fs_type: 0x0002,
+        assert_eq!(widths(jb, "Héllo wörld ÆŒ ñ ü"), Some((600.0, None)));
+        if let Some(g) = widths(
+            "/System/Library/Fonts/Supplemental/Georgia.ttf",
+            "The quick brown fox jumps over the lazy dog Ééàü",
+        ) {
+            assert_eq!(
+                g,
+                (
+                    500.0,
+                    Some(
+                        "[ 55 [619] 68 [504 560 454 574 483 325 509 582 293 292 536 286 881 \
+                         591 539 571 560 410 432 345 575 497 737 505 492 444] 101 [653] \
+                         106 [504] 112 [483] 129 [575] ]"
+                            .into()
+                    )
+                )
+            );
+        }
+        if let Some(d) = widths(
+            "/Library/TeX/Root/texmf-dist/fonts/truetype/public/dejavu/DejaVuSans.ttf",
+            "Ééàüñ ÅÇ ŷ ẅ ǖ",
+        ) {
+            assert_eq!(
+                d,
+                (
+                    500.0,
+                    Some(
+                        "[ 135 [684] 137 [698] 139 [632] 162 [613] 171 [615] 179 [634] \
+                         190 [634] 313 [592] 408 [634] 2430 [818] ]"
+                            .into()
+                    )
+                )
+            );
+        }
+    }
+
+    /// `/CIDSet` as xdvipdfmx writes it, measured (TeX Live 2026 xetex +
+    /// xdvipdfmx 20260317): JetBrains Mono (TrueType: glyphs 1 through the
+    /// subset's last), LM Roman 10 Italic and LM Mono 10 (CFF: the CIDs).
+    #[test]
+    fn cid_sets_are_xdvipdfmxs() {
+        let set = |path: &str, cff: bool, text: &str| -> String {
+            let data =
+                std::fs::read(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            let font = flashtex_pdf::truetype::TrueTypeFont::parse(data.clone()).unwrap();
+            let used: BTreeSet<u16> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| font.glyph_id(c).unwrap())
+                .collect();
+            cid_set(&data, 0, cff, &used, &used)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect()
+        };
+        assert_eq!(
+            set(
+                "apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-Regular.ttf",
+                false,
+                "Héllo wörld ÆŒ ñ ü"
+            ),
+            format!("7f{}e0", "ff".repeat(44))
+        );
+        assert_eq!(
+            set("apps/mac/Fonts/lmroman10-italic.otf", true, "Italic"),
+            "8000000800100000608000000040"
+        );
+        assert_eq!(
+            set("apps/mac/Fonts/lmmono10-regular.otf", true, "mono"),
+            "8000000000000000001440"
+        );
+    }
+
+    /// The descriptor's entries as xdvipdfmx's `tt_get_fontdesc` writes
+    /// them, measured (TeX Live 2026 xetex + xdvipdfmx 20260317, the fonts
+    /// drawn by `\font\f="[path]"`): LM Mono 10 and LM Roman 10 Italic,
+    /// whose `/StemV` is their CFF's `StdVW`, and a face without `OS/2`.
+    #[test]
+    fn font_descriptors_are_xdvipdfmxs() {
+        let entries = |name: &str| {
+            let path = format!("{}/../../apps/mac/Fonts/{name}", env!("CARGO_MANIFEST_DIR"));
+            let data = std::fs::read(path).unwrap();
+            let font = flashtex_pdf::truetype::TrueTypeFont::parse(data.clone()).unwrap();
+            let std_vw = super::super::cffcid::private_value(font.cff_table().unwrap(), 11);
+            FaceInfo::read(&data, 0).descriptor_entries(std_vw)
+        };
+        assert_eq!(
+            entries("lmmono10-regular.otf"),
+            " /Ascent 778 /Descent -222 /StemV 69 /CapHeight 778 /AvgWidth 500 \
+             /FontBBox [-451 -316 731 1016] /ItalicAngle 0 /Flags 7 \
+             /Style <</Panose (\\000\\000\\000\\000\\005\\011\\000\\000\\000\\000\\000\\000)>>"
+        );
+        assert_eq!(
+            entries("lmroman10-italic.otf"),
+            " /Ascent 806 /Descent -194 /StemV 56 /CapHeight 806 /AvgWidth 548 \
+             /FontBBox [-458 -290 1386 1125] /ItalicAngle -14.03619385 /Flags 70 \
+             /Style <</Panose (\\000\\000\\000\\000\\005\\000\\000\\000\\000\\000\\000\\000)>>"
+        );
+        // no OS/2 (Courier.ttc, measured: /Ascent 430 /Descent -59 at
+        // 2048 units per em, /StemV 87, /Flags 6)
+        let none = FaceInfo {
+            upm: 2048,
             ..FaceInfo::default()
         };
-        assert!(restricted.embedding_forbidden());
-        let editable = FaceInfo {
-            fs_type: 0x0008,
-            ..FaceInfo::default()
-        };
-        assert!(!editable.embedding_forbidden());
+        assert_eq!(
+            none.descriptor_entries(None),
+            " /Ascent 430 /Descent -59 /StemV 87 /CapHeight 430 \
+             /FontBBox [0 0 0 0] /ItalicAngle 0 /Flags 6 \
+             /Style <</Panose (\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000)>>"
+        );
     }
 
     /// A grey PNG with an `sRGB` chunk: the IMAGE's `color_space` is the
