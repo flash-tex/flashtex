@@ -1785,10 +1785,7 @@ fn glyf_closure(data: &[u8], index: u32, used: &BTreeSet<u16>) -> BTreeSet<u16> 
             continue;
         }
         let mut p = 10;
-        loop {
-            let (Some(flags), Some(part)) = (rd16(d, p), rd16(d, p + 2)) else {
-                break;
-            };
+        while let (Some(flags), Some(part)) = (rd16(d, p), rd16(d, p + 2)) {
             stack.push(part);
             p += 4 + if flags & 1 != 0 { 4 } else { 2 };
             if flags & 8 != 0 {
