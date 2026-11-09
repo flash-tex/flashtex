@@ -21,9 +21,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import fuzz  # noqa: E402
 import gen  # noqa: E402
+import interact  # noqa: E402
 import minimize  # noqa: E402
 
 SMOKE_SEEDS = (0, 1, 2, 7)
+INTERACT_CASES = (0, 3, 14)
 # sha256 of gen.generate(0).render(): pins the generator, so a change to the
 # grammar is a deliberate update of this value (old seeds then mean new
 # documents; findings record the generator revision they came from).
@@ -81,6 +83,18 @@ class DdminTest(unittest.TestCase):
         self.assertEqual(minimize.ddmin(list("abcdef"), lambda xs: "d" in xs), ["d"])
 
 
+class InteractCaseTest(unittest.TestCase):
+    def test_deterministic(self):
+        self.assertEqual(interact.case(5), interact.case(5))
+        self.assertNotEqual(interact.case(5), interact.case(6))
+
+    def test_shape(self):
+        for n in range(50):
+            doc, stdin = interact.case(n)
+            self.assertTrue(doc.rstrip().endswith("\\end"))
+            self.assertIsInstance(stdin, bytes)
+
+
 ORACLE = shutil.which("pdftex")
 
 
@@ -109,6 +123,18 @@ class EngineSmokeTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("FUZZ_PARITY_CANDIDATE"), "FUZZ_PARITY_CANDIDATE not set")
     def test_candidate(self):
         self._run(os.path.abspath(os.environ["FUZZ_PARITY_CANDIDATE"]))
+
+    def _interact(self, candidate):
+        oracle = os.path.realpath(ORACLE)
+        bad = [(n, interact.compare(n, candidate, oracle, self.tmp)) for n in INTERACT_CASES]
+        self.assertEqual([b for b in bad if b[1][0] != "equal"], [])
+
+    def test_interact_oracle_self(self):
+        self._interact(os.path.realpath(ORACLE))
+
+    @unittest.skipUnless(os.environ.get("FUZZ_PARITY_CANDIDATE"), "FUZZ_PARITY_CANDIDATE not set")
+    def test_interact_candidate(self):
+        self._interact(os.path.abspath(os.environ["FUZZ_PARITY_CANDIDATE"]))
 
 
 if __name__ == "__main__":

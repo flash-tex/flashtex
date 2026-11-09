@@ -166,6 +166,19 @@ found`, in both engines alike.
 Random numbers: every `\pdfuniformdeviate`/`\pdfnormaldeviate` the grammar
 emits follows a `\pdfsetrandomseed`, and the preamble sets one too (pdfTeX seeds from the clock, and a deviate in an argument or a `\write` can be expanded before the `\pdfsetrandomseed` beside it runs).
 
+## Terminal interaction
+
+```sh
+python3 tools/fuzz-parity/interact.py --candidate BIN --cases 0:300 --out /tmp/fzi
+```
+
+The capture above closes stdin, so error prompts and `\read16` only ever
+see end of file. `interact.py` runs small INITEX documents of errors, in
+each interaction mode, with a scripted stdin: help, deletions, `i`/`I`
+insertions, `x`, `q`/`r`/`s`, `e`/`E` (with `TEXEDIT=true`), plain lines,
+Control-D. It compares the exit code, stdout and the log after the
+banner. A case number is the whole test case.
+
 ## Minimise
 
 ```sh
