@@ -506,8 +506,10 @@ fn an_outer_control_sequence_read_in_place(tag: &str, defs: &str, read: &str) {
 
 #[test]
 fn an_outer_control_sequence_in_a_delimited_argument_is_in_the_key() {
-    // [5]: `macro_call`'s delimited parameter, matched in place
-    an_outer_control_sequence_read_in_place("outer-delimited", "\\def\\eat#1.{}", "\\eat\\foo.");
+    // [5]: `macro_call`'s delimited parameter, matched in place. The
+    // loop starts after the argument's first stored token, which
+    // `get_token` reads as before; so `\foo` comes second.
+    an_outer_control_sequence_read_in_place("outer-delimited", "\\def\\eat#1.{}", "\\eat x\\foo.");
 }
 
 #[test]
