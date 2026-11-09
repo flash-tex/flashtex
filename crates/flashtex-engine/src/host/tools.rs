@@ -19,7 +19,8 @@
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
 //!   `compile [PAGE]`, `compile-interrupt PASS PAGES [NTH]`,
 //!   `compile-interrupt-at SECONDS`, `redensify PAGE`,
-//!   `redensify-interrupt PAGE PAGES`, `finish`, `save`,
+//!   `redensify-interrupt PAGE PAGES`, `redensify-write PAGE PAGES FILE TEXT`,
+//!   `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
 //! * `bench` compiles once cold, then `--reps N` times after editing
@@ -358,6 +359,32 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                     r
                 }
                 _ => Err(format!("redensify-interrupt PAGE PAGES, not {a}")),
+            }
+        } else if let Some(a) = line.strip_prefix("redensify-write ") {
+            // another program writes FILE (the rest of the line, then a
+            // newline) while that run has shipped PAGES pages: nothing stops
+            // the run (REVIEW-2248's MINOR 1)
+            let mut it = a.splitn(4, ' ');
+            let page = it.next().and_then(|x| x.parse::<usize>().ok());
+            let n = it.next().and_then(|x| x.parse::<usize>().ok());
+            let file = it.next().map(str::to_string);
+            let text = it.next().map(|t| format!("{t}\n"));
+            match (page, n, file, text) {
+                (Some(page), Some(n), Some(file), Some(text)) => {
+                    let done = std::cell::Cell::new(false);
+                    s.set_preempt(Some(std::rc::Rc::new(move |_: usize, pages: usize| {
+                        if pages >= n && !done.replace(true) {
+                            let _ = std::fs::write(&file, &text);
+                        }
+                        false
+                    })));
+                    let r = s
+                        .redensify(page)
+                        .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json()));
+                    s.set_preempt(None);
+                    r
+                }
+                _ => Err(format!("redensify-write PAGE PAGES FILE TEXT, not {a}")),
             }
         } else if line == "finish" {
             s.finish().map(|r| r.json())

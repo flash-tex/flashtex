@@ -629,6 +629,12 @@ struct Obs {
     /// `Session::idle_run`: no edit, so its held segment checkpoints are
     /// taken where retention keeps them (`take_held_segment`).
     idle: bool,
+    /// The idle run stopped because it no longer repeats the old run (a
+    /// page that differs, its first convergence test failed, or no test by
+    /// `IDLE_TEST_SLACK` pages past its first): another program changed a
+    /// file it reads while it ran. It is dropped (`abandon_paused`) and the
+    /// next compile takes the change (REVIEW-2248's MINOR 1).
+    idle_missed: bool,
     s0: Option<CheckpointId>,
     keep_r: Option<CheckpointId>,
     /// `Options::branch_window`, and the pages before each checkpoint the
@@ -3379,6 +3385,12 @@ impl Observer for Obs {
         let cpu = thread_cpu_s() - self.cpu0;
         self.page_times.push((j, self.page_s, cpu));
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
+        // An idle run ships the old run's pages or none (`Session::
+        // redensify`): one that differs means a file it read changed while
+        // it ran. Stopped here, and dropped: the next compile ships it.
+        if self.idle && !unchanged {
+            return self.idle_stop(j, "a page differs from the old run's");
+        }
         if let Some((from, _)) = self.dead_verify {
             if j > from && !unchanged && self.dead_verify_bad.is_none() {
                 self.dead_verify_bad = Some(format!(
@@ -3447,6 +3459,9 @@ impl Observer for Obs {
         if skip {
             self.skipped_unchanged = true;
         }
+        if self.idle && j >= self.next_test + IDLE_TEST_SLACK {
+            return self.idle_stop(j, "no convergence test");
+        }
         if self.converge && j >= self.next_test && !skip {
             if let Some(old) = self
                 .old_pages
@@ -3481,6 +3496,12 @@ impl Observer for Obs {
                 if self.preempted {
                     // newer work came during the test
                     return Action::Stop;
+                }
+                // With nothing changed the idle run's first test holds: a
+                // failed one means a file changed while it ran, and the run
+                // would go on silently to the end, taking it in
+                if self.idle {
+                    return self.idle_stop(j, "its convergence test failed");
                 }
                 // Back off after three misses (an edit that reflows the
                 // rest never converges): test at 1, 2, 4, ... pages on.
@@ -3542,6 +3563,15 @@ impl Obs {
     /// would start from the format again (the whole preamble, and while
     /// the user types, again and again); stopped after it, the next
     /// compile restarts from S₀ or a later checkpoint of this run.
+    /// Stop an idle run that no longer repeats the old one (`idle_missed`).
+    fn idle_stop(&mut self, j: usize, why: &str) -> Action {
+        if self.debug {
+            eprintln!("[incr] the idle run stops at page {j}: {why}; dropped");
+        }
+        self.idle_missed = true;
+        Action::Stop
+    }
+
     fn preempt_now(&mut self, g: &mut Globals) -> bool {
         if self.preempt_after_s0 && g.layer().s0.is_none() {
             return false;
@@ -4900,6 +4930,13 @@ impl Session {
                 self.view = view;
                 self.reemit_from = None;
                 Ok(None)
+            }
+            // (it took in a change made while it ran, and was dropped: the
+            // restore it spent is prepared again, as after a completed one)
+            Ok(rep) if rep.mode == IDLE_DROPPED => {
+                self.view = view;
+                self.reemit_from = None;
+                Ok(Some(rep))
             }
             Ok(rep) => {
                 if let Some(p) = self.paused.as_mut() {
@@ -6857,6 +6894,7 @@ impl Session {
             cursor: self.cursor,
             view: self.view,
             idle: self.idle_run,
+            idle_missed: false,
             s0: self.s0.as_ref().map(|s| s.id),
             keep_r: None,
             branch_window: self.opts.branch_window,
@@ -7871,12 +7909,23 @@ impl Session {
             obs.page_times.clear();
             // The pages so far are part of the document already (the
             // later ones are stale until the run goes on).
+            let idle_missed = obs.idle_missed;
             g.layer().observer = Some(obs);
             self.paused = Some(Paused {
                 report: rep.clone(),
                 t0,
-                idle: false,
+                idle: idle_missed,
             });
+            if idle_missed {
+                // (an idle run that took in a change: back to the complete
+                // run, the journal as it was, so the next compile's
+                // `changes` finds it; REVIEW-2248's MINOR 1)
+                self.abandon_paused(true)?;
+                rep.mode = IDLE_DROPPED.into();
+                rep.paused = false;
+                rep.preempted = false;
+                rep.pages = self.pages.len();
+            }
             return Ok(());
         }
         // #1550: the run read a file open for output whose bytes on disk a
@@ -8529,6 +8578,13 @@ const REDENSIFY_BACK: usize = 2;
 
 /// `Report::mode` of a `redensify` run that did not start (`idle_took_nothing`).
 const IDLE_TOOK_NOTHING: &str = "idle-took-nothing";
+/// `Report::mode` of an idle run stopped and dropped because a file it read
+/// changed while it ran (`Obs::idle_missed`).
+const IDLE_DROPPED: &str = "idle-dropped";
+/// An idle run with no convergence test this many pages past its first
+/// test's page stops (`Obs::idle_missed`): it bounds a run whose old pages
+/// have no checkpoints to test against.
+const IDLE_TEST_SLACK: usize = 3;
 
 /// Segment checkpoints at least this far apart by default (seconds of
 /// engine time). Measured on the benchmark documents

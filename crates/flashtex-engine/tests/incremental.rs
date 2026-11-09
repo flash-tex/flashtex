@@ -2071,6 +2071,79 @@ fn a_viewport_far_away_takes_its_checkpoints_again() {
     );
 }
 
+/// REVIEW-2248's MINOR 1: another program (a `git checkout`, a sync
+/// client) rewrites a file the document `\input`s on the shown page
+/// shown page while the idle run (`Session::redensify`) is going. The run
+/// reads the new text, so its page there differs from the old run's: it
+/// stops and is dropped, and the next compile finds the change and ships
+/// it. Before the fix the idle run went on to the end, took the file into
+/// the journal, and that compile reported `unchanged`. One paragraph a page.
+#[test]
+fn a_viewport_idle_run_drops_a_change_made_while_it_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const AT: usize = 95;
+    let body = |edits: &[(usize, &str)]| {
+        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..120 {
+            if i == AT {
+                d.push_str("\\input{chap}\n\n");
+            } else {
+                let w = edits.iter().find(|x| x.0 == i).map_or("delta", |x| x.1);
+                d.push_str(&para(i, w));
+            }
+            d.push_str("\\newpage\n");
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let dir = e.dir.join("viewport-write-during");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
+    std::fs::write(dir.join("chap.tex"), para(AT, "delta")).unwrap();
+    let env = [("FLASHTEX_DENSE", "2"), ("FLASHTEX_SEGMENT_S", "0.000001")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "pages"), "120", "{r}");
+    // the cursor near the start
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &body(&[(1, "alpha")]))],
+        "near",
+    );
+    // the shown page is the `\input`'s (read before the first test); the
+    // file is rewritten once the idle run has shipped its first page
+    let k = AT;
+    let chap = dir.join("chap.tex");
+    let new = para(AT, "omega").replace('\n', " ");
+    let r = h.cmd(&format!("redensify-write {k} 1 {} {new}", chap.display()));
+    assert_ne!(r.trim(), "null", "far from the cursor");
+    assert!(
+        field(&r, "restart_pages").parse::<usize>().unwrap() + 2 <= k,
+        "{r}"
+    );
+    assert_eq!(field(&r, "paused"), "false", "{r}");
+    assert_eq!(
+        field(&r, "mode"),
+        "\"idle-dropped\"",
+        "the idle run took in the file written while it ran: {r}"
+    );
+    // the next compile sees the change (the output is a scratch run's)
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[],
+        "the file written during the idle run",
+    );
+    assert_ne!(field(&r, "mode"), "\"unchanged\"", "{r}");
+}
+
 /// REVIEW-E's MAJOR on #2248: the user types at page A, glances at a far
 /// page B (VIEWPORT, whose idle run completes there), then types at A
 /// again without scrolling back. Retention keeps A's window as well as
