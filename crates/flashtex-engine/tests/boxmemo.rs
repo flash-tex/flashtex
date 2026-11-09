@@ -505,7 +505,8 @@ fn interword_glue_adjusted_by_the_char_before_the_call_never_replays() {
     // first node reads the tail from before the call, which no key holds
     // (nor its kind): a call recorded after a kern or after `y` must not be
     // replayed after `x`, whose space is widened. With the parameter 0 the
-    // same calls replay
+    // same calls replay. (`\\setbox9` makes the font's space glue first: a
+    // recording that makes it is abandoned.)
     let Some(tfm) = cmr10() else {
         common::no_texlive();
         return;
@@ -519,7 +520,7 @@ fn interword_glue_adjusted_by_the_char_before_the_call_never_replays() {
                     "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\scrollmode\n\
                      \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0\n\
                      \\font\\f=cmr10 \\f \\pdfadjustinterwordglue={iwg} \\knbscode\\f`x=500\n\
-                     \\def\\measure#1{{{space}\\kern#1\\relax}}\n\
+                     \\def\\measure#1{{{space}\\kern#1\\relax}}\\setbox9\\hbox{{a b}}\n\
                      \\setbox1\\hbox{{\\kern1pt\\measure{{1pt}}}}\\showbox1\n\
                      \\setbox1\\hbox{{\\kern1pt\\measure{{1pt}}}}\\showbox1\n\
                      \\setbox1\\hbox{{y\\relax\\measure{{1pt}}}}\\showbox1\n\
