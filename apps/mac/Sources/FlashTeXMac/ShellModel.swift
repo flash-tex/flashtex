@@ -432,6 +432,15 @@ final class ShellModel {
         }
     }
     @ObservationIgnored private var autosaveWork: DispatchWorkItem?
+    /// Whether an autosave pass is armed (a timer, or a deferral's retry).
+    var autosavePending: Bool { autosaveWork != nil }
+    /// This model's `autosaveInterval` / `autosaveSuppressedUnderTest` (a
+    /// test runs the live timer, or the synchronous 0 path, through these).
+    @ObservationIgnored var autosaveDelay: TimeInterval = ShellModel.autosaveInterval
+    @ObservationIgnored var autosaveSuppressed: Bool = ShellModel.autosaveSuppressedUnderTest
+    /// How soon a pass deferred to an unanswered save tries again
+    /// (`performAutosave`): at least this, whatever `autosaveDelay` is.
+    @ObservationIgnored var autosaveRetryDelay: TimeInterval = 0.25
     /// When autosave first deferred to an unanswered save (`performAutosave`).
     @ObservationIgnored private var autosaveDeferredSince: Date?
     /// Asynchronous (helper-routed) saves per document path — autosave and
@@ -834,9 +843,22 @@ final class ShellModel {
         guard EditorPreferences.shared.autosave, documentURL != nil else { return }
         let item = DispatchWorkItem { [weak self] in self?.performAutosave() }
         autosaveWork = item
-        guard !Self.autosaveSuppressedUnderTest else { return } // flushPendingAutosave() performs it, on demand
-        if Self.autosaveInterval == 0 { flushPendingAutosave(); return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autosaveInterval, execute: item)
+        guard !autosaveSuppressed else { return } // flushPendingAutosave() performs it, on demand
+        if autosaveDelay == 0 { flushPendingAutosave(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + autosaveDelay, execute: item)
+    }
+
+    /// Arms a deferred pass again, always on a timer. `scheduleAutosave()`
+    /// performs the pass at once when the delay is 0 (`FLASHTEX_AUTOSAVE_MS=0`),
+    /// so a deferral that went through it recursed on the main thread
+    /// (performAutosave -> scheduleAutosave -> flushPendingAutosave -> ...)
+    /// for as long as the helper stayed busy, and overflowed the stack.
+    private func scheduleAutosaveRetry() {
+        autosaveWork?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.performAutosave() }
+        autosaveWork = item
+        guard !autosaveSuppressed else { return } // flushPendingAutosave() performs it, on demand
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(autosaveDelay, autosaveRetryDelay), execute: item)
     }
 
     /// Saves each dirty document through its normal conflict-checked save
@@ -858,7 +880,7 @@ final class ShellModel {
             if Date().timeIntervalSince(since) < max(2 * files.helperTimeout, 1) {
                 if autosaveDeferredSince == nil { FlashTeXLog.write("autosave: deferred, a save is still unanswered") }
                 autosaveDeferredSince = since
-                scheduleAutosave()
+                scheduleAutosaveRetry() // never synchronous: see there
                 return
             }
             FlashTeXLog.write("autosave: the helper has not answered for \(Int(Date().timeIntervalSince(since))) s; saving (it restarts)")

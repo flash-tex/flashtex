@@ -512,6 +512,46 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertFalse(model.isDirty)
     }
 
+    /// The same deferral with no quiet time (`FLASHTEX_AUTOSAVE_MS=0`, the
+    /// synchronous setting): the deferred pass is re-armed on a timer. It
+    /// went through `scheduleAutosave()`, which performs the pass at once at
+    /// 0, so the busy helper deferred it again, recursively, on the main
+    /// thread, until the stack overflowed (the test process crashes there).
+    func testAutosaveDeferralWithNoQuietTimeIsATimerNotRecursion() async throws {
+        let dir = try tempDir("autosave-busy-zero")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let autosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        defer { EditorPreferences.shared.autosave = autosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 0.4
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "1.2"])
+        model.autosaveSuppressed = false // the live path, as in the app
+        model.autosaveDelay = 0          // FLASHTEX_AUTOSAVE_MS=0
+        model.autosaveRetryDelay = 600   // the retry stays armed for the test to run by hand
+
+        model.updateActiveText("first\n") // saved at once; times out: the reply is outstanding
+        XCTAssertTrue(model.files.helperBusy)
+        let restarts = model.files.helperRestarts
+        model.updateActiveText("second\n") // the helper is busy: deferred to a timer, and this returns
+        XCTAssertTrue(model.autosavePending, "the deferred pass is armed again")
+        XCTAssertEqual(model.files.helperRestarts, restarts, "no restart under an unanswered save")
+        try await waitUntil("the late receipt for 'first' to be reconciled",
+                            state: { "savedText=\(model.savedText ?? "nil") late=\(model.files.lateReplies)" }) {
+            model.savedText == "first\n"
+        }
+        model.files.policy = fake([])
+        model.flushPendingAutosave() // the armed retry, now
+        XCTAssertNil(model.files.conflict, model.captureNote ?? "")
+        XCTAssertEqual(try disk(url), "second\n")
+        XCTAssertFalse(model.isDirty)
+    }
+
     func testLateSaveReceiptIsReconciledWithoutLosingLaterEdits() async throws {
         let dir = try tempDir("late")
         let url = dir.appendingPathComponent("paper.tex")
