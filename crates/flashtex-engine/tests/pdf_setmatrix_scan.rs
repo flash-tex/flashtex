@@ -29,7 +29,13 @@ const CASES: &[(&str, &str)] = &[
     ("dots-joined", ".5.5 0 1"),
     ("plus-joined", "2+3 4 5"),
     ("hex", "0x1p-1 0 0 2"),
+    // These two pin the DESIGN §13 arm64 ruling: a NaN or infinite entry
+    // makes utils.c cast a NaN to int (undefined behaviour in C); arm64's
+    // fcvtzs gives 0, x86_64 gives INT_MIN, so only an arm64 macOS pdftex
+    // is the oracle for them.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     ("nan-paren", "nan(1) 0 0 1"),
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     ("inf", "INF 0 0 1"),
     ("exponents", "1e2 0 0 1E-2"),
     ("tab", "1\t0 0 1"),

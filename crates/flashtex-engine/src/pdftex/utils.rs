@@ -1005,6 +1005,13 @@ impl Globals {
                 (true, Some(m)) => {
                     u.last = [llx, lly, urx, ury];
                     let tr = |x: i32, y: i32| {
+                        // utils.c:1496-1497 casts with `(scaled) DO_ROUND(x_new)`.
+                        // A NaN or out-of-range double cast to int is undefined
+                        // behaviour in C (C11 6.3.1.4); a NaN or infinite
+                        // \pdfsetmatrix entry reaches it. FlashTeX follows TeX
+                        // Live on macOS arm64 (fcvtzs: NaN -> 0, saturating),
+                        // which Rust's `as i32` matches, per the DESIGN §13
+                        // ruling of 2026-11-01.
                         let round = |v: f64| if v > 0.0 { v + 0.5 } else { v - 0.5 } as i32;
                         let (x, y) = (x as f64, y as f64);
                         (
