@@ -159,12 +159,15 @@ const FILE_READERS: &[(&str, usize)] = &[
     ("addbibresource", 1),
 ];
 
+/// Letters and digits in any script (so accented file names pass), plus
+/// `.`, `_`, `/`, `+` and `-`. Spaces stay refused: TeX skips a leading
+/// space in a file name, so ` /x` or ` ../x` would escape the checks below.
 fn reader_path_ok(path: &[char]) -> bool {
     !path.is_empty()
         && path[0] != '/'
         && path
             .iter()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '+' | '-'))
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '/' | '+' | '-'))
         && !path
             .split(|c| *c == '/')
             .any(|segment| segment == ['.', '.'])
@@ -215,7 +218,7 @@ fn strip_tex_comments(latex: &str) -> Vec<char> {
     stripped
 }
 
-fn braced_reader_path_ok(chars: &[char], i: &mut usize, directory: bool) -> bool {
+fn braced_reader_path_ok(chars: &[char], i: &mut usize, directory: bool, list: bool) -> bool {
     if chars.get(*i) != Some(&'{') {
         return false;
     }
@@ -225,10 +228,13 @@ fn braced_reader_path_ok(chars: &[char], i: &mut usize, directory: bool) -> bool
         *i += 1;
     }
     let path = &chars[start..*i];
-    if chars.get(*i) != Some(&'}')
-        || !reader_path_ok(path)
-        || (directory && path.last() != Some(&'/'))
-    {
+    // `\bibliography{a,b}` names several files; each one is checked alone.
+    let paths_ok = if list {
+        path.split(|c| *c == ',').all(reader_path_ok)
+    } else {
+        reader_path_ok(path)
+    };
+    if chars.get(*i) != Some(&'}') || !paths_ok || (directory && path.last() != Some(&'/')) {
         return false;
     }
     *i += 1;
@@ -237,7 +243,13 @@ fn braced_reader_path_ok(chars: &[char], i: &mut usize, directory: bool) -> bool
 
 /// Accept only literal options and project-relative paths immediately after
 /// a reader command. Two-argument readers require two literal braced values.
-fn readers_args_ok(chars: &[char], mut i: usize, count: usize, graphicspath: bool) -> bool {
+fn readers_args_ok(
+    chars: &[char],
+    mut i: usize,
+    count: usize,
+    graphicspath: bool,
+    list: bool,
+) -> bool {
     if chars.get(i) == Some(&'*') {
         i += 1;
     }
@@ -294,14 +306,14 @@ fn readers_args_ok(chars: &[char], mut i: usize, count: usize, graphicspath: boo
             if chars.get(i) == Some(&'}') {
                 return seen;
             }
-            if !braced_reader_path_ok(chars, &mut i, true) {
+            if !braced_reader_path_ok(chars, &mut i, true, false) {
                 return false;
             }
             seen = true;
         }
     }
     for _ in 0..count {
-        if !braced_reader_path_ok(chars, &mut i, false) {
+        if !braced_reader_path_ok(chars, &mut i, false, list) {
             return false;
         }
         skip_reader_space(chars, &mut i);
@@ -405,7 +417,13 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                     }
                     if let Some(&(_, count)) = FILE_READERS.iter().find(|(w, _)| *w == word) {
                         if latex.contains("^^")
-                            || !readers_args_ok(&chars, i, count, word == "graphicspath")
+                            || !readers_args_ok(
+                                &chars,
+                                i,
+                                count,
+                                word == "graphicspath",
+                                word == "bibliography",
+                            )
                         {
                             return Err(invalid(format!(
                                 "LaTeX uses \\{word} with an unchecked or non-project-relative path; only checkable project-relative reader paths are permitted in an inserted snippet"
@@ -471,6 +489,16 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                         {
                             return Err(invalid(format!(
                                 "LaTeX uses \\{word}{{{name}}}, which names a disallowed control sequence"
+                            )));
+                        }
+                        // `\begin{X}` runs `\X` on the tokens that follow, so a
+                        // file reader written as an environment would read its
+                        // argument without the path check above. No reader is
+                        // a real environment; refuse the form outright.
+                        let base = name.trim_end_matches('*');
+                        if FILE_READERS.iter().any(|(w, _)| *w == base) {
+                            return Err(invalid(format!(
+                                "LaTeX uses \\{word}{{{name}}}, which runs a file reader as an environment and skips its path check"
                             )));
                         }
                         if word == "begin" {

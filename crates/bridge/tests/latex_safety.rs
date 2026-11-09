@@ -489,3 +489,52 @@ fn reader_arguments_follow_the_literal_allowlist() {
     accepted(r"\verbatiminput{code/x.txt}");
     accepted(r"\inputminted{c}{src/main.c}");
 }
+
+#[test]
+fn file_readers_written_as_environments_are_refused() {
+    // `\begin{X}` runs `\X` on what follows, so the environment form of a
+    // reader must not skip the path check (REVIEW-SEC on #2005). The paths
+    // are sentinels that are only parsed, never read.
+    for reader in [
+        "verbatiminput",
+        "includegraphics",
+        "lstinputlisting",
+        "VerbatimInput",
+        "includepdf",
+        "import",
+        "bibliography",
+    ] {
+        rejected(&format!(
+            r"\begin{{{reader}}}{{/nonexistent/flashtex-sentinel}}\end{{{reader}}}"
+        ));
+        rejected(&format!(
+            r"\begin{{{reader}}}{{../flashtex-sentinel}}\end{{{reader}}}"
+        ));
+        rejected(&format!(
+            r"\begin{{{reader}*}}{{/nonexistent/flashtex-sentinel}}"
+        ));
+        rejected(&format!(
+            r"\begin{{{reader}}}{{figs/a.pdf}}\end{{{reader}}}"
+        ));
+        rejected(&format!(r"\end{{{reader}}}"));
+    }
+    // Ordinary environments are unaffected.
+    accepted(r"\begin{figure}\includegraphics{figs/a.pdf}\end{figure}");
+    accepted(r"\begin{verbatim}x\end{verbatim}");
+}
+
+#[test]
+fn bibliography_lists_and_accented_names_are_checked_per_file() {
+    accepted(r"\bibliography{refs,more/refs2}");
+    accepted(r"\includegraphics{figs/café.pdf}");
+    accepted(r"\includegraphics{图/图1.png}");
+    rejected(r"\bibliography{refs,/nonexistent/flashtex-sentinel}");
+    rejected(r"\bibliography{refs,../flashtex-sentinel}");
+    rejected(r"\bibliography{refs, /nonexistent/flashtex-sentinel}");
+    rejected(r"\bibliography{refs,}");
+    rejected(r"\includegraphics{figs/a,b.pdf}");
+    // A leading space is skipped by TeX's file-name scan, so spaces stay out.
+    rejected(r"\includegraphics{ /nonexistent/flashtex-sentinel}");
+    rejected(r"\includegraphics{figs/my plot.pdf}");
+    rejected("\\includegraphics{figs/\u{FF0E}\u{FF0E}/x}");
+}
