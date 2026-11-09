@@ -12,65 +12,63 @@
 //! any of them, so a call recorded with room to spare was replayed where its
 //! normal path overflows: pdfTeX stops, and the replay went on.
 //!
-//! **What a recording measures.** At its start, a [`Probe`] fills a window
-//! of each array above its pointer with a value TeX never stores there
-//! ([`SENTINEL`]: the buffer and the pool hold character codes, `str_start`
-//! pool positions). What the call writes there it writes in order from the
-//! pointer up (`append_char`, §42, `make_string`'s `str_start[str_ptr]`,
-//! §374's loop from `first`), so at the end the highest place no longer
-//! holding the sentinel is how far up the call went. The windows are dead
-//! memory: TeX reads none of the three above its pointer before it writes
-//! it, and the convergence test does not compare them (`incr::live_len`).
+//! **What a recording measures.** Above each pointer (`first`, `pool_ptr`,
+//! `str_ptr`) the call writes a run of places with no gap, from the pointer
+//! up: §374's loop from `first`; `append_char` (§42) at `pool_ptr`, and
+//! `id_lookup`'s move of the current string (§260) within what `str_room`
+//! allowed; `make_string`'s `str_start[str_ptr]` as it raises `str_ptr`.
+//! So the highest place it reaches is below the first place it did not
+//! write. At its start a [`Probe`] puts a *marker*, a value TeX never stores
+//! there ([`MARK`]: the buffer and the pool hold character codes,
+//! `str_start` pool positions), at offsets 0, 1, 2, 4, 8, ... above each
+//! pointer and at the array's last place: a few dozen writes. At the end,
+//! the offset of the first marker still there bounds the places the call
+//! used, within a factor of two. The places are dead memory: TeX reads none
+//! of them before it writes them, and the convergence test does not compare
+//! them (`incr::live_len`).
 //!
 //! **What an offer checks** ([`Need`]): each overflow test of the normal
-//! path, with the call's use put on top of the pointers as they are now.
+//! path, with that bound put on top of the pointers as they are now.
 //! - the buffer: §374 stops when the name reaches `buffer[buf_size-1]`, so
-//!   a call that wrote `b` places above `first` overflows exactly when
+//!   a call that wrote `b` places above `first` overflows when
 //!   `first+b >= buf_size`;
 //! - the string table: `make_string` stops when `str_ptr=max_strings`, so
-//!   a call that had `s` strings of its own at once overflows exactly when
+//!   a call that had `s` strings of its own at once overflows when
 //!   `str_ptr+s > max_strings`;
 //! - the pool: `str_room(n)` stops when `pool_ptr+n > pool_size`, and a
 //!   print into a full pool drops the character (§58: `if
-//!   pool_ptr<pool_size then append_char`). A call that wrote `p` places
-//!   replays only where `pool_ptr+p+POOL_SLACK <= pool_size`: the slack
-//!   covers a `str_room` that asks for more than is then written
-//!   (`str_room(1)` before `make_string`, `str_room(12)` for a font's
-//!   name). Closer to the top the call runs for real, which is always
-//!   right.
+//!   pool_ptr<pool_size then append_char`; `tokens_to_string` stops at the
+//!   top without a word). A call that wrote `p` places replays only where
+//!   `pool_ptr+p+POOL_SLACK <= pool_size`: the slack covers a `str_room`
+//!   that asks for more than is then written (`str_room(1)` before
+//!   `make_string`).
 //!
-//! A recording that wrote its window's last place, or came within the slack
-//! of the pool's top, is abandoned: it cannot say how much it used.
+//! Where a test would fail, or the bound is not tight enough to tell, the
+//! call runs for real, which is always right. A recording that wrote an
+//! array's last place, or came within the slack of the pool's top, may have
+//! been cut short there, so it is abandoned.
 
 use crate::generated::consts::{buf_size, max_strings, pool_size};
 use crate::generated::Globals;
 
 /// Never a character code (`buffer`, `str_pool`) or a pool position
 /// (`str_start`).
-const SENTINEL: i32 = -0x5a5a_5a5b;
-/// Places watched above `first`: longer `\csname` names are not recorded.
-const BUF_WINDOW: i32 = 4096;
-/// Characters watched above `pool_ptr`.
-const POOL_WINDOW: i32 = 65536;
-/// Strings watched above `str_ptr`.
-const STR_WINDOW: i32 = 4096;
+const MARK: i32 = -0x5a5a_5a5b;
 /// More room than the call wrote, for a `str_room(n)` that asks for more
 /// than it then writes.
 const POOL_SLACK: i32 = 64;
 
-/// The windows a recording watches: where each starts and ends.
+/// Where a recording started: `first`, `pool_ptr`, `str_ptr`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Probe {
     first: i32,
-    buf_end: i32,
     pool: i32,
-    pool_end: i32,
     str_ptr: i32,
-    str_end: i32,
 }
 
-/// How far above each pointer a call goes: the places of the buffer above
-/// `first`, the characters above `pool_ptr`, the strings above `str_ptr`.
+/// How far above each pointer a call goes, at most: the places of the
+/// buffer above `first`, the characters above `pool_ptr`, the strings
+/// above `str_ptr`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Need {
     pub buf: i32,
@@ -78,65 +76,91 @@ pub struct Need {
     pub strings: i32,
 }
 
+/// The marked places of an array whose first free place is `lo` and whose
+/// last is `top`, as offsets above `lo`: 0, 1, 2, 4, ..., and `top-lo`.
+fn marks(lo: i32, top: i32) -> impl Iterator<Item = i32> {
+    let span = top - lo;
+    std::iter::once(0)
+        .chain((0..31).map(|k| 1i32 << k))
+        .take_while(move |&o| o < span)
+        .chain((span >= 0).then_some(span))
+}
+
 impl Probe {
-    /// The windows of a recording that started with these pointers (D9
-    /// keeps the pointers in the word space, so that a restore inside a
-    /// recording finds its windows again).
+    /// The probe of a recording that started with these pointers (D9 keeps
+    /// them in the word space, so that a restore inside a recording finds
+    /// its markers again).
     pub(crate) fn at(first: i32, pool_ptr: i32, str_ptr: i32) -> Probe {
         Probe {
             first,
-            buf_end: (first + BUF_WINDOW).min(buf_size),
             pool: pool_ptr,
-            pool_end: (pool_ptr + POOL_WINDOW).min(pool_size),
-            // (`make_string` writes `str_start[str_ptr]` after raising it)
             str_ptr,
-            str_end: (str_ptr + 1 + STR_WINDOW).min(max_strings + 1),
         }
+    }
+
+    /// (lo, top) of the buffer, the pool and `str_start`: `make_string`
+    /// writes `str_start[str_ptr]` after raising it, so `str_start`'s
+    /// first free place is `str_ptr+1`.
+    fn spans(&self) -> [(i32, i32); 3] {
+        [
+            (self.first, buf_size - 1),
+            (self.pool, pool_size - 1),
+            (self.str_ptr + 1, max_strings),
+        ]
     }
 }
 
 impl Globals {
-    /// Start watching the three arrays (a recording's start).
+    fn cap_at(&self, a: usize, i: i32) -> i32 {
+        let i = i as usize;
+        match a {
+            0 => self.buffer[i],
+            1 => self.str_pool[i],
+            _ => self.str_start[i],
+        }
+    }
+
+    fn cap_mark(&mut self, a: usize, i: i32) {
+        let i = i as usize;
+        match a {
+            0 => self.buffer[i] = MARK,
+            1 => self.str_pool[i] = MARK,
+            _ => self.str_start[i] = MARK,
+        }
+    }
+
+    /// Start measuring (a recording's start): put the markers.
     pub(crate) fn cap_probe(&mut self) -> Probe {
         let p = Probe::at(self.first, self.pool_ptr, self.str_ptr);
-        for i in p.first..p.buf_end {
-            self.buffer[i as usize] = SENTINEL;
-        }
-        for i in p.pool..p.pool_end {
-            self.str_pool[i as usize] = SENTINEL;
-        }
-        for i in p.str_ptr + 1..p.str_end {
-            self.str_start[i as usize] = SENTINEL;
+        for (a, (lo, top)) in p.spans().into_iter().enumerate() {
+            for o in marks(lo, top) {
+                self.cap_mark(a, lo + o);
+            }
         }
         p
     }
 
     /// What the call used since `p` (a recording's end), or `None` when it
-    /// cannot tell: the call wrote a window's last place, came within the
-    /// slack of the pool's top, or moved `first`.
+    /// may have been cut short: it wrote an array's last place, came within
+    /// the slack of the pool's top, or moved `first`.
     pub(crate) fn cap_need(&self, p: &Probe) -> Option<Need> {
         if self.first != p.first {
             return None;
         }
-        // (the number of places written: the highest one, plus one)
-        let used = |lo: i32, hi: i32, at: &dyn Fn(i32) -> i32| -> Option<i32> {
-            if hi > lo && at(hi - 1) != SENTINEL {
-                return None;
-            }
-            Some(
-                (lo..hi)
-                    .rev()
-                    .find(|&i| at(i) != SENTINEL)
-                    .map_or(0, |i| i + 1 - lo),
-            )
+        let mut n = [0i32; 3];
+        for (a, (lo, top)) in p.spans().into_iter().enumerate() {
+            // (the first marker still there: the call wrote below it only)
+            n[a] = marks(lo, top).find(|&o| self.cap_at(a, lo + o) == MARK)?;
+        }
+        let need = Need {
+            buf: n[0],
+            pool: n[1],
+            strings: n[2],
         };
-        let buf = used(p.first, p.buf_end, &|i| self.buffer[i as usize])?;
-        let pool = used(p.pool, p.pool_end, &|i| self.str_pool[i as usize])?;
-        let strings = used(p.str_ptr + 1, p.str_end, &|i| self.str_start[i as usize])?;
-        if p.pool + pool + POOL_SLACK > pool_size {
+        if p.pool + need.pool + POOL_SLACK > pool_size {
             return None;
         }
-        Some(Need { buf, pool, strings })
+        Some(need)
     }
 
     /// Whether a call that uses `n` would pass every one of these overflow
