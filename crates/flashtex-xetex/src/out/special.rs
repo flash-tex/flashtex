@@ -1314,7 +1314,10 @@ impl<M: Metrics> Builder<'_, M> {
                 .map(|(_, v)| v.clone())
         };
         match (name.as_slice(), kind) {
-            (b"a", HtmlTag::Open) => {
+            // spc_html.c defines HTML_TAG_TYPE_EMPTY and _OPEN both as 1,
+            // so `<a .../>` opens an anchor exactly as `<a ...>` does and
+            // its "Empty html anchor tag???" branch never runs.
+            (b"a", HtmlTag::Open | HtmlTag::Empty) => {
                 if self.doc.html_anchor.is_some() {
                     self.doc.diag("html: Nested html anchors found!".into());
                     return;
@@ -1380,7 +1383,6 @@ impl<M: Metrics> Builder<'_, M> {
                     .doc
                     .diag("html: No corresponding opening tag for html anchor.".into()),
             },
-            (b"a", HtmlTag::Empty) => self.doc.diag("html: Empty html anchor tag???".into()),
             (b"base", HtmlTag::Close) => self.doc.diag("html: Close tag for \"base\"???".into()),
             (b"base", _) => match attr(b"href") {
                 Some(h) => self.doc.html_base = Some(h),
@@ -1388,6 +1390,9 @@ impl<M: Metrics> Builder<'_, M> {
                     .doc
                     .diag("html: \"href\" not found for \"base\" tag!".into()),
             },
+            (b"img", HtmlTag::Close) => self.doc.diag("html: Close tag for \"img\"???".into()),
+            // A gap: spc_html.c (ENABLE_HTML_IMG_SUPPORT) places the image
+            // via spc_put_image; it is counted as ignored here.
             (b"img", _) => self.doc.ignored_special("html:<img>"),
             _ => {}
         }
