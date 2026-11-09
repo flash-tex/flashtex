@@ -1,0 +1,37 @@
+\documentclass{article}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{hyperref}
+\title{Incremental Typesetting and its Bibliography}
+\author{A. Author}
+\begin{document}
+\maketitle
+
+\section{Introduction}\label{sec:intro}
+The line-breaking algorithm follows \citet{knuth81}, and the page builder
+the description in \citet{knuth84}. Earlier systems recomputed everything
+after every keystroke \citep{lamport94}; later ones kept what they could
+\citep{acar05,hammer14}. Section~\ref{sec:method} says how this one works.
+
+Incremental computation has a long history in compilers and editors, and
+the cost model that matters here is the one an author feels: the time from
+a keystroke to the page that shows it.
+
+\section{Method}\label{sec:method}
+Checkpoints are taken at page boundaries, as in \citet{acar05}; a restart
+point is the newest checkpoint before the first changed read, and a run
+converges when its state equals the old run's \citep[ch.~3]{hammer14}.
+Hyphenation follows \citet{liang83}.
+
+Typesetting a long document again after a one-letter edit takes as long as
+the first run; taking it from a checkpoint takes as long as the pages that
+changed. The convergence test compares the whole state, so a page after the
+edit that is the same as before is not typeset again.
+
+\section{Results}\label{sec:results}
+The measurements in Section~\ref{sec:method} agree with the model of
+\citet{knuth84} for paragraphs and with that of \citet{plass81} for pages.
+See also \citet{lamport94} for the macro layer.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}
