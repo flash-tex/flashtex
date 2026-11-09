@@ -4757,6 +4757,9 @@ impl Globals {
                                 { let __v310 = (self.font_params[crate::ix::U((f) as usize)]).wrapping_add(1i32); self.font_params[crate::ix::U((f) as usize)] = __v310; }
                                 if (n == self.font_params[crate::ix::U((f) as usize)]) { break; }
                             }
+                            if self.bm_on {
+                                self.flashtex_bm_font_set((2i32).wrapping_neg(), f, n, 0i32);
+                            }
                             self.cur_val = (self.fmem_ptr).wrapping_sub(1i32);
                         }
                     }

@@ -308,6 +308,15 @@ if bm_rec_on then flashtex_bm_box_use(cur_val,2);
 if this_if=if_void_code then b:=(p=null)
 @z
 
+@x pdftex.web l.13529 - a parameter read that adds parameters to the last font makes the fonts' next version
+font_info[fmem_ptr].sc:=0; incr(fmem_ptr); incr(font_params[f]);
+until n=font_params[f];
+@y
+font_info[fmem_ptr].sc:=0; incr(fmem_ptr); incr(font_params[f]);
+until n=font_params[f];
+if bm_on then flashtex_bm_font_set(-2, f, n, 0);
+@z
+
 @x pdftex.web l.20923 - a recording notes that it packed a box (it then set |last_badness|)
 begin last_badness:=0; r:=get_node(box_node_size); type(r):=hlist_node;
 @y
