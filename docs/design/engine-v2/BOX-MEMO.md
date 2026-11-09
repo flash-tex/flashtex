@@ -144,6 +144,9 @@ later.
   start.
 - **Marks.** `\topmark` and its kind (D9's `Why::Mark`). A `\vsplit` that changes the split marks or
   e-TeX's `disc_ptr` (checked at the end).
+- **Saved discards.** e-TeX's `\pagediscards` and `\splitdiscards`, at any level. They read
+  `disc_ptr`, which no key holds: a call recorded while it was empty would otherwise be replayed
+  once a `\vsplit` or a page break has kept items there.
 - **`last_item` reads outside an allowlist.** The allowlist: `\eTeXversion`, `\pdftexversion`, the
   `\...expr` scanners, `\fontchar..`, `\gluestretch` and its kind, `\pdfstrcmp`,
   `\pdfshellescape`. Refused, among others: `\badness`, `\inputlineno`, `\lastxpos`, the
