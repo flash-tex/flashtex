@@ -458,6 +458,8 @@ enum Fault {
     Local,
     /// do not tell L5's read-set what a replay reads
     NoReadset,
+    /// end every list a replay makes afresh with another token
+    Token,
 }
 
 fn fault() -> Fault {
@@ -469,6 +471,7 @@ fn fault() -> Fault {
             Ok("no-ref") => Fault::NoRef,
             Ok("local") => Fault::Local,
             Ok("no-readset") => Fault::NoReadset,
+            Ok("token") => Fault::Token,
             _ => Fault::None,
         },
     )
@@ -874,7 +877,11 @@ impl Globals {
         let mut q = head;
         for i in 0..len {
             let n = self.get_avail();
-            let t = self.intr_data[at + 1 + i];
+            let mut t = self.intr_data[at + 1 + i];
+            if fault() == Fault::Token && i + 1 == len {
+                // (test only) an other character `!`, or `?` if it was one
+                t = if t == 0xc21 { 0xc3f } else { 0xc21 };
+            }
             self.mem[n as usize].set_hh_lh(t);
             self.mem[q as usize].set_hh_rh(n);
             q = n;
