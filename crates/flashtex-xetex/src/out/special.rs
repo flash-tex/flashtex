@@ -533,7 +533,7 @@ impl<M: Metrics> Builder<'_, M> {
                         .diag(format!("pdf:bann without a dictionary: `{}'", lossy(r)));
                     return;
                 };
-                let d = self.fixup_dict(d);
+                let d = self.text_dict(d);
                 if let Some(n) = &name {
                     self.doc
                         .named
@@ -587,7 +587,7 @@ impl<M: Metrics> Builder<'_, M> {
                         .diag(format!("pdf:outline without a dictionary: `{}'", lossy(r)));
                     return;
                 };
-                let d = self.fixup_dict(d);
+                let d = self.text_dict(d);
                 // `pdf_doc_bookmarks_add` ends with `pdf_doc_add_goto`
                 let goto = self.doc.add_goto(&d);
                 self.doc.outlines.push(Outline {
@@ -599,13 +599,13 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"docinfo" => {
                 if let Some(Obj::Dict(d)) = p.object() {
-                    let d = self.fixup_dict(d);
+                    let d = self.text_dict(d);
                     self.doc.docinfo.merge(&d);
                 }
             }
             b"docview" => {
                 if let Some(Obj::Dict(d)) = p.object() {
-                    let d = self.fixup_dict(d);
+                    let d = self.text_dict(d);
                     self.doc.catalog.merge(&d);
                 }
             }
@@ -684,6 +684,19 @@ impl<M: Metrics> Builder<'_, M> {
 
     pub fn fixup_dict(&self, d: Dict) -> Dict {
         Dict(d.0.into_iter().map(|(k, v)| (k, self.fixup(v))).collect())
+    }
+
+    /// The dictionary of `pdf:ann`, `pdf:bann`, `pdf:outline`,
+    /// `pdf:docinfo` and `pdf:docview`: [`fixup_dict`](Self::fixup_dict),
+    /// with its text strings made UTF-16BE ([`text_strings`]).
+    fn text_dict(&mut self, mut d: Dict) -> Dict {
+        if let Err(k) = text_strings(&mut d) {
+            self.doc.diag(format!(
+                "Input string conversion (to UTF16BE) failed for {}...",
+                lossy(&k)
+            ));
+        }
+        self.fixup_dict(d)
     }
 
     /// The current point as `@xpos`/`@ypos` give it: the DVI position
@@ -816,7 +829,7 @@ impl<M: Metrics> Builder<'_, M> {
             self.doc.diag("pdf:ann without a dictionary".into());
             return;
         };
-        let d = self.fixup_dict(d);
+        let d = self.text_dict(d);
         let r = self.annot_rect(&t);
         let goto = self.doc.add_goto(&d);
         self.add_annot(d, r, name, goto);
@@ -1408,6 +1421,93 @@ pub fn read_transform(p: &mut Parser) -> Mat {
     Mat(read_dims(p).info().matrix.map(fx))
 }
 
+/// The keys whose string values dvipdfmx takes for text strings
+/// (spc_pdfm.c's `default_taintkeys`).
+const TEXT_KEYS: [&[u8]; 11] = [
+    b"Title",
+    b"Author",
+    b"Subject",
+    b"Keywords",
+    b"Creator",
+    b"Producer",
+    b"Contents",
+    b"Subj",
+    b"TU",
+    b"T",
+    b"TM",
+];
+
+/// dvipdfmx's `modify_strings` for an XDV file (spc_pdfm.c): every string
+/// under a text key ([`TEXT_KEYS`]; in an array, under the array's key;
+/// in a nested dictionary, under that dictionary's keys) that has a byte
+/// above 127 and no UTF-16BE byte order mark is read as UTF-8 and written
+/// as UTF-16BE with the mark. A string that is not UTF-8 stops the walk,
+/// as the C's error does (strings after it stay as they are); its key is
+/// the error.
+pub fn text_strings(d: &mut Dict) -> Result<(), Vec<u8>> {
+    for (k, v) in d.0.iter_mut() {
+        text_strings_of(k, v)?;
+    }
+    Ok(())
+}
+
+fn text_strings_of(k: &[u8], v: &mut Obj) -> Result<(), Vec<u8>> {
+    match v {
+        Obj::Str(s) => {
+            if TEXT_KEYS.contains(&k) && !s.starts_with(b"\xfe\xff") && s.iter().any(|&c| c > 127) {
+                match utf8_to_utf16be(s) {
+                    Some(u) => *s = u,
+                    None => return Err(k.to_vec()),
+                }
+            }
+            Ok(())
+        }
+        Obj::Array(a) => a.iter_mut().try_for_each(|e| text_strings_of(k, e)),
+        Obj::Dict(d) => text_strings(d),
+        _ => Ok(()),
+    }
+}
+
+/// `reencode_string_from_utf8_to_utf16be`: the C's UTF-8 reader
+/// (unicode.c's `UC_UTF8_decode_char`: overlong forms accepted, 5- and
+/// 6-byte forms read but out of range), `None` for a string it rejects.
+fn utf8_to_utf16be(s: &[u8]) -> Option<Vec<u8>> {
+    let mut out = vec![0xfe, 0xff];
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i];
+        i += 1;
+        let (mut u, n) = match c {
+            0..=0x7f => (c as u32, 0),
+            _ if c & 0xe0 == 0xc0 => ((c & 31) as u32, 1),
+            _ if c & 0xf0 == 0xe0 => ((c & 0x0f) as u32, 2),
+            _ if c & 0xf8 == 0xf0 => ((c & 0x07) as u32, 3),
+            _ if c & 0xfc == 0xf8 => ((c & 0x03) as u32, 4),
+            _ if c & 0xfe == 0xfc => ((c & 0x01) as u32, 5),
+            _ => return None,
+        };
+        let cont = s.get(i..i + n)?;
+        for &b in cont {
+            if b & 0xc0 != 0x80 {
+                return None;
+            }
+            u = (u << 6) | (b & 0x3f) as u32;
+        }
+        i += n;
+        if u > 0x10ffff || (0xd800..=0xdfff).contains(&u) {
+            return None;
+        }
+        if u <= 0xffff {
+            out.extend_from_slice(&(u as u16).to_be_bytes());
+        } else {
+            let v = u - 0x10000;
+            out.extend_from_slice(&((0xd800 + (v >> 10)) as u16).to_be_bytes());
+            out.extend_from_slice(&((0xdc00 + (v & 0x3ff)) as u16).to_be_bytes());
+        }
+    }
+    Some(out)
+}
+
 fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
@@ -1440,6 +1540,48 @@ mod tests {
         assert_eq!(c("[0 0.5 1]"), Some(Col(vec![0.0, 0.5, 1.0])));
         assert_eq!(c("Red"), Some(Col(vec![0.0, 1.0, 1.0, 0.0])));
         assert_eq!(c("hsb 0 1 1"), Some(Col(vec![1.0, 0.0, 0.0])));
+    }
+
+    /// Text strings as TeX Live 2026's xdvipdfmx writes them (measured:
+    /// `pdf:docinfo <</Title (Café ü) /Author (plain) /Subject <FEFF00E9>
+    /// /Custom (é)>>` gives `/Title <feff00430061006600e9002000fc>`,
+    /// `/Author (plain)`, `/Subject <feff00e9>`, `/Custom <c3a9>`;
+    /// `pdf:outline 1 <</Title (Sécond) /X <</T (é)>> >>` gives
+    /// `<feff005300e90063006f006e0064>` and `/T <feff00e9>`; `pdf:ann`'s
+    /// `/Contents (Ünï) /NM (é)`, `<feff00dc006e00ef>` and `<c3a9>`).
+    #[test]
+    fn text_strings_are_utf16() {
+        let mut d = match Parser::new(
+            "<</Title (Café ü) /Author (plain) /Subject <FEFF00E9> /Custom (é) \
+             /X <</T (é)>> /Contents [(Ünï)] /NM (é)>>"
+                .as_bytes(),
+        )
+        .object()
+        {
+            Some(Obj::Dict(d)) => d,
+            o => panic!("{o:?}"),
+        };
+        assert_eq!(text_strings(&mut d), Ok(()));
+        let s = |k: &[u8]| d.get(k).unwrap().as_str().unwrap().to_vec();
+        assert_eq!(
+            s(b"Title"),
+            b"\xfe\xff\x00C\x00a\x00f\x00\xe9\x00 \x00\xfc".to_vec()
+        );
+        assert_eq!(s(b"Author"), b"plain".to_vec());
+        assert_eq!(s(b"Subject"), b"\xfe\xff\x00\xe9".to_vec());
+        assert_eq!(s(b"Custom"), "é".as_bytes().to_vec());
+        assert_eq!(s(b"NM"), "é".as_bytes().to_vec());
+        let x = d.get(b"X").unwrap().as_dict().unwrap();
+        assert_eq!(x.get(b"T").unwrap().as_str().unwrap(), b"\xfe\xff\x00\xe9");
+        let c = d.get(b"Contents").unwrap().as_array().unwrap();
+        assert_eq!(c[0].as_str().unwrap(), b"\xfe\xff\x00\xdc\x00n\x00\xef");
+        // beyond the BMP: a surrogate pair; not UTF-8: the key is the error
+        assert_eq!(
+            utf8_to_utf16be("𝔸".as_bytes()),
+            Some(b"\xfe\xff\xd8\x35\xdd\x38".to_vec())
+        );
+        let mut bad = Dict(vec![(b"T".to_vec(), Obj::Str(vec![0xff]))]);
+        assert_eq!(text_strings(&mut bad), Err(b"T".to_vec()));
     }
 
     #[test]
