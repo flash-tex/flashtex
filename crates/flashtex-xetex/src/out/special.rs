@@ -611,6 +611,8 @@ impl<M: Metrics> Builder<'_, M> {
             },
             Obj::Array(a) => Obj::Array(a.into_iter().map(|e| self.fixup(e)).collect()),
             Obj::Dict(d) => Obj::Dict(self.fixup_dict(d)),
+            // xdvipdfmx keeps a number as a double (`0.5` is written `.5`)
+            Obj::Num(t) => Obj::Num(super::pdfobj::special_number(&t)),
             o => o,
         }
     }
