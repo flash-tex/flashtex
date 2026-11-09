@@ -3536,17 +3536,11 @@ impl Globals {
         {
             // `append_normal_space` widens the glue by the code of the
             // character at `tail` (or before an auto kern, through
-            // `save_tail`): while the tail is still the one from before the
-            // call, that character is not in the key
-            let t = self.cur_list.tail_field;
-            if self.bm_with_rec(|r| r.start.tail) != Some(t) {
-                true
-            } else if t >= self.hi_mem_min {
-                false
-            } else {
-                let w = self.mem[t as usize].hh();
-                !(w.b0() == k::ligature_node || (w.b0() == k::kern_node && w.b1() == k::auto_kern))
-            }
+            // `save_tail`). While the tail is still the one from before the
+            // call, neither that node nor its kind is in the key, so even a
+            // recording whose tail is no character would replay wrongly
+            // after one (`\\pdfadjustinterwordglue` itself is in K2)
+            self.bm_with_rec(|r| r.start.tail) != Some(self.cur_list.tail_field)
         } else if c == k::make_box {
             if chr == k::vsplit_code {
                 false
