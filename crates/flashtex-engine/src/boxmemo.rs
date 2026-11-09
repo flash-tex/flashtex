@@ -2531,11 +2531,7 @@ impl Globals {
         h.write_i32(self.font_size[fu]);
         h.write_i32(self.font_dsize[fu]);
         h.write_u32(self.font_check[fu].0);
-        let (bc, ec, np) = (
-            self.font_bc[fu],
-            self.font_ec[fu],
-            self.font_params[fu],
-        );
+        let (bc, ec, np) = (self.font_bc[fu], self.font_ec[fu], self.font_params[fu]);
         h.write_i32(bc);
         h.write_i32(ec);
         h.write_i32(np);

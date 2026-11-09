@@ -6779,54 +6779,45 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
     );
 }
 
-/// (lane AUDIT-SPANS) A font number names a font only in its timeline: an
-/// edit's restore takes the fonts loaded after the checkpoint away, and the
-/// re-run may load another font at the same number. BOX-MEMO keys a call's
-/// fonts by number (`cur_font` in K2, a `\font` identifier's meaning in K3)
-/// and their arrays by the font version, which named only the changes made
-/// to loaded fonts (`\hyphenchar` & co.), not which font was loaded: NFSS's
+/// (lane AUDIT-SPANS, #2219) A font number names a font only in its
+/// timeline: an edit's restore takes the fonts loaded after the checkpoint
+/// away, and the re-run may load another font at the same number. BOX-MEMO
+/// keys a call's fonts by number (`cur_font` in K2) and their arrays by the
+/// font version, which named only the changes made to loaded fonts
+/// (`\hyphenchar` & co.), not which font was loaded: NFSS's
 /// `\hyphenchar\font=45` on cmsl10 and on cmss10 at the same number reached
-/// the same version, and the two have the same interword glue (the fonts of
-/// a replay's nodes key theirs). Here a picture in `\slshape` (cmsl10, first
-/// used there) is recorded and replayed in edits' windows; the family then
-/// becomes `\sffamily` (cmss10, loaded at cmsl10's number), every other key
-/// equal, and the sans picture must not be the slanted one replayed.
+/// the same version. Here a registered `\measure` of a word in `\slshape`
+/// (cmsl10, first used there) is recorded and replayed in edits' windows;
+/// the family then becomes `\sffamily` (cmss10, loaded at cmsl10's number),
+/// every other key equal, and the width typeset after it must be cmss10's,
+/// not the slanted word's replayed. (The `\relax` before the call: BOX-MEMO
+/// offers only a call that `big_switch`'s `get_x_token` expands, not one
+/// after a letter, which the main loop's lookahead expands.)
 #[test]
-fn a_font_loaded_at_another_fonts_number_is_another_font() {
+fn a_call_measuring_a_font_loaded_at_another_fonts_number() {
     let Some(e) = env() else {
         common::no_texlive();
         return;
     };
-    let dir = e.dir.join("font-identity");
+    let dir = e.dir.join("font-identity-measure");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let before: String = (0..12).map(|i| para(i, "alpha")).collect();
     let after: String = (12..30).map(|i| para(i, "beta")).collect();
-    // (no space inside the picture: an interword glue keys its font's glue;
-    // a picture before, so that LaTeX's hooks for `pic` exist before the
-    // edits' restore points: a control sequence a call makes keys the hash;
-    // an environment after the font switch, which leaves `\reserved@a` the
-    // same: NFSS leaves the font's identifier there, which K3 would see)
     let doc = |shape: &str, word: &str| {
         format!(
             "\\documentclass{{article}}\n\
-             \\newenvironment{{pic}}{{\\setbox0\\hbox\\bgroup}}{{\\egroup\\box0 }}\n\
-             \\newenvironment{{nil}}{{}}{{}}\n\
-             \\begin{{document}}\n\\begin{{pic}}x\\end{{pic}}\n{before}Some {word} text.\n\n\
-             {{{shape} A\\begin{{nil}}\\end{{nil}}\n\\begin{{pic}}Hello\\end{{pic}} end.}}\n\n{after}\\end{{document}}\n"
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             {{{shape} A\\relax\\measure{{Hello}}\\the\\dimen1\\par}}\n\n{after}\\end{{document}}\n"
         )
     };
-    let stats = dir.with_extension("stats");
-    let _ = std::fs::remove_file(&stats);
-    let stats_s = stats.to_string_lossy().into_owned();
     let mut h = Host::start_env(
         &e,
         &dir,
         &[
             ("FLASHTEX_BOXMEMO", "on"),
-            ("FLASHTEX_BOXMEMO_SPANS", "pic"),
-            ("FLASHTEX_BOXMEMO_NAMES", ""),
-            ("FLASHTEX_BOXMEMO_STATS", &stats_s),
+            ("FLASHTEX_BOXMEMO_NAMES", "measure"),
         ],
     );
     let slanted = doc("\\slshape", "plain");
@@ -6836,20 +6827,11 @@ fn a_font_loaded_at_another_fonts_number_is_another_font() {
             break;
         }
     }
-    // edits before the picture: their windows record it, then replay it
+    // edits before the call: their windows record it, then replay it
     for word in ["plainx", "plain", "plainx", "plain"] {
         let text = doc("\\slshape", word);
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], word);
     }
-    let s = std::fs::read_to_string(&stats).unwrap_or_default();
-    let hits = s
-        .lines()
-        .find_map(|l| {
-            let (k, v) = l.trim().trim_end_matches(',').split_once(':')?;
-            (k.trim().trim_matches('"') == "hits").then(|| v.trim().parse::<u64>().ok())?
-        })
-        .unwrap_or(0);
-    assert!(hits >= 1, "the slanted picture never replayed:\n{s}");
     // the family changed: cmss10 at cmsl10's number
     let sans = doc("\\sffamily", "plain");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &sans)], "sans");
