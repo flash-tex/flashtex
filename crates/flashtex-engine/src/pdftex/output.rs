@@ -32,6 +32,9 @@ pub struct State {
     pub cur_file_name: Option<Vec<u8>>,
     /// make_subset_tag's `st_tree`: the subset tags given out.
     subset_tags: BTreeSet<[u8; 6]>,
+    /// The length of a stream written already compressed
+    /// (`pdf_stream_compressed`), which the stream's last `write_zip` ends.
+    written: Option<i64>,
 }
 
 /// `cur_file_name = s` (utils.c's global).
@@ -53,6 +56,7 @@ impl Clone for State {
             level_old: self.level_old,
             cur_file_name: self.cur_file_name.clone(),
             subset_tags: self.subset_tags.clone(),
+            written: None,
         }
     }
 }
@@ -86,6 +90,7 @@ impl crate::persist::Codec for State {
             level_old: Codec::dec(r)?,
             cur_file_name: Codec::dec(r)?,
             subset_tags: Codec::dec(r)?,
+            written: None,
         })
     }
 }
@@ -132,27 +137,17 @@ impl Globals {
         let level = self.get_pdf_compress_level();
         self.pdfassert(level > 0);
         set_cur_file_name(None);
-        let (mut zs, mut zipbuf, level_old) = match with_state(|s| s.out.zip.take()) {
-            Some((z, b)) => (z, b, with_state(|s| s.out.level_old)),
-            None => (ZStream::new(), Vec::new(), 0),
-        };
-        if self.pdf_stream_length == 0 {
-            // preview mode stores the streams (`super::preview`)
-            let zlevel = if super::preview() { 0 } else { level };
-            if zipbuf.is_empty() {
-                zipbuf = vec![0u8; ZIP_BUF_SIZE];
-                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
-            } else if level != level_old {
-                // \pdfcompresslevel changed in mid document
-                self.check_zip_err(zs.deflate_end(), "deflateEnd");
-                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
-            } else {
-                self.check_zip_err(zs.deflate_reset(), "deflateReset");
+        if let Some(n) = with_state(|s| s.out.written.take()) {
+            // a stream written already compressed: its end
+            if !finish || self.pdf_ptr != 0 {
+                self.pdftex_fail("zlib: a precompressed stream was written to");
             }
-            with_state(|s| s.out.level_old = level);
-            zs.next_out = zipbuf.as_mut_ptr();
-            zs.avail_out = ZIP_BUF_SIZE as u32;
+            use crate::system::PasFile;
+            self.pdf_file.flush();
+            self.pdf_stream_length = n;
+            return;
         }
+        let (mut zs, mut zipbuf) = self.zip_take(level);
         // `c_stream.next_in = pdfbuf`: the PDF output buffer, as bytes.
         let input = self.pdf_buf_bytes(0, self.pdf_ptr);
         zs.next_in = input.as_ptr();
@@ -187,6 +182,69 @@ impl Globals {
         }
         self.pdf_stream_length = zs.total_out as i64;
         with_state(|s| s.out.zip = Some((zs, zipbuf)));
+    }
+
+    /// `writezip`'s stream and buffer, with the stream begun (initialised,
+    /// re-initialised for a new level, or reset) when a stream starts
+    /// (`pdf_stream_length = 0`).
+    fn zip_take(&mut self, level: i32) -> (Box<ZStream>, Vec<u8>) {
+        let (mut zs, mut zipbuf, level_old) = match with_state(|s| s.out.zip.take()) {
+            Some((z, b)) => (z, b, with_state(|s| s.out.level_old)),
+            None => (ZStream::new(), Vec::new(), 0),
+        };
+        if self.pdf_stream_length == 0 {
+            // preview mode stores the streams (`super::preview`)
+            let zlevel = if super::preview() { 0 } else { level };
+            if zipbuf.is_empty() {
+                zipbuf = vec![0u8; ZIP_BUF_SIZE];
+                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
+            } else if level != level_old {
+                // \pdfcompresslevel changed in mid document
+                self.check_zip_err(zs.deflate_end(), "deflateEnd");
+                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
+            } else {
+                self.check_zip_err(zs.deflate_reset(), "deflateReset");
+            }
+            with_state(|s| s.out.level_old = level);
+            zs.next_out = zipbuf.as_mut_ptr();
+            zs.avail_out = ZIP_BUF_SIZE as u32;
+        }
+        (zs, zipbuf)
+    }
+
+    /// A stream's compressed bytes, made elsewhere by the same zlib at the
+    /// same level from the bytes this stream would hold
+    /// (`writepng::ahead`), written as `write_zip` would write them: right
+    /// after `pdf_begin_stream` (compressing, nothing in the buffer yet).
+    /// The zlib stream is begun as `write_zip`'s first call begins it, so
+    /// the next stream finds it as it would; the bytes go to the file, as
+    /// `pdf_gone` and `pdf_last_byte` count them; the stream's last
+    /// `write_zip` (`pdf_end_stream`) only ends it, with their length as
+    /// `pdf_stream_length`. Returns false, writing nothing, when the stream
+    /// is not in that state.
+    pub(crate) fn pdf_stream_compressed(&mut self, bytes: &[u8]) -> bool {
+        use crate::generated::consts::zip_writing;
+        if self.zip_write_state != zip_writing
+            || self.pdf_ptr != 0
+            || self.pdf_stream_length != 0
+            || self.fixed_pdf_draftmode != 0
+            || super::preview()
+            || bytes.is_empty()
+        {
+            return false;
+        }
+        crate::displaylist::tap(self);
+        let level = self.get_pdf_compress_level();
+        if level <= 0 {
+            return false;
+        }
+        set_cur_file_name(None);
+        let zip = self.zip_take(level);
+        with_state(|s| s.out.zip = Some(zip));
+        self.pdf_gone += self.xfwrite(bytes) as i64;
+        self.pdf_last_byte = bytes[bytes.len() - 1] as i32;
+        with_state(|s| s.out.written = Some(bytes.len() as i64));
+        true
     }
 
     fn check_zip_err(&mut self, err: i32, f: &str) {
