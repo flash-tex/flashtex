@@ -252,6 +252,67 @@ final class ProjectWindowsHostedTests: XCTestCase {
         XCTAssertEqual(b.engineV3.hostPID, pids[1])
     }
 
+    /// The front window's compile with several large projects restored
+    /// (opt in: `FLASHTEX_MULTIWINDOW_RESTORE=<windows>`, default sections
+    /// `FLASHTEX_MULTIWINDOW_SECTIONS` 1000): the restore as the app does
+    /// it (the launch window up first, then `restore`), timed to the front
+    /// window's first whole DONE and to every window's, once with every
+    /// host at normal priority and started at once ("before"), once with
+    /// the background hosts and the staggered start ("after"), and "before"
+    /// again (so an order effect shows). One `MultiWindowRestore:` line.
+    func testTheFrontWindowFinishesFirstWhenSeveralLargeProjectsAreRestored() throws {
+        guard let n = ProcessInfo.processInfo.environment["FLASHTEX_MULTIWINDOW_RESTORE"].flatMap(Int.init), n > 1 else {
+            throw XCTSkip("opt in with FLASHTEX_MULTIWINDOW_RESTORE=<windows>")
+        }
+        try EngineV3TestHost.require()
+        let sections = ProcessInfo.processInfo.environment["FLASHTEX_MULTIWINDOW_SECTIONS"].flatMap(Int.init) ?? 1000
+        var runs: [[String: Any]] = []
+        for (mode, on) in [("before", false), ("after", true), ("before", false)] {
+            var pids: [Int32] = []
+            defer { for pid in pids where !DeallocationProbe.processGone(pid) { kill(pid, SIGKILL) } }
+            let result: [String: Any] = try autoreleasepool {
+                let windows = ProjectWindows()
+                windows.makeModel = { _ in let m = ShellModel(startup: .untitledDocument, launchHooks: false); m.engineV3Enabled = true; return m }
+                windows.backgroundHosts = on
+                windows.staggerRestore = on
+                var list: [ProjectWindows.Restorable] = []
+                for i in 0 ..< n {
+                    let url = dir.appendingPathComponent("\(mode)-\(runs.count)/book\(i)/main.tex")
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try EditorInstantTests.book(sections: sections).replacingOccurrences(of: "\\begin{document}\n", with: "\\begin{document}\nBook \(i).\n")
+                        .write(to: url, atomically: true, encoding: .utf8)
+                    list.append(.init(path: url.path))
+                }
+                let launchID = ProjectWindowID()
+                let launch = windows.model(for: launchID)
+                _ = try show(launchID, of: windows) // the launch window is up (its host starts) before the restore
+                let t0 = MonotonicClock.nowNs()
+                windows.restore(list, first: launch)
+                for e in windows.entries where e.id != launchID { _ = try show(e.id, of: windows) }
+                let models = windows.entries.map(\.model)
+                let front = try XCTUnwrap(windows.frontmost)
+                @MainActor func whole(_ m: ShellModel) -> Bool { let s = m.engineV3; return s.doneCount > 0 && !s.compiling && s.pageCount >= sections }
+                var frontMs: Double?, allMs: Double?
+                try waitUntil("\(mode): every window's compile", timeout: 900) {
+                    for m in models { if case .failed(let why) = m.engineV3.phase { XCTFail("host did not start: \(why)"); return true } }
+                    let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
+                    if frontMs == nil, whole(front) { frontMs = ms }
+                    if models.allSatisfy(whole) { allMs = ms; return true }
+                    return false
+                }
+                pids = models.compactMap(\.engineV3.hostPID)
+                let r: [String: Any] = ["mode": mode, "windows": n, "pages_each": sections, "front_done_ms": Int(frontMs ?? -1), "all_done_ms": Int(allMs ?? -1)]
+                for c in shown { c.close() }
+                shown = []
+                return r
+            }
+            runs.append(result)
+            for pid in pids { _ = DeallocationProbe.waitForExit(pid, timeout: 20) }
+            run(1)
+        }
+        if let d = try? JSONSerialization.data(withJSONObject: runs, options: [.sortedKeys]), let s = String(data: d, encoding: .utf8) { print("MultiWindowRestore: \(s)") }
+    }
+
     /// Closing a project's window and opening the project again in the
     /// same run reuses its project copy (EngineV3Session.end,
     /// EngineV3Mirror.release): the new window's session takes the copy
