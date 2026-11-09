@@ -443,7 +443,10 @@ fn cmr10() -> Option<Vec<u8>> {
 /// TeX Live's file `name`, or `None` (the test then passes with a note).
 fn tex_file(name: &str) -> Option<Vec<u8>> {
     let bin = flashtex_engine::resolver::find_texlive_bin()?;
-    let out = Command::new(bin.join("kpsewhich")).arg(name).output().ok()?;
+    let out = Command::new(bin.join("kpsewhich"))
+        .arg(name)
+        .output()
+        .ok()?;
     std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
 }
 
