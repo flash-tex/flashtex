@@ -1340,6 +1340,9 @@ impl Globals {
     pub fn flashtex_intr_fed(&mut self) {
         if self.st(S_REC_BASE) == 0 {
             self.set_st(S_REC_BASE, self.input_ptr);
+            // (after `macro_call`'s "conserve stack space" pops, which an
+            // offer cannot foresee: `intr_keep_room`)
+            self.set_st(S_REC_PARAM, self.param_ptr);
         }
     }
 
@@ -1607,11 +1610,15 @@ impl Globals {
             F_ROOM_SAVE,
             (self.max_save_stack - self.st(S_REC_SAVE)).max(0) + 2 * ops,
         );
-        self.set_sf(
-            slot,
-            F_ROOM_INPUT,
-            (self.max_in_stack - self.st(S_REC_INPUT)).max(0),
-        );
+        // (from the body's own push, at `input_ptr` one below its level:
+        // the "conserve stack space" pops before it depend on the input
+        // stack, which the guard does not hold, so an offer puts this on
+        // top of `input_ptr` as it is before them, which is never less)
+        let pushed_at = match self.st(S_REC_BASE) {
+            0 => self.st(S_REC_INPUT),
+            b => b - 1,
+        };
+        self.set_sf(slot, F_ROOM_INPUT, (self.max_in_stack - pushed_at).max(0));
         self.set_sf(
             slot,
             F_ROOM_PARAM,
