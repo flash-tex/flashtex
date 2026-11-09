@@ -5259,16 +5259,15 @@ impl Session {
                 aux_point,
                 s1_open: self.s1_open,
             });
-        if self.paused.is_some() {
-            // A new compile abandons the paused run: its later pages are
-            // redone by this one.
-            self.paused = None;
-            return self.cold(
-                t0,
-                stop_at,
-                Some("a compile arrived while one was paused".into()),
-            );
-        }
+        // No run is paused here: `compile` continues, settles or abandons a
+        // paused run before its first pass (each clears `paused`, or
+        // returns), and `more_passes` runs a pass only after one that did
+        // not pause (`paused` is set only with the report's `paused`, in
+        // `after_run`, and the loop returns on it). (A cold run for "a
+        // compile arrived while one was paused" stood here; no test ever
+        // reached it, lane TEST-GAPS. The paused-run tests check this in
+        // debug builds.)
+        debug_assert!(self.paused.is_none(), "a pass began with a run paused");
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
         }

@@ -190,7 +190,15 @@ impl Owner {
 struct Stack {
     values: Vec<i32>,
     hashes: Vec<(u64, u64)>,
+    /// What each entry of C's `cc_stack` array last held (0 if nothing):
+    /// `cc_clear` and `cc_pop` move only `stack_ptr`, so a pop of a
+    /// negative count uncovers these again. (Kept per font: entries an
+    /// earlier font left in C's static array are not reproduced.)
+    backing: Vec<i32>,
 }
+
+/// `CC_STACK_SIZE`: the entries of C's `cc_stack` array.
+const CC_STACK_SIZE: usize = 24;
 
 impl Stack {
     /// `cc_get(n)`: from the bottom for `n >= 0`, from the top for `n < 0`;
@@ -218,6 +226,24 @@ impl Stack {
                 self.values.len()
             )));
         }
+        if n < 0 {
+            // `stack_ptr -= N` with N < 0 (a callothersubr whose count is
+            // below -2): the stack grows over what the array held. Past
+            // the array's 24 entries pdfTeX's behaviour is undefined;
+            // that is refused here.
+            let grown = self.values.len() + n.unsigned_abs() as usize;
+            if grown > CC_STACK_SIZE {
+                return Err(Fail(format!(
+                    "CharString: invalid access ({n}) to stack ({} entries)",
+                    self.values.len()
+                )));
+            }
+            while self.values.len() < grown {
+                let v = self.backing.get(self.values.len()).copied().unwrap_or(0);
+                self.push(v);
+            }
+            return Ok(());
+        }
         let keep = self.values.len() - n.max(0) as usize;
         self.values.truncate(keep);
         self.hashes.truncate(keep);
@@ -229,6 +255,13 @@ impl Stack {
     /// platform); this stack just grows.
     #[inline]
     fn push(&mut self, v: i32) {
+        let at = self.values.len();
+        if at < CC_STACK_SIZE {
+            if self.backing.len() <= at {
+                self.backing.resize(at + 1, 0);
+            }
+            self.backing[at] = v;
+        }
         let (a, b) = self.fingerprint_or((0x243F_6A88_85A3_08D3, 0x1319_8A2E_0370_7344));
         let x = u64::from(v as u32);
         self.hashes.push((
