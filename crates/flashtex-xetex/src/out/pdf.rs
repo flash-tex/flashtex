@@ -1321,88 +1321,6 @@ impl<'a> Writer<'a> {
 
     // ---- the document --------------------------------------------------------
 
-    fn catalog_and_tree(&mut self) -> Result<(), String> {
-        let doc = self.doc;
-        // the page tree
-        let mut d = format!("<</Type /Pages /Count {} /Kids [", self.pages.len());
-        for (i, p) in self.pages.iter().enumerate() {
-            if i > 0 {
-                d.push(' ');
-            }
-            let _ = write!(d, "{p} 0 R");
-        }
-        d.push_str("]>>");
-        let root = self.pages_root;
-        self.object(root, d.as_bytes());
-        // the outline
-        let outlines = if doc.outlines.is_empty() {
-            None
-        } else {
-            Some(self.outlines())
-        };
-        // named destinations: pdfnames.c's name tree (sorted by memcmp,
-        // then length; a name given twice keeps its first destination)
-        let mut names = doc.names.clone();
-        if !doc.dests.is_empty() {
-            let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
-            for (k, v) in &doc.dests {
-                sorted.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            let leaves: Vec<(Vec<u8>, Obj)> = sorted.into_iter().collect();
-            let tree = self.name_tree(&leaves, true);
-            names.set(b"Dests", Obj::Ref(tree, 0));
-        }
-        // the catalog's own `/Names` (`pdf:put @catalog`): with a names
-        // dictionary to write, a dictionary is merged into it (its entries
-        // win) and anything else stays the catalog's (pdf_doc_close_names:
-        // "Could not modify Names dictionary."); without one, it stays
-        let has_names = !names.0.is_empty() || self.names_obj.is_some();
-        let mut cat_names: Option<Vec<u8>> = None;
-        match doc.catalog.get(b"Names") {
-            Some(Obj::Dict(d)) if has_names => names.merge(d),
-            Some(o) => cat_names = Some(self.ser(o)),
-            None => {}
-        }
-        if has_names {
-            let o = match self.names_obj {
-                Some(o) => o,
-                _ => {
-                    let o = self.alloc();
-                    self.names_obj = Some(o);
-                    o
-                }
-            };
-            let body = self.ser(&Obj::Dict(names));
-            self.object(o, &body);
-            if cat_names.is_none() {
-                cat_names = Some(format!("{o} 0 R").into_bytes());
-            }
-        }
-        // the catalog
-        let mut cat = doc.catalog.clone();
-        for k in [&b"Type"[..], b"Pages", b"Outlines", b"Names"] {
-            cat.remove(k);
-        }
-        let mut d = format!("<</Type /Catalog /Pages {root} 0 R");
-        if let Some(o) = outlines {
-            let _ = write!(d, " /Outlines {o} 0 R");
-        }
-        if let Some(n) = &cat_names {
-            d.push_str(" /Names ");
-            d.push_str(&String::from_utf8_lossy(n));
-        }
-        let mut body = d.into_bytes();
-        if !cat.0.is_empty() {
-            body.push(b' ');
-            let e = self.ser_dict_entries(&cat);
-            body.extend_from_slice(&e);
-        }
-        body.extend_from_slice(b">>");
-        let c = self.catalog;
-        self.object(c, &body);
-        Ok(())
-    }
-
     /// A name tree node over `leaves` (sorted), as pdfnames.c's
     /// `build_name_tree` makes it: up to `2 * NAME_CLUSTER` (8) leaves in
     /// one `/Names` array, more split into `NAME_CLUSTER` (4) kids at
@@ -1446,6 +1364,93 @@ impl<'a> Writer<'a> {
         let body = self.ser(&Obj::Dict(d));
         self.object(num, &body);
         num
+    }
+
+    fn catalog_and_tree(&mut self) -> Result<(), String> {
+        let doc = self.doc;
+        // the page tree
+        let mut d = format!("<</Type /Pages /Count {} /Kids [", self.pages.len());
+        for (i, p) in self.pages.iter().enumerate() {
+            if i > 0 {
+                d.push(' ');
+            }
+            let _ = write!(d, "{p} 0 R");
+        }
+        d.push_str("]>>");
+        let root = self.pages_root;
+        self.object(root, d.as_bytes());
+        // the outline
+        let outlines = if doc.outlines.is_empty() {
+            None
+        } else {
+            Some(self.outlines())
+        };
+        // named destinations: pdfnames.c's name tree (sorted by memcmp,
+        // then length; a name given twice keeps its first destination)
+        let mut names = doc.names.clone();
+        if !doc.dests.is_empty() {
+            let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
+            for (k, v) in &doc.dests {
+                sorted.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            let leaves: Vec<(Vec<u8>, Obj)> = sorted.into_iter().collect();
+            let tree = self.name_tree(&leaves, true);
+            names.set(b"Dests", Obj::Ref(tree, 0));
+        }
+        // the catalog's own `/Names` (`pdf:put @catalog`): with a names
+        // dictionary to write, a dictionary is merged into it (its entries
+        // win) and anything else stays the catalog's (pdf_doc_close_names:
+        // "Could not modify Names dictionary."); without one, it stays
+        let catalog_names = doc.catalog.get(b"Names");
+        let has_names = !names.0.is_empty() || self.names_obj.is_some();
+        if let (Some(Obj::Dict(d)), true) = (catalog_names, has_names) {
+            names.merge(d);
+        }
+        let names_ref = if has_names {
+            let o = match self.names_obj {
+                Some(o) => o,
+                _ => {
+                    let o = self.alloc();
+                    self.names_obj = Some(o);
+                    o
+                }
+            };
+            let body = self.ser(&Obj::Dict(names));
+            self.object(o, &body);
+            Some(o)
+        } else {
+            None
+        };
+        // the catalog
+        let mut cat = doc.catalog.clone();
+        for k in [&b"Type"[..], b"Pages", b"Outlines", b"Names"] {
+            cat.remove(k);
+        }
+        let mut d = format!("<</Type /Catalog /Pages {root} 0 R");
+        if let Some(o) = outlines {
+            let _ = write!(d, " /Outlines {o} 0 R");
+        }
+        match (names_ref, catalog_names) {
+            (Some(o), None | Some(Obj::Dict(_))) => {
+                let _ = write!(d, " /Names {o} 0 R");
+            }
+            (_, Some(o)) => {
+                let v = self.ser(o);
+                d.push_str(" /Names ");
+                d.push_str(&String::from_utf8_lossy(&v));
+            }
+            (None, None) => {}
+        }
+        let mut body = d.into_bytes();
+        if !cat.0.is_empty() {
+            body.push(b' ');
+            let e = self.ser_dict_entries(&cat);
+            body.extend_from_slice(&e);
+        }
+        body.extend_from_slice(b">>");
+        let c = self.catalog;
+        self.object(c, &body);
+        Ok(())
     }
 
     /// The outline tree from the flat list of `pdf:outline` entries.
@@ -2579,6 +2584,109 @@ mod tests {
         assert!(!editable.embedding_forbidden());
     }
 
+    /// The destinations' name tree as xdvipdfmx (TeX Live 2026) writes it,
+    /// measured (#2360): past 8 names, a root with 4 `/Kids` split at
+    /// `i * n / 4`, each with `/Limits`; `d1` sorts between `d09` and
+    /// `d10`; the catalog's own `/Names` dictionary is merged in.
+    #[test]
+    fn the_name_tree_is_xdvipdfmxs() {
+        use super::super::pdfobj::{Dict as D, Obj as O};
+        let mut doc = Doc::new();
+        for n in [
+            "d10", "d02", "d03", "d04", "d05", "d06", "d07", "d08", "d09", "d1", "d1",
+        ] {
+            let dest = O::Array(vec![O::Name(b"Fit".to_vec())]);
+            doc.dests.push((n.as_bytes().to_vec(), dest));
+        }
+        doc.catalog.set(
+            b"Names",
+            O::Dict(D(vec![(b"Foo".to_vec(), O::Str(b"bar".to_vec()))])),
+        );
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        assert_eq!(names.get("Foo"), Some(&Obj::String(b"bar".to_vec())));
+        let root = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
+        assert!(root.get("Limits").is_none() && root.get("Names").is_none());
+        let kids = root.get("Kids").and_then(Obj::as_array).unwrap();
+        let s = |o: &Obj| match o {
+            Obj::String(b) => String::from_utf8_lossy(b).into_owned(),
+            _ => "?".into(),
+        };
+        let mut got = Vec::new();
+        for k in kids {
+            let k = pdf.resolve(k).as_dict().unwrap();
+            let lim: Vec<String> = k
+                .get("Limits")
+                .and_then(Obj::as_array)
+                .unwrap()
+                .iter()
+                .map(s)
+                .collect();
+            let leaves = k.get("Names").and_then(Obj::as_array).unwrap();
+            // each destination its own object
+            assert!(leaves
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .all(|v| matches!(v, Obj::Ref(..))));
+            let ks: Vec<String> = leaves.iter().step_by(2).map(s).collect();
+            got.push(format!("{} {} : {}", lim[0], lim[1], ks.join(" ")));
+        }
+        assert_eq!(
+            got,
+            [
+                "d02 d03 : d02 d03",
+                "d04 d06 : d04 d05 d06",
+                "d07 d08 : d07 d08",
+                "d09 d10 : d09 d1 d10",
+            ]
+        );
+        // 8 names or fewer: the root holds them, without `/Limits`
+        let mut doc = Doc::new();
+        doc.dests
+            .push((b"a".to_vec(), O::Array(vec![O::Name(b"Fit".to_vec())])));
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        let root = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
+        assert!(root.get("Limits").is_none() && root.get("Kids").is_none());
+        assert_eq!(
+            root.get("Names").and_then(Obj::as_array).map(|a| a.len()),
+            Some(2)
+        );
+    }
+
+    /// With no names dictionary to write, the catalog's own `/Names`
+    /// stays as it is (measured, #2360).
+    #[test]
+    fn the_catalogs_own_names_stays_without_destinations() {
+        use super::super::pdfobj::{Dict as D, Obj as O};
+        let mut doc = Doc::new();
+        doc.catalog.set(
+            b"Names",
+            O::Dict(D(vec![(b"Foo".to_vec(), O::Str(b"bar".to_vec()))])),
+        );
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        assert_eq!(names.get("Foo"), Some(&Obj::String(b"bar".to_vec())));
+        assert!(names.get("Dests").is_none());
+    }
+
     /// A grey PNG with an `sRGB` chunk: the IMAGE's `color_space` is the
     /// `CalGray` the PDF writes, number for number, with its `/Intent`.
     #[test]
@@ -2687,108 +2795,5 @@ mod tests {
         assert!(body.contains("/Transparency"), "{body}");
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
-    }
-
-    /// The destinations' name tree as xdvipdfmx (TeX Live 2026) writes it,
-    /// measured (#2360): past 8 names, a root with 4 `/Kids` split at
-    /// `i * n / 4`, each with `/Limits`; `d1` sorts between `d09` and
-    /// `d10`; the catalog's own `/Names` dictionary is merged in.
-    #[test]
-    fn the_name_tree_is_xdvipdfmxs() {
-        use super::super::pdfobj::{Dict as D, Obj as O};
-        let mut doc = Doc::new();
-        for n in [
-            "d10", "d02", "d03", "d04", "d05", "d06", "d07", "d08", "d09", "d1", "d1",
-        ] {
-            let dest = O::Array(vec![O::Name(b"Fit".to_vec())]);
-            doc.dests.push((n.as_bytes().to_vec(), dest));
-        }
-        doc.catalog.set(
-            b"Names",
-            O::Dict(D(vec![(b"Foo".to_vec(), O::Str(b"bar".to_vec()))])),
-        );
-        let opts = Options {
-            producer: "test".into(),
-            date: None,
-            compress: false,
-        };
-        let bytes = write(&doc, &opts).unwrap().0;
-        let pdf = PdfFile::parse(&bytes).unwrap();
-        let cat = pdf.catalog().unwrap();
-        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
-        assert_eq!(names.get("Foo"), Some(&Obj::String(b"bar".to_vec())));
-        let root = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
-        assert!(root.get("Limits").is_none() && root.get("Names").is_none());
-        let kids = root.get("Kids").and_then(Obj::as_array).unwrap();
-        let s = |o: &Obj| match o {
-            Obj::String(b) => String::from_utf8_lossy(b).into_owned(),
-            _ => "?".into(),
-        };
-        let mut got = Vec::new();
-        for k in kids {
-            let k = pdf.resolve(k).as_dict().unwrap();
-            let lim: Vec<String> = k
-                .get("Limits")
-                .and_then(Obj::as_array)
-                .unwrap()
-                .iter()
-                .map(s)
-                .collect();
-            let leaves = k.get("Names").and_then(Obj::as_array).unwrap();
-            // each destination its own object
-            assert!(leaves
-                .iter()
-                .skip(1)
-                .step_by(2)
-                .all(|v| matches!(v, Obj::Ref(..))));
-            let ks: Vec<String> = leaves.iter().step_by(2).map(s).collect();
-            got.push(format!("{} {} : {}", lim[0], lim[1], ks.join(" ")));
-        }
-        assert_eq!(
-            got,
-            [
-                "d02 d03 : d02 d03",
-                "d04 d06 : d04 d05 d06",
-                "d07 d08 : d07 d08",
-                "d09 d10 : d09 d1 d10",
-            ]
-        );
-        // 8 names or fewer: the root holds them, without `/Limits`
-        let mut doc = Doc::new();
-        doc.dests
-            .push((b"a".to_vec(), O::Array(vec![O::Name(b"Fit".to_vec())])));
-        let bytes = write(&doc, &opts).unwrap().0;
-        let pdf = PdfFile::parse(&bytes).unwrap();
-        let cat = pdf.catalog().unwrap();
-        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
-        let root = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
-        assert!(root.get("Limits").is_none() && root.get("Kids").is_none());
-        assert_eq!(
-            root.get("Names").and_then(Obj::as_array).map(|a| a.len()),
-            Some(2)
-        );
-    }
-
-    /// With no names dictionary to write, the catalog's own `/Names`
-    /// stays as it is (measured, #2360).
-    #[test]
-    fn the_catalogs_own_names_stays_without_destinations() {
-        use super::super::pdfobj::{Dict as D, Obj as O};
-        let mut doc = Doc::new();
-        doc.catalog.set(
-            b"Names",
-            O::Dict(D(vec![(b"Foo".to_vec(), O::Str(b"bar".to_vec()))])),
-        );
-        let opts = Options {
-            producer: "test".into(),
-            date: None,
-            compress: false,
-        };
-        let bytes = write(&doc, &opts).unwrap().0;
-        let pdf = PdfFile::parse(&bytes).unwrap();
-        let cat = pdf.catalog().unwrap();
-        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
-        assert_eq!(names.get("Foo"), Some(&Obj::String(b"bar".to_vec())));
-        assert!(names.get("Dests").is_none());
     }
 }
