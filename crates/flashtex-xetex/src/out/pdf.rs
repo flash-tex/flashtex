@@ -1201,10 +1201,13 @@ impl<'a> Writer<'a> {
                 }
             }
         };
-        let tu = match map {
-            Some(map) => {
+        let cmap = map.and_then(|map| {
+            let name = format!("{base}-UTF16");
+            super::tounicode::cmap_stream(name.as_bytes(), &map, true)
+        });
+        let tu = match cmap {
+            Some(cmap) => {
                 let tu = self.alloc();
-                let cmap = to_unicode_cmap(&base, &map, true);
                 self.stream(tu, b"", cmap.as_bytes(), true);
                 format!(" /ToUnicode {tu} 0 R")
             }
@@ -1303,10 +1306,13 @@ impl<'a> Writer<'a> {
                     .map(|n| (c, n.clone()))
             })
             .collect();
-        let tu = match super::tounicode::encoding_to_unicode(&names, &self.agl()) {
-            Some(map) => {
+        let cmap = super::tounicode::encoding_to_unicode(&names, &self.agl()).and_then(|map| {
+            let name = format!("{base}-UTF16");
+            super::tounicode::cmap_stream(name.as_bytes(), &map, false)
+        });
+        let tu = match cmap {
+            Some(cmap) => {
                 let tu = self.alloc();
-                let cmap = to_unicode_cmap(&base, &map, false);
                 self.stream(tu, b"", cmap.as_bytes(), true);
                 format!(" /ToUnicode {tu} 0 R")
             }
@@ -1916,37 +1922,6 @@ fn subset_tag(name: &str, used: &BTreeSet<u16>) -> String {
     }
     let d = h.finish();
     d[..6].iter().map(|b| (b'A' + b % 26) as char).collect()
-}
-
-/// A `ToUnicode` CMap: codes (2 bytes for `Identity-H`, else 1) to UTF-16.
-fn to_unicode_cmap(name: &str, map: &BTreeMap<u16, Vec<char>>, two_byte: bool) -> String {
-    let mut s = String::new();
-    let _ = write!(
-        s,
-        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo <</Registry (Adobe) /Ordering (UCS) /Supplement 0>> def\n/CMapName /{name}-UTF16 def\n/CMapType 2 def\n1 begincodespacerange\n{}\nendcodespacerange\n",
-        if two_byte { "<0000> <FFFF>" } else { "<00> <FF>" }
-    );
-    let entries: Vec<_> = map.iter().collect();
-    for chunk in entries.chunks(100) {
-        let _ = writeln!(s, "{} beginbfchar", chunk.len());
-        for (code, chars) in chunk {
-            let mut u = String::new();
-            for ch in chars.iter() {
-                let mut buf = [0u16; 2];
-                for unit in ch.encode_utf16(&mut buf) {
-                    let _ = write!(u, "{unit:04X}");
-                }
-            }
-            if two_byte {
-                let _ = writeln!(s, "<{code:04X}> <{u}>");
-            } else {
-                let _ = writeln!(s, "<{:02X}> <{u}>", *code & 0xFF);
-            }
-        }
-        s.push_str("endbfchar\n");
-    }
-    s.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
-    s
 }
 
 /// What a PNG says about its colours (dvipdfmx's order: `iCCP`, then
