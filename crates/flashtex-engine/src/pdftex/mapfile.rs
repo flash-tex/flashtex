@@ -1311,8 +1311,11 @@ fn find(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).position(|w| w == n)
 }
 
-/// `strtol(s, &e, 10)` on a whole C string: the value and the number of
-/// bytes it used (0 if none).
+/// `(int) strtol(s, &e, 10)` on a whole C string: the value and the number
+/// of bytes it used (0 if none). `strtol` gives a `long` (64 bits on
+/// TeX Live's macOS arm64 build, DESIGN.md §13), `LONG_MAX` or `LONG_MIN`
+/// for a number beyond it; the cast to `int` keeps its low 32 bits, so
+/// `4294967463` is 167 and `99999999999999999999` is -1.
 fn strtol10(s: &[u8]) -> (i32, usize) {
     let mut i = 0;
     while i < s.len() && matches!(s[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) {
@@ -1330,14 +1333,51 @@ fn strtol10(s: &[u8]) -> (i32, usize) {
         _ => false,
     };
     let start = i;
-    let mut v: i64 = 0;
+    // the magnitude, while it is at most 2^63 (LONG_MIN's)
+    let mut v: u64 = 0;
+    let mut overflow = false;
     while i < s.len() && s[i].is_ascii_digit() {
-        v = (v * 10 + (s[i] - b'0') as i64).min(i64::MAX / 20);
+        match v
+            .checked_mul(10)
+            .and_then(|x| x.checked_add((s[i] - b'0') as u64))
+        {
+            Some(x) if x <= 1 << 63 => v = x,
+            _ => overflow = true,
+        }
         i += 1;
     }
     if i == start {
         return (0, 0);
     }
-    let v = if neg { -v } else { v };
-    (v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32, i)
+    let long: i64 = match (neg, overflow) {
+        (false, true) => i64::MAX,
+        (true, true) => i64::MIN,
+        (false, false) => i64::try_from(v).unwrap_or(i64::MAX),
+        (true, false) => (v as i64).wrapping_neg(),
+    };
+    (long as i32, i)
+}
+
+#[cfg(test)]
+mod strtol_tests {
+    use super::strtol10;
+
+    #[test]
+    fn strtol_then_int_cast() {
+        assert_eq!(strtol10(b"167"), (167, 3));
+        assert_eq!(strtol10(b"-167x"), (-167, 4));
+        assert_eq!(strtol10(b" +5"), (5, 3));
+        assert_eq!(strtol10(b"x"), (0, 0));
+        assert_eq!(strtol10(b"-"), (0, 0));
+        // beyond int: the low 32 bits of the long
+        assert_eq!(strtol10(b"4294967463"), (167, 10));
+        assert_eq!(strtol10(b"2147483648"), (i32::MIN, 10));
+        assert_eq!(strtol10(b"-4294967295"), (1, 11));
+        // beyond long: LONG_MAX (low bits -1) or LONG_MIN (low bits 0)
+        assert_eq!(strtol10(b"9223372036854775807"), (-1, 19));
+        assert_eq!(strtol10(b"9223372036854775808"), (-1, 19));
+        assert_eq!(strtol10(b"99999999999999999999"), (-1, 20));
+        assert_eq!(strtol10(b"-9223372036854775808"), (0, 20));
+        assert_eq!(strtol10(b"-99999999999999999999"), (0, 21));
+    }
 }
