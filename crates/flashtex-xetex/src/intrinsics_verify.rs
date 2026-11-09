@@ -341,7 +341,7 @@ impl Globals {
     fn intr_cond_snap(&self) -> Vec<String> {
         let mut v = vec![];
         let mut p = self.cond_ptr;
-        while p >= 0 && (p as usize) < self.mem.len() && v.len() < 100_000 {
+        while p >= 0 && (p as usize) < self.mem.len() && v.len() < self.mem.len() {
             let w = self.mem[p as usize].hh();
             let line = self.mem[(p + 1) as usize].int();
             v.push(format!("{:?}", (w.b0(), w.b1(), line)));
@@ -405,7 +405,7 @@ impl Globals {
         let itokens = |e: i32| -> Vec<i32> {
             let mut v = vec![];
             let mut q = memory_word::from_bits(iword(mem0 + 8 * e as usize)).hh_rh();
-            while q >= 0 && (q as usize) < self.mem.len() && v.len() < 1_000_000 {
+            while q >= 0 && (q as usize) < self.mem.len() && v.len() < self.mem.len() {
                 let w = memory_word::from_bits(iword(mem0 + 8 * q as usize));
                 v.push(w.hh_lh());
                 q = w.hh_rh();
