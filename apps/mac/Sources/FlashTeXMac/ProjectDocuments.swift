@@ -1004,6 +1004,7 @@ final class ProjectDocuments {
     @discardableResult
     func saveDocumentNow(_ path: String) -> SaveOutcome {
         prune()
+        model.files.settleBackgroundSaves() // an autosave in flight may be about to move the baseline
         guard path != entryPath else { return .failed("\(path) is the entry document; use Save (ShellModel.saveTex)") }
         if let why = readOnlyNote(for: path) { return .failed(why) }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return .failed("\(path) is not open") }
@@ -1012,7 +1013,36 @@ final class ProjectDocuments {
         let text = doc.text
         let expectedDisk = diskBaselines[path] ?? nil
         let expected: ProjectFilesV1.Expected = expectedDisk.map { .hash($0) } ?? .newFile
-        switch model.files.save(url, text: text, expected: expected, force: false, recordsState: false) {
+        return applySave(model.files.save(url, text: text, expected: expected, force: false, recordsState: false), path: path, url: url, text: text)
+    }
+
+    /// The timed autosave of a member: `saveDocumentNow`, made off the main
+    /// thread (`DocumentFilesState.saveInBackground`); the outcome is
+    /// applied on main when it comes, unless the member was closed or
+    /// renamed, or another project opened, meanwhile. Returns whether a save
+    /// was started; `completion` runs after its outcome was applied.
+    @discardableResult
+    func saveDocumentInBackground(_ path: String, completion: @escaping @MainActor () -> Void = {}) -> Bool {
+        prune()
+        guard path != entryPath, readOnlyNote(for: path) == nil, let doc = model.documents.first(where: { $0.path == path }),
+              let root = projectRoot else { return false }
+        let url = root.appendingPathComponent(path)
+        guard !model.files.backgroundSaveInFlight(for: url) else { return false }
+        let text = doc.text
+        let expectedDisk = diskBaselines[path] ?? nil
+        let expected: ProjectFilesV1.Expected = expectedDisk.map { .hash($0) } ?? .newFile
+        let generation = model.projectGeneration
+        model.files.saveInBackground(url, text: text, expectation: { expected }, recordsState: false) { [weak self] result in
+            defer { completion() }
+            guard let self, model.projectGeneration == generation, projectRoot == root, isOpen(path) else { return }
+            _ = applySave(result, path: path, url: url, text: text)
+        }
+        return true
+    }
+
+    /// What a save of member `path`'s `text` to `url` did (`saveDocumentNow`, the background autosave).
+    private func applySave(_ result: DocumentFilesState.SaveResult, path: String, url: URL, text: String) -> SaveOutcome {
+        switch result {
         case .saved(let sha):
             baselines[path] = text
             diskBaselines[path] = sha
@@ -1021,7 +1051,9 @@ final class ProjectDocuments {
             return noteSave(.saved(path: path, sha256: sha))
         case .conflict(let c):
             saveConflicts[path] = c
-            model.preserveDirtyText(text, at: url, reason: "save refused: file changed on disk")
+            // The buffer now (a background save's `text` may be older: typed on while it was out).
+            let current = model.documents.first(where: { $0.path == path })?.text ?? text
+            model.preserveDirtyText(current, at: url, reason: "save refused: file changed on disk")
             return noteSave(.conflict(c))
         case .failed(let why):
             return noteSave(.failed(why))

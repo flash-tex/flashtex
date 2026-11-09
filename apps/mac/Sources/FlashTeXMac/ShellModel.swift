@@ -830,7 +830,7 @@ final class ShellModel {
         autosaveWork?.cancel()
         autosaveWork = nil
         guard EditorPreferences.shared.autosave, documentURL != nil else { return }
-        let item = DispatchWorkItem { [weak self] in self?.performAutosave() }
+        let item = DispatchWorkItem { [weak self] in self?.performAutosave(inBackground: true) }
         autosaveWork = item
         guard !Self.autosaveSuppressedUnderTest else { return } // flushPendingAutosave() performs it, on demand
         if Self.autosaveInterval == 0 { flushPendingAutosave(); return }
@@ -842,17 +842,96 @@ final class ShellModel {
     /// keeps the buffer, records the conflict, and is not retried until the
     /// conflict is resolved. A document with a save still in flight is
     /// skipped here; `enqueueSave` re-arms autosave if it was edited meanwhile.
-    private func performAutosave() {
+    ///
+    /// `inBackground` (the timer; lane APP-LAG-AUDIT): each save is hashed,
+    /// encoded, sent and awaited off the main thread, one after another, and
+    /// applied on main as it lands (`saveEntryTexInBackground`,
+    /// `ProjectDocuments.saveDocumentInBackground`). On main that was the
+    /// buffer's SHA-256 twice, its JSON encoding and the helper's
+    /// compare-and-replace with two fsyncs — tens of milliseconds at 3 MB at
+    /// every typing pause, up to `helperTimeout` with a slow helper. A member
+    /// edited while its save was in flight is saved again after it.
+    private func performAutosave(inBackground: Bool = false) {
         autosaveWork = nil
         guard EditorPreferences.shared.autosave, documentURL != nil else { return }
         let entry = project.entryPath
-        if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil {
-            saveEntryTex()
-        }
+        var due: [String] = []
+        if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil { due.append(entry) }
         for path in documents.map(\.path) where path != entry && project.isDirty(path) && savesInFlight[path] == nil {
             if project.saveConflict(for: path) != nil { continue } // not retried until that member's conflict is resolved (#789)
-            _ = project.saveDocumentNow(path)
+            due.append(path)
         }
+        guard inBackground else {
+            for path in due { if path == entry { saveEntryTex() } else { _ = project.saveDocumentNow(path) } }
+            return
+        }
+        // A chain in flight (or a ⌘S's background save) re-arms it once none is (`rearmDeferredAutosave`).
+        guard !autosaveChainActive, !files.backgroundSavesInFlight else { autosaveAfterBackground = true; return }
+        autosaveChainActive = true
+        autosaveInBackground(due[...], entry: entry, generation: projectGeneration)
+    }
+
+    /// The timer's autosave asked for while background saves were in flight:
+    /// armed again once none is (`rearmDeferredAutosave`).
+    @ObservationIgnored private var autosaveAfterBackground = false
+    /// An `autosaveInBackground` chain has documents left (between two of
+    /// its saves none may be in flight): a second chain never starts beside it.
+    @ObservationIgnored private var autosaveChainActive = false
+
+    /// `path` still wants the autosave: dirty, no save of it in flight, no
+    /// unresolved conflict (the entry's `files.conflict`, a member's own, #789).
+    private func autosaveDue(_ path: String, entry: String) -> Bool {
+        guard project.isDirty(path), savesInFlight[path] == nil else { return false }
+        return path == entry ? files.conflict == nil : project.saveConflict(for: path) == nil
+    }
+
+    /// Background saves of `due`, one after another (each starts once the
+    /// previous one's outcome is applied, so none waits behind another).
+    /// Each document is checked again when its turn comes: one a ⌘S saved
+    /// meanwhile is not written twice.
+    private func autosaveInBackground(_ due: ArraySlice<String>, entry: String, generation: Int) {
+        guard projectGeneration == generation else {
+            // Another project: its own edits arm its own autosave.
+            autosaveChainActive = false
+            autosaveAfterBackground = false
+            return
+        }
+        guard let path = due.first else {
+            autosaveChainActive = false
+            rearmDeferredAutosave()
+            return
+        }
+        let rest = due.dropFirst()
+        guard autosaveDue(path, entry: entry) else { autosaveInBackground(rest, entry: entry, generation: generation); return }
+        // (An edit made while it is in flight re-arms the autosave itself.)
+        // The next save starts from a later run-loop turn, never from inside
+        // the outcome just applied: a main-thread operation that settled this
+        // save (a ⌘S, a disk probe) finishes first and never waits for the next.
+        let next: @MainActor () -> Void = { [weak self] in
+            // The chain's end needs no later turn (nothing more to start).
+            guard !rest.isEmpty else { self?.autosaveInBackground(rest, entry: entry, generation: generation); return }
+            RunLoop.main.perform(inModes: [.common]) {
+                MainActor.assumeIsolated { self?.autosaveInBackground(rest, entry: entry, generation: generation) }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
+        }
+        let started = path == entry ? saveEntryTexInBackground(completion: next) : project.saveDocumentInBackground(path, completion: next)
+        if !started { autosaveInBackground(rest, entry: entry, generation: generation) }
+    }
+
+    /// An autosave the timer asked for while background saves were in
+    /// flight: armed again once none is and no chain is running.
+    func rearmDeferredAutosave() {
+        guard autosaveAfterBackground, !autosaveChainActive, !files.backgroundSavesInFlight else { return }
+        autosaveAfterBackground = false
+        scheduleAutosave()
+    }
+
+    /// Drops a pending autosave without performing it (quit with Don't Save).
+    func cancelPendingAutosave() {
+        autosaveWork?.cancel()
+        autosaveWork = nil
+        autosaveAfterBackground = false
     }
 
     /// Runs `save` for `path` only after any save of that path already in
@@ -885,11 +964,12 @@ final class ShellModel {
     /// `autosaveInterval` (real time is suppressed under XCTest, see
     /// `autosaveSuppressedUnderTest`, so tests exercise the write through
     /// here rather than a live timer that could race the test). A no-op when
-    /// no edit scheduled one.
-    func flushPendingAutosave() {
+    /// no edit scheduled one. Synchronous (quit, tests); `inBackground` is
+    /// the timer's way (tests of it).
+    func flushPendingAutosave(inBackground: Bool = false) {
         guard let pending = autosaveWork else { return }
         pending.cancel()
-        performAutosave()
+        performAutosave(inBackground: inBackground)
     }
 
     // MARK: navigation (preview -> source)
