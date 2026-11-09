@@ -153,6 +153,9 @@ fn compare_all(
         norm_diags(&sv, &so.diags, p2, o2),
     );
     assert!(!b.is_empty(), "{what}: the document has diagnostics");
+    if std::env::var_os("AUDIT_SRCMAP_SHOW").is_some() {
+        eprintln!("{what}: scratch DIAGs:\n  {}", b.join("\n  "));
+    }
     if a != b {
         let k = (0..a.len().max(b.len()))
             .find(|&k| a.get(k) != b.get(k))
