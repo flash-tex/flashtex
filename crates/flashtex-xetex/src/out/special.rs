@@ -139,83 +139,175 @@ fn trim(s: &[u8]) -> &[u8] {
     &s[st..]
 }
 
-/// A colour of a special: `rgb r g b`, `cmyk c m y k`, `gray g`,
-/// `hsb h s b`, or a PDF array `[g]`, `[r g b]`, `[c m y k]`.
-pub fn read_color(p: &mut Parser) -> Option<Col> {
-    // dvipdfmx writes colour components with 3 decimals (measured: xcolor's
-    // `rgb 0.7843 0.3921 0` is `.784 .392 0 rg`)
-    read_color_exact(p).map(|c| {
-        Col(c
-            .0
-            .into_iter()
-            .map(|v| (v * 1000.0).round() / 1000.0)
-            .collect())
-    })
+/// Components with 3 decimals, as dvipdfmx writes them (measured: xcolor's
+/// `rgb 0.7843 0.3921 0` is `.784 .392 0 rg`).
+fn rounded(c: Col) -> Col {
+    Col(c
+        .0
+        .into_iter()
+        .map(|v| (v * 1000.0).round() / 1000.0)
+        .collect())
 }
 
-fn read_color_exact(p: &mut Parser) -> Option<Col> {
-    if p.peek() == Some(b'[') {
-        let Obj::Array(a) = p.object()? else {
-            return None;
-        };
-        let v: Option<Vec<f64>> = a.iter().map(Obj::as_num).collect();
-        let v = v?;
-        return matches!(v.len(), 1 | 3 | 4).then_some(Col(v));
-    }
-    let save = p.i;
+/// A colour of a `color` or `background` special (spc_util.c's
+/// spc_read_color_color): `rgb r g b`, `cmyk c m y k`, `gray g`,
+/// `hsb h s b` or a colour name ([`named_color`]). Nothing else: not
+/// `grey`, a bare number or an array.
+pub fn read_color(p: &mut Parser) -> Option<Col> {
     let w = p.word()?.to_vec();
     let nums =
         |p: &mut Parser, n: usize| -> Option<Vec<f64>> { (0..n).map(|_| p.number()).collect() };
     let c = match w.as_slice() {
         b"rgb" => Col(nums(p, 3)?),
         b"cmyk" => Col(nums(p, 4)?),
-        b"gray" | b"grey" => Col(nums(p, 1)?),
+        b"gray" => Col(nums(p, 1)?),
         b"hsb" => {
             let v = nums(p, 3)?;
             Col(hsb_to_rgb(v[0], v[1], v[2]).to_vec())
         }
-        _ => match named_color(&w) {
-            Some(c) => c,
-            None => {
-                p.i = save;
-                // a bare number is gray
-                let g = p.number()?;
-                Col(vec![g])
-            }
-        },
+        _ => named_color(&w)?,
     };
-    Some(c)
+    Some(rounded(c))
 }
 
-fn hsb_to_rgb(h: f64, s: f64, b: f64) -> [f64; 3] {
-    let h6 = (h * 6.0).rem_euclid(6.0);
-    let i = h6.floor();
-    let f = h6 - i;
-    let (p, q, t) = (b * (1.0 - s), b * (1.0 - s * f), b * (1.0 - s * (1.0 - f)));
-    match i as i32 {
-        0 => [b, t, p],
-        1 => [q, b, p],
-        2 => [p, b, t],
-        3 => [p, q, b],
-        4 => [t, p, b],
-        _ => [b, p, q],
+/// A colour of a `pdf:` special (spc_util.c's spc_read_color_pdf): one,
+/// three or four numbers (gray, RGB, CMYK), in `[...]` or not, or a
+/// colour name; `/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK` and their
+/// components. What it tried to read is consumed when it fails, as the C
+/// leaves it.
+pub fn read_pdf_color(p: &mut Parser) -> Option<Col> {
+    p.skip_white();
+    let mut n = None;
+    if p.peek() == Some(b'/') {
+        n = match p.name()?.as_slice() {
+            b"DeviceGray" => Some(1),
+            b"DeviceRGB" => Some(3),
+            b"DeviceCMYK" => Some(4),
+            // `/Pattern`, `@colorspace`: not carried out
+            _ => return None,
+        };
+    }
+    let array = p.peek() == Some(b'[');
+    if array {
+        p.i += 1;
+    }
+    let mut v = Vec::new();
+    while v.len() < n.unwrap_or(4) {
+        match p.number() {
+            Some(x) => v.push(x),
+            None => break,
+        }
+    }
+    let c = match (n, v.len()) {
+        (Some(n), k) if k != n => return None,
+        (_, 1 | 3 | 4) => Col(v),
+        (Some(_), _) => return None,
+        _ => named_color(p.word()?)?,
+    };
+    if array {
+        if p.peek() != Some(b']') {
+            return None;
+        }
+        p.i += 1;
+    }
+    Some(rounded(c))
+}
+
+/// spc_util.c's rgb_color_from_hsv, as written (`h` = 1 is case 6).
+fn hsb_to_rgb(h: f64, s: f64, v: f64) -> [f64; 3] {
+    if s == 0.0 {
+        return [v, v, v];
+    }
+    let h6 = h * 6.0;
+    let i = h6 as i32;
+    let f = h6 - i as f64;
+    let (v1, v2, v3) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    match i {
+        0 => [v, v3, v1],
+        1 => [v2, v, v1],
+        2 => [v1, v, v3],
+        3 => [v1, v2, v],
+        4 => [v3, v1, v],
+        5 | 6 => [v, v1, v2],
+        _ => [v, v, v],
     }
 }
 
-/// The dvips colour names dvipdfmx knows (`color.pro`'s CMYK values) that
-/// drivers still emit; others are reported.
+/// The dvips colour names dvipdfmx knows (spc_util.c's `colordefs`, in
+/// its order): CMYK, except `Gray`, `Black` and `White`, which are gray
+/// (measured: `color push Black` is `0 g`). color.sty's `named` model
+/// (xetex.def) writes these names into its `color` specials.
 fn named_color(w: &[u8]) -> Option<Col> {
     let cmyk = |c: f64, m: f64, y: f64, k: f64| Some(Col(vec![c, m, y, k]));
     match w {
-        // measured: `color push Black` is `0 g`
+        b"GreenYellow" => cmyk(0.15, 0.0, 0.69, 0.0),
+        b"Yellow" => cmyk(0.0, 0.0, 1.0, 0.0),
+        b"Goldenrod" => cmyk(0.0, 0.1, 0.84, 0.0),
+        b"Dandelion" => cmyk(0.0, 0.29, 0.84, 0.0),
+        b"Apricot" => cmyk(0.0, 0.32, 0.52, 0.0),
+        b"Peach" => cmyk(0.0, 0.5, 0.7, 0.0),
+        b"Melon" => cmyk(0.0, 0.46, 0.5, 0.0),
+        b"YellowOrange" => cmyk(0.0, 0.42, 1.0, 0.0),
+        b"Orange" => cmyk(0.0, 0.61, 0.87, 0.0),
+        b"BurntOrange" => cmyk(0.0, 0.51, 1.0, 0.0),
+        b"Bittersweet" => cmyk(0.0, 0.75, 1.0, 0.24),
+        b"RedOrange" => cmyk(0.0, 0.77, 0.87, 0.0),
+        b"Mahogany" => cmyk(0.0, 0.85, 0.87, 0.35),
+        b"Maroon" => cmyk(0.0, 0.87, 0.68, 0.32),
+        b"BrickRed" => cmyk(0.0, 0.89, 0.94, 0.28),
+        b"Red" => cmyk(0.0, 1.0, 1.0, 0.0),
+        b"OrangeRed" => cmyk(0.0, 1.0, 0.5, 0.0),
+        b"RubineRed" => cmyk(0.0, 1.0, 0.13, 0.0),
+        b"WildStrawberry" => cmyk(0.0, 0.96, 0.39, 0.0),
+        b"Salmon" => cmyk(0.0, 0.53, 0.38, 0.0),
+        b"CarnationPink" => cmyk(0.0, 0.63, 0.0, 0.0),
+        b"Magenta" => cmyk(0.0, 1.0, 0.0, 0.0),
+        b"VioletRed" => cmyk(0.0, 0.81, 0.0, 0.0),
+        b"Rhodamine" => cmyk(0.0, 0.82, 0.0, 0.0),
+        b"Mulberry" => cmyk(0.34, 0.9, 0.0, 0.02),
+        b"RedViolet" => cmyk(0.07, 0.9, 0.0, 0.34),
+        b"Fuchsia" => cmyk(0.47, 0.91, 0.0, 0.08),
+        b"Lavender" => cmyk(0.0, 0.48, 0.0, 0.0),
+        b"Thistle" => cmyk(0.12, 0.59, 0.0, 0.0),
+        b"Orchid" => cmyk(0.32, 0.64, 0.0, 0.0),
+        b"DarkOrchid" => cmyk(0.4, 0.8, 0.2, 0.0),
+        b"Purple" => cmyk(0.45, 0.86, 0.0, 0.0),
+        b"Plum" => cmyk(0.5, 1.0, 0.0, 0.0),
+        b"Violet" => cmyk(0.79, 0.88, 0.0, 0.0),
+        b"RoyalPurple" => cmyk(0.75, 0.9, 0.0, 0.0),
+        b"BlueViolet" => cmyk(0.86, 0.91, 0.0, 0.04),
+        b"Periwinkle" => cmyk(0.57, 0.55, 0.0, 0.0),
+        b"CadetBlue" => cmyk(0.62, 0.57, 0.23, 0.0),
+        b"CornflowerBlue" => cmyk(0.65, 0.13, 0.0, 0.0),
+        b"MidnightBlue" => cmyk(0.98, 0.13, 0.0, 0.43),
+        b"NavyBlue" => cmyk(0.94, 0.54, 0.0, 0.0),
+        b"RoyalBlue" => cmyk(1.0, 0.5, 0.0, 0.0),
+        b"Blue" => cmyk(1.0, 1.0, 0.0, 0.0),
+        b"Cerulean" => cmyk(0.94, 0.11, 0.0, 0.0),
+        b"Cyan" => cmyk(1.0, 0.0, 0.0, 0.0),
+        b"ProcessBlue" => cmyk(0.96, 0.0, 0.0, 0.0),
+        b"SkyBlue" => cmyk(0.62, 0.0, 0.12, 0.0),
+        b"Turquoise" => cmyk(0.85, 0.0, 0.2, 0.0),
+        b"TealBlue" => cmyk(0.86, 0.0, 0.34, 0.02),
+        b"Aquamarine" => cmyk(0.82, 0.0, 0.3, 0.0),
+        b"BlueGreen" => cmyk(0.85, 0.0, 0.33, 0.0),
+        b"Emerald" => cmyk(1.0, 0.0, 0.5, 0.0),
+        b"JungleGreen" => cmyk(0.99, 0.0, 0.52, 0.0),
+        b"SeaGreen" => cmyk(0.69, 0.0, 0.5, 0.0),
+        b"Green" => cmyk(1.0, 0.0, 1.0, 0.0),
+        b"ForestGreen" => cmyk(0.91, 0.0, 0.88, 0.12),
+        b"PineGreen" => cmyk(0.92, 0.0, 0.59, 0.25),
+        b"LimeGreen" => cmyk(0.5, 0.0, 1.0, 0.0),
+        b"YellowGreen" => cmyk(0.44, 0.0, 0.74, 0.0),
+        b"SpringGreen" => cmyk(0.26, 0.0, 0.76, 0.0),
+        b"OliveGreen" => cmyk(0.64, 0.0, 0.95, 0.4),
+        b"RawSienna" => cmyk(0.0, 0.72, 1.0, 0.45),
+        b"Sepia" => cmyk(0.0, 0.83, 1.0, 0.7),
+        b"Brown" => cmyk(0.0, 0.81, 1.0, 0.6),
+        b"Tan" => cmyk(0.14, 0.42, 0.56, 0.0),
+        b"Gray" => Some(Col(vec![0.5])),
         b"Black" => Some(Col(vec![0.0])),
         b"White" => Some(Col(vec![1.0])),
-        b"Red" => cmyk(0.0, 1.0, 1.0, 0.0),
-        b"Green" => cmyk(1.0, 0.0, 1.0, 0.0),
-        b"Blue" => cmyk(1.0, 1.0, 0.0, 0.0),
-        b"Cyan" => cmyk(1.0, 0.0, 0.0, 0.0),
-        b"Magenta" => cmyk(0.0, 1.0, 0.0, 0.0),
-        b"Yellow" => cmyk(0.0, 0.0, 1.0, 0.0),
         _ => None,
     }
 }
@@ -282,6 +374,45 @@ impl<M: Metrics> Builder<'_, M> {
         }
     }
 
+    /// The fill and stroke colours of `pdf:bcolor`/`pdf:scolor`
+    /// (spc_pdfm.c): `fill C` and/or `stroke C`, or `C [C']` (fill, and
+    /// stroke if given, else the fill). A colour that does not read is the
+    /// current one (spc_util_read_pdfcolor's default), so the special
+    /// still pushes; nothing at all where a colour is due is an error.
+    fn pdf_colors(&mut self, p: &mut Parser) -> Option<(Col, Col)> {
+        let (cf, cs) = self
+            .doc
+            .colors
+            .last()
+            .cloned()
+            .unwrap_or((Col::black(), Col::black()));
+        let read = |p: &mut Parser, default: &Col| -> Option<Col> {
+            if p.at_end() {
+                return None;
+            }
+            Some(read_pdf_color(p).unwrap_or_else(|| default.clone()))
+        };
+        if matches!(p.peek(), Some(b'f' | b's')) {
+            let (mut f, mut s) = (cf.clone(), cs.clone());
+            while !p.at_end() {
+                if p.rest().starts_with(b"fill") {
+                    p.i += 4;
+                    f = read(p, &cf)?;
+                } else if p.rest().starts_with(b"stroke") {
+                    p.i += 6;
+                    s = read(p, &cs)?;
+                } else {
+                    // the C loops here for ever
+                    return None;
+                }
+            }
+            return Some((f, s));
+        }
+        let f = read(p, &cf)?;
+        let s = if p.at_end() { f.clone() } else { read(p, &cs)? };
+        Some((f, s))
+    }
+
     /// `background SPEC`, `pdf:bgcolor SPEC`: the page's background, a
     /// filled rectangle under everything else.
     fn background(&mut self, c: Col) {
@@ -337,7 +468,7 @@ impl<M: Metrics> Builder<'_, M> {
                 self.doc.fonts.map_line(&line);
             }
             b"backgroundcolor" => {
-                if let Some(c) = read_color(&mut p) {
+                if let Some(c) = read_pdf_color(&mut p) {
                     self.background(c);
                 }
             }
@@ -440,20 +571,18 @@ impl<M: Metrics> Builder<'_, M> {
                 self.reset_color();
             }
             b"bcolor" | b"begincolor" => {
-                let Some(f) = read_color(&mut p) else {
+                let Some((f, s)) = self.pdf_colors(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
                 self.doc.colors.push((f.clone(), s.clone()));
                 self.set_colors(Some(f), Some(s));
             }
             b"scolor" | b"setcolor" => {
-                let Some(f) = read_color(&mut p) else {
+                let Some((f, s)) = self.pdf_colors(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
                 match self.doc.colors.last_mut() {
                     Some(top) => *top = (f.clone(), s.clone()),
                     None => self.doc.colors.push((f.clone(), s.clone())),
@@ -465,7 +594,7 @@ impl<M: Metrics> Builder<'_, M> {
                 self.reset_color();
             }
             b"bgcolor" => {
-                if let Some(c) = read_color(&mut p) {
+                if let Some(c) = read_pdf_color(&mut p) {
                     self.background(c);
                 }
             }
@@ -1128,10 +1257,36 @@ mod tests {
         assert_eq!(c("rgb 1 0 0.5"), Some(Col(vec![1.0, 0.0, 0.5])));
         assert_eq!(c("cmyk 0.1 0.8 0.2 0.05").unwrap().0.len(), 4);
         assert_eq!(c("gray 0.5"), Some(Col(vec![0.5])));
-        assert_eq!(c("[1]"), Some(Col(vec![1.0])));
-        assert_eq!(c("[0 0.5 1]"), Some(Col(vec![0.0, 0.5, 1.0])));
         assert_eq!(c("Red"), Some(Col(vec![0.0, 1.0, 1.0, 0.0])));
         assert_eq!(c("hsb 0 1 1"), Some(Col(vec![1.0, 0.0, 0.0])));
+        // spc_util.c's case 6: h = 1 is not red
+        assert_eq!(c("hsb 1 1 1"), Some(Col(vec![1.0, 0.0, 1.0])));
+        // measured (TeX Live 2026 xdvipdfmx): `color push Apricot` is
+        // `0 0.32 0.52 0 k`, `Gray` is `0.5 g`; `grey 0.5`, a bare `0.25`
+        // and arrays are not colours of a `color` special (no colour set)
+        assert_eq!(c("Apricot"), Some(Col(vec![0.0, 0.32, 0.52, 0.0])));
+        assert_eq!(c("Gray"), Some(Col(vec![0.5])));
+        assert_eq!(c("Black"), Some(Col(vec![0.0])));
+        assert_eq!(c("grey 0.5"), None);
+        assert_eq!(c("0.25"), None);
+        assert_eq!(c("[1]"), None);
+        let q = |s: &str| read_pdf_color(&mut Parser::new(s.as_bytes()));
+        assert_eq!(q("[1]"), Some(Col(vec![1.0])));
+        assert_eq!(q("[0 0.5 1]"), Some(Col(vec![0.0, 0.5, 1.0])));
+        assert_eq!(q("0 0.5 1"), Some(Col(vec![0.0, 0.5, 1.0])));
+        // measured: `pdf:bcolor MidnightBlue` is `0.98 0.13 0 0.43 k`
+        assert_eq!(q("MidnightBlue"), Some(Col(vec![0.98, 0.13, 0.0, 0.43])));
+        // measured: `[0.12345 0.0005 0.9996]` is `0.123 0.001 1 rg`
+        assert_eq!(
+            q("[0.12345 0.0005 0.9996]"),
+            Some(Col(vec![0.123, 0.001, 1.0]))
+        );
+        assert_eq!(
+            q("/DeviceCMYK [0 0 0 1]"),
+            Some(Col(vec![0.0, 0.0, 0.0, 1.0]))
+        );
+        assert_eq!(q("[0 1]"), None);
+        assert_eq!(q("[1 0 0"), None);
     }
 
     #[test]
