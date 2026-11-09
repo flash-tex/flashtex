@@ -89,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd crates/flashtex-xetex && cargo build --release --locked --bins --example fonts_line \
-             && cargo test --release --locked --test host --no-run)
+             && cargo test --release --locked --test host --test host_edits --no-run)
       - name: the port's unit tests (no TeX; ICU's bidi vectors among them)
         working-directory: crates/flashtex-xetex
         run: cargo test --release --locked --lib
@@ -219,6 +219,14 @@ jobs:
         run: |
           set -o pipefail
           cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || true
+      - name: "host: tests/host_edits.rs, edit sequences against runs of their own (AUDIT-UHOST)"
+        if: matrix.part == 'host'
+        working-directory: crates/flashtex-xetex
+        run: |
+          set -o pipefail
+          export AUDIT_XELATEX="$(command -v xelatex || true)"
+          [ -n "$AUDIT_XELATEX" ] || unset AUDIT_XELATEX
+          cargo test --release --locked --test host_edits -- --nocapture --test-threads 2 2>&1 | tee "$OUT/host-edits.txt" || true
       - name: report
         if: always()
         run: python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY" || true
