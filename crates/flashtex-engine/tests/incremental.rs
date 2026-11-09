@@ -6790,7 +6790,9 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
 /// (cmsl10, first used there) is recorded and replayed in edits' windows;
 /// the family then becomes `\sffamily` (cmss10, loaded at cmsl10's number),
 /// every other key equal, and the width typeset after it must be cmss10's,
-/// not the slanted word's replayed.
+/// not the slanted word's replayed. (The `\relax` before the call: BOX-MEMO
+/// offers only a call that `big_switch`'s `get_x_token` expands, not one
+/// after a letter, which the main loop's lookahead expands.)
 #[test]
 fn a_call_measuring_a_font_loaded_at_another_fonts_number() {
     let Some(e) = env() else {
@@ -6807,7 +6809,7 @@ fn a_call_measuring_a_font_loaded_at_another_fonts_number() {
             "\\documentclass{{article}}\n\
              \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
              \\begin{{document}}\n{before}Some {word} text.\n\n\
-             {{{shape} A\\measure{{Hello}}\\the\\dimen1\\par}}\n\n{after}\\end{{document}}\n"
+             {{{shape} A\\relax\\measure{{Hello}}\\the\\dimen1\\par}}\n\n{after}\\end{{document}}\n"
         )
     };
     let mut h = Host::start_env(
