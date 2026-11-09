@@ -7,15 +7,30 @@
 # oracle or glyph list fails it; it never passes by skipping.
 name: unicode-tounicode-mac
 
+#
+# WHEN (as unicode-m3.yml since #2157): a pull request that touches these
+# paths, main after such a change lands, and a merge-queue entry whose
+# change touches them. There is no push run on feature branches; run one by
+# hand with `gh workflow run unicode-tounicode-mac.yml --ref <branch>`.
+# merge_group has no paths filter, so the `paths` job below compares the
+# entry with its base and the Mac job runs only when one of these paths
+# changed. Keep the three lists equal.
 on:
   workflow_dispatch:
   push:
-    branches-ignore: [main, "gh-readonly-queue/**"]
+    branches: [main]
     paths:
       - ".github/workflows/unicode-tounicode-mac.yml"
       - "crates/flashtex-xetex/src/out/**"
       - "crates/flashtex-xetex/tests/tounicode_oracle.rs"
       - "crates/pdf/src/**"
+  pull_request:
+    paths:
+      - ".github/workflows/unicode-tounicode-mac.yml"
+      - "crates/flashtex-xetex/src/out/**"
+      - "crates/flashtex-xetex/tests/tounicode_oracle.rs"
+      - "crates/pdf/src/**"
+  merge_group:
 
 permissions:
   contents: read
@@ -31,8 +46,38 @@ env:
   HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
 jobs:
+  # Whether the Mac job runs: always, except for a merge-queue entry that
+  # changes none of the paths above (GitHub's compare of its base and head;
+  # with 300 files or more, the API's limit, it runs).
+  paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.p.outputs.run }}
+    steps:
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != merge_group ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq '.files[].filename')
+          n=$(printf '%s\n' "$files" | grep -c . || true)
+          if [ "$n" -ge 300 ] || printf '%s\n' "$files" | grep -qE \
+              '^(\.github/workflows/unicode-tounicode-mac\.yml|crates/flashtex-xetex/src/out/|crates/flashtex-xetex/tests/tounicode_oracle\.rs|crates/pdf/src/)'; then
+            echo run=true >> "$GITHUB_OUTPUT"
+          else
+            echo "no ToUnicode path among the entry's $n changed files: the Mac job is skipped"
+            echo run=false >> "$GITHUB_OUTPUT"
+          fi
+
   tounicode:
     name: "ToUnicode: Geeza Pro against xdvipdfmx (macOS)"
+    needs: paths
+    if: needs.paths.outputs.run == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
