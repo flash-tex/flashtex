@@ -229,6 +229,11 @@ later.
   `pool_ptr`, `hash_used` changed).
 - **A local assignment at the call's own group level.** The save stack below the call must be
   untouched; inside its groups anything goes.
+- **A value too long to key.** A token list longer than 65,536 tokens, or a shape longer than
+  65,536 words, is not kept as a key value. A call is never offered for replay when its body, an
+  argument, `\parshape` or an e-TeX penalty array is that long (a `Long` miss). A recording is
+  abandoned when it reads a `\toks` register that long. Each such value used to be one marker,
+  which every other over-long value matched (#2194).
 - **Output of any kind** (log and terminal length, `file_offset`, `term_offset`). Errors (`history`,
   `error_count`). `\shipout`, `\end`, `\dump`, interaction-mode changes.
 - **pdfTeX's C-part state** (`src/pdftex/`, `CState`). No check at the end compares it, and none

@@ -1444,6 +1444,21 @@ impl Globals {
         )
     }
 
+    /// Is a shape in K2 (`\\parshape`, e-TeX's penalty arrays) longer than
+    /// `MAX_LIST` (`-2` in K2, #2194)?
+    fn bm_long_shape(&self) -> bool {
+        std::iter::once(PAR_SHAPE_LOC)
+            .chain(ETEX_PEN_BASE..ETEX_PENS)
+            .any(|p| {
+                // (`bm_shape_words`'s test, without the copy)
+                let e = self.bm_eq(p).hh().rh();
+                e != 0 && {
+                    let n = self.bm_info(e);
+                    n < 0 || (2 * n + 1) as usize > MAX_LIST
+                }
+            })
+    }
+
     /// K2: every `eqtb` entry from `glue_base` to `eqtb_size` but the box
     /// registers, pointers by what they point to.
     fn bm_k2(&self) -> Vec<i32> {
@@ -1494,7 +1509,10 @@ impl Globals {
                                 take(1) == Some(&[v.len() as i32][..])
                                     && take(v.len()) == Some(&v[..])
                             }
-                            None => take(1) == Some(&[-2][..]),
+                            // a shape longer than `MAX_LIST` is `-2` in a
+                            // kept K2, which every other such shape would
+                            // match: it never matches (#2194)
+                            None => false,
                         };
                         if !ok {
                             return false;
@@ -1824,6 +1842,15 @@ impl Globals {
             return;
         }
         let v = self.bm_reg_value(r);
+        // a token list longer than `MAX_LIST` is `-2`, which every other
+        // such list would match: never part of a key (#2194)
+        let toks = match r {
+            RegId::Eqtb(p) => (TOKS_BASE..TOKS_BASE + 256).contains(&p),
+            RegId::Sa(t, _) => t == TOK_VAL,
+        };
+        if toks && v == [-2] {
+            return self.bm_abort("Long");
+        }
         self.bm_with_rec(|rec| rec.kr.push((r, v)));
     }
 
@@ -2462,6 +2489,12 @@ impl Globals {
             return self.bm_miss("Preconditions");
         }
         let k1 = self.bm_k1(cs, n);
+        // the body or an argument longer than `MAX_LIST` is `-2` (no token,
+        // length or other marker is), which every other such list would
+        // match: such a call is never a key, and is not recorded (#2194)
+        if k1.contains(&-2) || self.bm_long_shape() {
+            return self.bm_miss("Long");
+        }
         let ctx = self.bm_ctx(scanner);
         // K1 and the context select the variants (by their hash, then in
         // full); K2 and the rest are compared in place, without a copy of
