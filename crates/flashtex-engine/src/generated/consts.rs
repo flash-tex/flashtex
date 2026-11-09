@@ -874,6 +874,12 @@ pub const max_dead_cycles_code: i32 = 40i32;
 // §254
 pub const month_code: i32 = 22i32;
 // §254
+pub const mubyte_in_code: i32 = 61i32;
+// §254
+pub const mubyte_log_code: i32 = 63i32;
+// §254
+pub const mubyte_out_code: i32 = 62i32;
+// §254
 pub const new_line_char_code: i32 = 49i32;
 // §254
 pub const output_penalty_code: i32 = 39i32;
@@ -977,6 +983,8 @@ pub const show_box_breadth_code: i32 = 24i32;
 pub const show_box_depth_code: i32 = 25i32;
 // §254
 pub const show_stream_code: i32 = 60i32;
+// §254
+pub const spec_out_code: i32 = 64i32;
 // §254
 pub const synctex_code: i32 = 113i32;
 // §254
@@ -1428,7 +1436,7 @@ pub const or_code: i32 = 4i32;
 // §546
 pub const format_default_length: i32 = 20i32;
 // §546
-pub const format_extension: i32 = 939i32;
+pub const format_extension: i32 = 950i32;
 // §570
 pub const ext_tag: i32 = 3i32;
 // §570
@@ -1662,7 +1670,7 @@ pub const real_font_type: i32 = 2i32;
 // §703
 pub const virtual_font_type: i32 = 1i32;
 // §705
-pub const non_existent_path: i32 = 1076i32;
+pub const non_existent_path: i32 = 1088i32;
 // §710
 pub const long_char: i32 = 242i32;
 // §710
@@ -1760,7 +1768,7 @@ pub const total_mathsy_params: i32 = 22i32;
 // §877
 pub const total_mathex_params: i32 = 13i32;
 // §940
-pub const math_spacing: i32 = 1302i32;
+pub const math_spacing: i32 = 1314i32;
 // §946
 pub const align_stack_node_size: i32 = 6i32;
 // §956

@@ -1,9 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
-     Running unittests src/lib.rs (crates/document-runtime/target/debug/deps/flashtex_document_runtime-152b1eeeef1fde5a)
-
-running 1 test
-{"entered_serde_before_shutdown":true,"framed_bytes":8388608,"malformed_tail":true,"process_peak":"VmHWM:\t   11976 kB","release_to_join_ms":43.584702,"scope":"test process, explicit gate wait excluded; no elapsed-time guarantee","shutdown_waited_for_release":true}
-test decode_lane::tests::near_limit_shutdown_inside_serde_joins_after_explicit_release ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.07s
-

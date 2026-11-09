@@ -277,7 +277,7 @@ final class EngineV3PageCapture {
                     if current, let img = view.installedImage(i) {
                         if Self.writePNG(img, to: self.config.out.appendingPathComponent(file)) { name = file; source = "pane" }
                     } else if let prepared = model.engineV3.pages[i],
-                              let img = DL3Renderer.rasterizeToSurface(prepared, forms: model.engineV3.forms, scale: 2, appearance: .light)
+                              let img = DL3Renderer.rasterizeToSurface(prepared, forms: model.engineV3.forms(forPage: i), scale: 2, appearance: .light)
                                   .flatMap({ DL3Renderer.image(of: $0) }) {
                         if Self.writePNG(img, to: self.config.out.appendingPathComponent(file)) { name = file; source = "renderer" }
                     }

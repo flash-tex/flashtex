@@ -114,6 +114,12 @@ pub struct TextDoc {
     /// Every applied operation, in application order (a causal order).
     log: Vec<TextOp>,
     bytes: usize,
+    /// Bytes this document may still add for its project's text cap
+    /// ([`super::limits::MAX_PROJECT_TEXT_BYTES`]); the project sets it
+    /// before every use. Unbounded for a document on its own.
+    room: usize,
+    /// How far below `room` this replica's own inserts stop (§2.4a).
+    local_headroom: usize,
 }
 
 impl TextDoc {
@@ -126,7 +132,24 @@ impl TextDoc {
             sv: StateVector::default(),
             log: Vec::new(),
             bytes: 0,
+            room: usize::MAX,
+            local_headroom: 0,
         }
+    }
+
+    /// Stored UTF-8 bytes, tombstones included.
+    pub fn stored_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn set_room(&mut self, room: usize, local_headroom: usize) {
+        self.room = room;
+        self.local_headroom = local_headroom;
+    }
+
+    /// Whether this replica's own insert of `n` bytes fits (§2.4a).
+    fn local_fits(&self, n: usize) -> bool {
+        n <= self.room - self.local_headroom.min(self.room)
     }
 
     pub fn replica(&self) -> u64 {
@@ -215,7 +238,7 @@ impl TextDoc {
     /// operation to broadcast. `None` if `pos` is past the end or `text`
     /// is empty.
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<TextOp> {
-        if text.is_empty() {
+        if text.is_empty() || !self.local_fits(text.len()) {
             return None;
         }
         let i = self.raw_index_of_visible(pos)?;
@@ -309,6 +332,9 @@ impl TextDoc {
                 if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES {
                     return Err(CollabError::DocumentFull);
                 }
+                if content.len() > self.room {
+                    return Err(CollabError::ProjectFull);
+                }
                 for (k, ch) in content.chars().enumerate() {
                     let k = k as u64;
                     let item = Item {
@@ -325,6 +351,7 @@ impl TextDoc {
                     self.integrate(item);
                 }
                 self.bytes += content.len();
+                self.room = self.room.saturating_sub(content.len());
             }
             TextOp::Delete { id, target, len } => {
                 for k in 0..*len {
@@ -526,7 +553,9 @@ impl TextDoc {
                 .iter()
                 .map(|&id| self.items[self.index_of(id).unwrap()].ch)
                 .collect();
-            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES {
+            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES
+                || !self.local_fits(content.len())
+            {
                 continue;
             }
             let op = TextOp::Insert {
