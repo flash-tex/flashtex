@@ -490,10 +490,14 @@ impl Globals {
             && (e as usize) < self.mem.len()
     }
 
-    /// The tokens of the list starting at `p` (after its reference count).
+    /// The tokens of the list starting at `p` (after its reference count),
+    /// all of them: a list in `mem` has fewer nodes than `mem` has words, so
+    /// the bound only stops a cycle. A shorter bound recorded a long value
+    /// cut short and compared two long lists by their first tokens only, so
+    /// a check passed that a replay would get wrong (the pdfTeX side: #2194).
     pub(crate) fn intr_tokens(&self, mut p: i32) -> Vec<i32> {
         let mut v = vec![];
-        while p >= 0 && (p as usize) < self.mem.len() && v.len() < 1_000_000 {
+        while p >= 0 && (p as usize) < self.mem.len() && v.len() < self.mem.len() {
             let w = self.mem[p as usize].hh();
             v.push(w.lh());
             p = w.rh();
