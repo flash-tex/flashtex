@@ -129,6 +129,10 @@ pub struct Built {
     /// Its `PAGE`/`FORM` body (`out::encode`), once made: a resident run
     /// restarted after this page sends it again (`Output::resume`).
     pub frame: std::sync::OnceLock<Vec<u8>>,
+    /// The digest of `frame` (`out::digest`), once made: what an
+    /// incremental client is known to hold is compared with it
+    /// (`out::FrameDigests`).
+    pub digest: std::sync::OnceLock<u64>,
     /// A page: how many forms had been made when it shipped.
     pub forms_at: usize,
     /// A resident run's page: what it was built from, so that a later run
