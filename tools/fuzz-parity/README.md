@@ -142,6 +142,49 @@ into the TeX tree and is not something the two engines share.
 Random numbers: every `\pdfuniformdeviate`/`\pdfnormaldeviate` the grammar
 emits follows a `\pdfsetrandomseed`, and the preamble sets one too (pdfTeX seeds from the clock, and a deviate in an argument or a `\write` can be expanded before the `\pdfsetrandomseed` beside it runs).
 
+## The alignment and output-routine grammar (`--grammar align`)
+
+`gen_align.py` is a second grammar, aimed only at the parts of tex.web the
+hand audits keep finding holes in: alignments (Part 37) and the page
+builder and output routines (Parts 44-46). It serves both fuzzers:
+
+```sh
+python3 tools/fuzz-parity/fuzz.py --grammar align --candidate BIN --seeds 0:600 --workers 2 --out /tmp/fa
+python3 tools/fuzz-parity/minimize.py --grammar align --candidate BIN --seed 123 --out min.tex
+python3 tools/fuzz-replay/fuzz_replay.py run --grammar align --fonts --engine BIN --seeds 0-2999 --jobs 2 --nice --out /tmp/far
+```
+
+- **Parity documents** (`generate`): this tool's preamble, then 3-10
+  chunks, each an alignment chunk or a page chunk. Alignments: `\halign`
+  and `\valign` with `to`/`spread`; templates with `\hfil`, `\span`'d
+  macros, `\tabskip` in u_j, two `#`s or none; periodic preambles;
+  `\span`, `\omit`, `\noalign`, `\cr`, `\crcr`, a `\let`'d `\cr` or `&`,
+  `\span\mycr` ending a preamble (a preamble does not expand macros);
+  `\everycr`; nested alignments; display alignments; `\lastbox`,
+  `\unskip`, `\vsplit` on the result; leaders, `\pdfsavepos` with a
+  `\write` of the position, `\special` and `\pdfliteral` in cells; error
+  recovery (a misplaced `&`, `\cr`, `\noalign`, `\omit`, extra tabs).
+  Pages: output routines that show, split, copy, put back or ship
+  `\box255`, read the marks (`\topmark` & co., e-TeX's `\marks`, the split
+  marks), `\outputpenalty`, `\insertpenalties`, `\deadcycles` and the page
+  dimensions, and set `\holdinginserts` or `\vsize`; page material with
+  inserts and their `\count`/`\dimen`/`\skip`, plain.tex's footnotes and
+  floats, marks, `\vadjust`, penalties down to -20000, `\pagediscards`.
+  Material an output routine adds to the contributions (an insert, a mark,
+  a copy of the page) is bounded by `\count6`, and an output routine that
+  puts `\box255` back does not also ship it: either loops for ever.
+- **Replay cases** (`generate_replay`): no plain.tex; `\measure` holds
+  alignment or page items as a measure call (BOX-MEMO.md §2: local boxes in
+  a group, results through `\global` registers), as a draw call (§10.3)
+  made in `\hbox`es, `\halign` cells, an output routine or the main
+  vertical list, or as a pure call (D9's kind) or a cell call made inside
+  cells, templates and `\everycr`'s `\noalign`, after `\relax` (at a cell's
+  start the `\omit` look-ahead, and after `\kern0pt` its look-ahead for a
+  space, expand the call before `big_switch` sees it). The cases avoid
+  errors and box warnings, which abandon a recording. Between calls the
+  document changes `\everycr`, `\pre`, `\tabskip`, `\endrow`, the output
+  routine, `\hsize` and `\vsize`.
+
 ## Minimise
 
 ```sh

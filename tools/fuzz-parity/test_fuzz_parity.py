@@ -21,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import fuzz  # noqa: E402
 import gen  # noqa: E402
+import gen_align  # noqa: E402
 import minimize  # noqa: E402
 
 SMOKE_SEEDS = (0, 1, 2, 7)
@@ -69,6 +70,43 @@ class GeneratorTest(unittest.TestCase):
         d = gen.generate(3, latex=False)
         chunks = minimize.split_body(d.render())
         self.assertEqual(len(chunks), len(d.chunks) + 1)  # + preamble remainder
+
+
+class AlignGeneratorTest(unittest.TestCase):
+    """gen_align: the alignment and output-routine grammar (--grammar align)."""
+
+    @staticmethod
+    def braces_balanced(text):
+        depth = 0
+        for ch in text.replace("\\{", "").replace("\\}", ""):
+            depth += {"{": 1, "}": -1}.get(ch, 0)
+            if depth < 0:
+                return False
+        return depth == 0
+
+    def test_parity_documents(self):
+        for s in range(60):
+            d = gen_align.generate(s)
+            t = d.render()
+            self.assertEqual(t, gen_align.generate(s).render())
+            self.assertIn("\\input plain", t)
+            self.assertTrue(t.rstrip().endswith("\\end"))
+            for c in d.chunks:
+                self.assertTrue(self.braces_balanced(c), (s, c))
+            t.encode("latin-1")
+
+    def test_replay_cases(self):
+        texts = set()
+        for s in range(60):
+            for fonts in (False, True):
+                fs = gen_align.generate_replay(s, fonts=fonts)
+                self.assertEqual(fs, gen_align.generate_replay(s, fonts=fonts))
+                self.assertEqual(sorted(fs), ["t.tex", "u.tex"])
+                self.assertIn("\\def\\measure", fs["t.tex"])
+                self.assertTrue(fs["t.tex"].rstrip().endswith("\\end"))
+                self.assertTrue(self.braces_balanced(fs["t.tex"]), s)
+                texts.add(fs["t.tex"])
+        self.assertEqual(len(texts), 120)
 
 
 class DdminTest(unittest.TestCase):
