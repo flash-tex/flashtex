@@ -69,25 +69,40 @@ final class ProjectScaffoldState {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    /// The template files that are open in this window (the entry, or an
-    /// open member), by template path, under `root`.
+    /// Whether `a` and `b` are the same file or folder on disk, by file
+    /// identity: APFS is case-insensitive by default, so `~/P/Thesis` is
+    /// `~/P/thesis`, which a path comparison (even with symlinks resolved)
+    /// misses. An item that is not on disk is never the same.
+    static func sameItem(_ a: URL, _ b: URL) -> Bool {
+        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard let x = (try? a.resourceValues(forKeys: key))?.fileResourceIdentifier,
+              let y = (try? b.resourceValues(forKeys: key))?.fileResourceIdentifier else { return false }
+        return x.isEqual(y)
+    }
+
+    /// The template files under `root` that are open in this window (the
+    /// entry, or an open member), by template path.
     private func openFiles(_ paths: [String], under root: URL) -> [String] {
-        let entry = model.documentURL?.standardizedFileURL.resolvingSymlinksInPath()
-        let projectRoot = model.project.projectRoot?.standardizedFileURL.resolvingSymlinksInPath()
+        let open = openDocumentURLs()
         return paths.filter { rel in
-            let url = root.appendingPathComponent(rel).standardizedFileURL.resolvingSymlinksInPath()
-            if url == entry { return true }
-            guard let projectRoot, url.path.hasPrefix(projectRoot.path + "/") else { return false }
-            return model.project.isOpen(String(url.path.dropFirst(projectRoot.path.count + 1)))
+            let url = root.appendingPathComponent(rel)
+            return open.contains { Self.sameItem(url, $0) }
         }
     }
 
-    /// Whether the open document at template path `rel` has unsaved edits.
-    private func openFileIsDirty(_ rel: String, under root: URL) -> Bool {
-        let url = root.appendingPathComponent(rel).standardizedFileURL.resolvingSymlinksInPath()
-        if url == model.documentURL?.standardizedFileURL.resolvingSymlinksInPath() { return model.project.isDirty(model.project.entryPath) }
-        guard let projectRoot = model.project.projectRoot?.standardizedFileURL.resolvingSymlinksInPath() else { return false }
-        return model.project.isDirty(String(url.path.dropFirst(projectRoot.path.count + 1)))
+    /// Every open document's file (the entry and each member).
+    private func openDocumentURLs() -> [URL] {
+        guard let entry = model.documentURL else { return [] }
+        guard let projectRoot = model.project.projectRoot else { return [entry] }
+        let members = model.documents.map(\.path).filter { $0 != model.project.entryPath }
+        return [entry] + members.map { projectRoot.appendingPathComponent($0) }
+    }
+
+    /// Whether creating the project in `root` writes into this window's open
+    /// project: `root` is its folder, or one of the template files is open.
+    private func writesIntoOpenProject(_ root: URL, conflicts: [String]) -> Bool {
+        if let projectRoot = model.project.projectRoot, Self.sameItem(root, projectRoot) { return true }
+        return !openFiles(conflicts, under: root).isEmpty
     }
 
     @ObservationIgnored unowned let model: ShellModel
@@ -137,17 +152,27 @@ final class ProjectScaffoldState {
         var keptOpen: [String] = []
         let name = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
         let conflicts = ProjectScaffold.conflicts(in: folder, name: name, template: template)
-        if !conflicts.isEmpty {
-            // A template file that is open in this window (New Project into
-            // the open project's own folder): never replaced under unsaved
-            // edits (the save-first/discard flows run after the write, too
-            // late), and its current text is kept before it is overwritten.
-            let root = folder.appendingPathComponent(name)
-            let open = openFiles(conflicts, under: root)
-            if let dirty = open.first(where: { openFileIsDirty($0, under: root) }) {
-                note = "Not created: \(dirty) is open here with unsaved edits and would be replaced. Save or discard them first, or choose another folder or name."
+        let root = folder.appendingPathComponent(name)
+        // New Project into the open project's own folder: nothing is written
+        // while any of its documents has unsaved edits, a template file or any
+        // other member (the open below refused only after the template had
+        // replaced main.tex). Save first saves them here, before any write; a
+        // discard is not taken over a write into the same project.
+        if model.hasUnsavedDocuments, writesIntoOpenProject(root, conflicts: conflicts) {
+            guard dirty == .saveFirst else {
+                note = "Not created: \(model.unsavedDocumentsDescription) has unsaved edits and the project would be written into its folder. "
+                    + "Save or discard them first, or choose another folder or name."
                 return .refused("open with unsaved edits")
             }
+            if case .refused = model.authorizeProjectReplacement(.saveFirst, before: "creating the project") {
+                note = "Not created: " + (model.captureNote ?? "the unsaved edits could not be saved.")
+                return .refused("save failed")
+            }
+        }
+        if !conflicts.isEmpty {
+            // A template file that is open in this window (clean by now): its
+            // current text is kept before it is overwritten.
+            let open = openFiles(conflicts, under: root)
             guard askOverwrite(conflicts, open: open) else { note = "Not created: \(conflicts.joined(separator: ", ")) kept."; return .cancelled }
             for rel in open {
                 let url = root.appendingPathComponent(rel)

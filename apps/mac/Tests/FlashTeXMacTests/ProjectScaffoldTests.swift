@@ -144,6 +144,85 @@ final class ProjectScaffoldTests: XCTestCase {
         m.dirtySnapshots.remove(for: main)
     }
 
+    /// New Project into the open project's folder while a member that is
+    /// not a template file has unsaved edits: refused before any file is
+    /// written. Before, only dirty template files were checked, so main.tex
+    /// was replaced and the open refused afterwards ("The files were
+    /// written, but…"), leaving the window's clean main.tex over a changed
+    /// file. Save first saves the member up front, then creates.
+    func testNewProjectOverTheOpenProjectRefusesADirtyMemberBeforeWriting() async throws {
+        let m = model()
+        let state = m.scaffold
+        state.folder = tmp
+        state.projectName = "thesis"
+        state.template = .blankArticle
+        state.confirmOverwrite = { _ in XCTFail("no conflict expected"); return false }
+        let main = tmp.appendingPathComponent("thesis/main.tex")
+        let notes = tmp.appendingPathComponent("thesis/notes.tex")
+        XCTAssertEqual(state.createProject(), .opened(main))
+        let mine = "\\documentclass{article}\n\\begin{document}\n\\input{notes}\n\\end{document}\n"
+        m.updateActiveText(mine)
+        XCTAssertTrue(m.saveTex())
+        try "Notes.\n".write(to: notes, atomically: true, encoding: .utf8)
+        _ = await m.project.openDiscoveredIncludes()
+        XCTAssertTrue(m.project.isOpen("notes.tex"))
+        m.project.switchDocument(to: "notes.tex")
+        m.updateActiveText("Notes, unsaved.\n")
+        XCTAssertFalse(m.project.isDirty(m.project.entryPath))
+        XCTAssertTrue(m.project.isDirty("notes.tex"))
+
+        state.confirmOverwrite = { _ in XCTFail("refused before asking"); return true }
+        XCTAssertEqual(state.createProject(), .refused("open with unsaved edits"))
+        XCTAssertEqual(try String(contentsOf: main, encoding: .utf8), mine, "nothing written")
+        XCTAssertEqual(try String(contentsOf: notes, encoding: .utf8), "Notes.\n")
+        XCTAssertEqual(state.createProject(dirty: .discard), .refused("open with unsaved edits"), "a discard is not taken here either")
+        XCTAssertEqual(try String(contentsOf: main, encoding: .utf8), mine, "nothing written")
+
+        // Save first: the member is saved before the template is written.
+        var asked: [String] = []
+        state.confirmOverwrite = { asked = $0; return true }
+        XCTAssertEqual(state.createProject(dirty: .saveFirst), .opened(main))
+        XCTAssertEqual(asked, ["main.tex"])
+        XCTAssertEqual(try String(contentsOf: notes, encoding: .utf8), "Notes, unsaved.\n", "saved first")
+        XCTAssertNotEqual(try String(contentsOf: main, encoding: .utf8), mine, "the template replaced it")
+        XCTAssertEqual(m.dirtySnapshots.read(for: main)?.text, mine, "the old text is kept")
+        m.dirtySnapshots.remove(for: main)
+    }
+
+    /// The open-file check matches by file identity: on a case-insensitive
+    /// volume (APFS's default) New Project named `Thesis` over the open
+    /// `thesis/main.tex` is the same file. A path comparison missed it, so
+    /// the dirty refusal and the snapshot were skipped and the text was lost.
+    func testNewProjectMatchesTheOpenProjectByFileIdentityNotPathCase() throws {
+        let m = model()
+        let state = m.scaffold
+        state.folder = tmp
+        state.projectName = "thesis"
+        state.template = .blankArticle
+        state.confirmOverwrite = { _ in XCTFail("no conflict expected"); return false }
+        let main = tmp.appendingPathComponent("thesis/main.tex")
+        XCTAssertEqual(state.createProject(), .opened(main))
+        guard FileManager.default.fileExists(atPath: tmp.appendingPathComponent("THESIS/main.tex").path) else {
+            throw XCTSkip("the temporary volume is case-sensitive")
+        }
+        m.updateActiveText("My thesis.\n")
+        XCTAssertTrue(m.saveTex())
+        m.updateActiveText("My thesis, unsaved.\n")
+        state.projectName = "Thesis"
+        state.confirmOverwrite = { _ in XCTFail("refused before asking"); return true }
+        XCTAssertEqual(state.createProject(), .refused("open with unsaved edits"))
+        XCTAssertEqual(try String(contentsOf: main, encoding: .utf8), "My thesis.\n", "nothing written")
+
+        m.updateActiveText("My thesis.\n")
+        XCTAssertFalse(m.isDirty)
+        state.confirmOverwrite = { _ in true }
+        let opened = tmp.appendingPathComponent("Thesis/main.tex")
+        XCTAssertEqual(state.createProject(), .opened(opened))
+        XCTAssertNotEqual(try String(contentsOf: main, encoding: .utf8), "My thesis.\n", "the template replaced it")
+        XCTAssertEqual(m.dirtySnapshots.read(for: opened)?.text, "My thesis.\n", "the old text is kept")
+        m.dirtySnapshots.remove(for: opened)
+    }
+
     // MARK: new file names
 
     func testNewFilePathIsRootedAndGetsTheTexExtension() {
