@@ -6849,3 +6849,41 @@ fn a_checkpoint_just_after_a_changed_lookup_is_no_restart_point() {
     std::fs::remove_file(dir.join("extra-probe.tex")).unwrap();
     compile_and_check(&e, &mut h, &dir, &[], "and goes again");
 }
+
+/// A file `\input` twice, text appended to it: the first reading, closed
+/// at the file's old end, read that end, so a checkpoint in the second
+/// reading is no restart point (review of #1551). The run restarts before
+/// the first reading, and both have the new text.
+#[test]
+fn an_earlier_reading_closed_at_the_old_end_saw_the_appended_text() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("rs-closed-at-end");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\n\
+               \\input{chap}\n\n\\end{document}\n";
+    let chap: String = (0..60).map(|i| para(i, "lorem")).collect();
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", doc), ("chap.tex", &chap)],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("chap.tex", &format!("{chap}Paragraph appended.\n"))],
+        "text appended to a file read twice",
+    );
+}
