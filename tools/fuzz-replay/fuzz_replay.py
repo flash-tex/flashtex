@@ -196,12 +196,12 @@ def write_case(d, files, tfms=()):
         shutil.copy(t, d)
 
 
-def find_tfms():
+def find_tfms(names=("cmr10.tfm", "cmr7.tfm")):
     """cmr10.tfm and cmr7.tfm from kpsewhich, or () when TeX Live is absent
     (the generator then makes no font items). Data only: the engine under
     test reads them from the case directory."""
     paths = []
-    for n in ("cmr10.tfm", "cmr7.tfm"):
+    for n in names:
         try:
             p = subprocess.run(["kpsewhich", n], capture_output=True, text=True,
                                timeout=10).stdout.strip()
@@ -237,6 +237,8 @@ def load_align():
 def generate(seed, fonts, grammar="default"):
     if grammar == "align":
         return load_align().generate_replay(seed, fonts=fonts)
+    if grammar == "align-plain":
+        return load_align().generate_replay_plain(seed)
     return gen.generate(seed, fonts=fonts)
 
 
@@ -269,8 +271,12 @@ def cmd_run(a):
         except OSError:  # already at the lowest priority, or not permitted
             pass
     tfms = find_tfms() if a.fonts else ()
-    if a.grammar == "align":
+    if a.grammar in ("align", "align-plain"):
         load_align()
+    if a.grammar == "align-plain":
+        # plain.tex, hyphen.tex and its fonts' TFMs, copied like the TFMs
+        tfms = find_tfms(load_align().PLAIN_FILES)
+        a.fonts = True
     fonts = bool(tfms)
     os.makedirs(a.out, exist_ok=True)
     work = tempfile.mkdtemp(prefix="fr-work-", dir=a.work or None)
@@ -340,8 +346,9 @@ def main(argv=None):
     r.add_argument("--fonts", action="store_true",
                    help="copy cmr10/cmr7 from kpsewhich and generate font items")
     r.add_argument("--nice", action="store_true")
-    r.add_argument("--grammar", choices=("default", "align"), default="default",
-                   help="align: tools/fuzz-parity/gen_align.py's replay cases")
+    r.add_argument("--grammar", choices=("default", "align", "align-plain"), default="default",
+                   help="align: tools/fuzz-parity/gen_align.py's replay cases; align-plain: "
+                        "its plain.tex documents, which fuzz-parity's fuzz.py also runs")
     r.add_argument("--quiet", action="store_true")
     c = sp.add_parser("check")
     c.add_argument("--engine", required=True)

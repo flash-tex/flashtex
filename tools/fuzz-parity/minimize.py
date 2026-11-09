@@ -106,7 +106,7 @@ def main(argv=None):
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--any", action="store_true")
-    ap.add_argument("--grammar", choices=("default", "align"), default="default")
+    ap.add_argument("--grammar", choices=("default", "align", "align-plain"), default="default")
     ap.add_argument("--formats", default=None)
     args = ap.parse_args(argv)
     if args.formats:
@@ -115,8 +115,8 @@ def main(argv=None):
     args.candidate = os.path.abspath(args.candidate)
     fuzz.cap_output()
     if args.seed is not None:
-        mod = gen_align if args.grammar == "align" else gen
-        text = mod.generate(args.seed, latex=None if args.formats else False).render()
+        mod = {"align": gen_align.generate, "align-plain": gen_align.generate_plain}.get(args.grammar, gen.generate)
+        text = mod(args.seed, latex=None if args.formats else False).render()
     else:
         with open(args.tex, encoding="latin-1") as fh:
             text = fh.read()

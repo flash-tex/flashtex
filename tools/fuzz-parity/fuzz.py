@@ -36,7 +36,9 @@ import gen  # noqa: E402
 import gen_align  # noqa: E402
 
 # --grammar: which generator makes the documents.
-GRAMMARS = {"default": gen, "align": gen_align}
+GRAMMARS = {"default": gen, "align": gen_align,
+            # the documents fuzz_replay.py --grammar align-plain also runs
+            "align-plain": type("AlignPlain", (), {"generate": staticmethod(gen_align.generate_plain)})}
 
 _spec = importlib.util.spec_from_file_location(
     "lockstep_run", os.path.join(HERE, "..", "lockstep", "run.py"))
@@ -227,7 +229,8 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--grammar", choices=sorted(GRAMMARS), default="default",
-                    help="align: gen_align.py (alignments, page builder, output routines)")
+                    help="align: gen_align.py (alignments, page builder, output routines); "
+                         "align-plain: its documents with \\measure calls, which fuzz_replay.py also runs")
     ap.add_argument("--formats", default=None,
                     help="dir holding the candidate's own pdflatex.fmt; without it no LaTeX documents")
     args = ap.parse_args(argv)

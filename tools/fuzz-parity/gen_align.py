@@ -467,6 +467,66 @@ def generate(seed, nchunks=None, latex=None):
     return gen.Doc(seed, pre, chunks, pdf)
 
 
+# plain.tex, hyphen.tex and every font plain.tex loads or preloads (a
+# replay case reads these from its own directory)
+PLAIN_FILES = ("plain.tex", "hyphen.tex") + tuple(n + ".tfm" for n in (
+    "cmbsy10", "cmbx10", "cmbx5", "cmbx6", "cmbx7", "cmbx8", "cmbx9", "cmcsc10",
+    "cmdunh10", "cmex10", "cmmi10", "cmmi5", "cmmi6", "cmmi7", "cmmi8", "cmmi9",
+    "cmmib10", "cmr10", "cmr5", "cmr6", "cmr7", "cmr8", "cmr9", "cmsl10",
+    "cmsl8", "cmsl9", "cmsltt10", "cmss10", "cmssbx10", "cmssi10", "cmssq8", "cmssqi8",
+    "cmsy10", "cmsy5", "cmsy6", "cmsy7", "cmsy8", "cmsy9", "cmti10", "cmti7",
+    "cmti8", "cmti9", "cmtt10", "cmtt8", "cmtt9", "cmu10", "manfnt"))
+
+
+def generate_plain(seed, nchunks=None, latex=None):
+    """A document both fuzzers run (`--grammar align-plain`): INITEX +
+    plain.tex, DVI (a replay case reads only PLAIN_FILES, copied into its
+    directory, so no font map), a `\\measure` drawing or measuring an
+    alignment, and calls of it between and inside the chunks. fuzz.py
+    compares it with pdfTeX; fuzz_replay.py runs it with BOX-MEMO and D9
+    off, on and verify: four ways for one document."""
+    rng = random.Random(seed)
+    a = A(rng, plain=True, fonts=True)
+    pre = ("\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\\input plain\n\\pdfoutput=0 \\scrollmode\n"
+           "\\showboxdepth=10000 \\showboxbreadth=10000 \\tracingonline=1\n"
+           "\\hbadness=10000 \\vbadness=10000 \\hfuzz=\\maxdimen \\vfuzz=\\maxdimen\n" + PARITY_SETUP)
+    a.quiet = True
+    if a.chance(0.5):
+        body = a.alignment(wrap=True)
+        kind = "draw"
+    else:
+        body = ("\\begingroup\\setbox0%s\\global\\dimen1=\\wd0 \\global\\dimen2=\\ht0 \\endgroup"
+                % a.alignment(wrap=True))
+        kind = "measure"
+    a.quiet = False
+    pre += "\\def\\measure{%s}%%\n" % body.replace("#", "##")
+    if kind == "draw":
+        calls = ["\\setbox4\\hbox{\\measure}\\message{[\\the\\wd4/\\the\\ht4]}",
+                 "\\setbox4\\vbox{\\halign{#\\cr\\relax\\measure\\cr\\relax\\measure\\cr}}\\message{[\\the\\ht4]}",
+                 "\\noindent\\hbox{\\measure}\\par", "\\line{\\hfil\\hbox{\\measure}}"]
+    else:
+        calls = ["\\measure\\message{[\\the\\dimen1/\\the\\dimen2]}",
+                 "\\setbox4\\hbox{\\measure}\\message{[\\the\\dimen1]}",
+                 "{\\tabskip=3pt \\measure}\\message{[\\the\\dimen1]}"]
+    pre += "%s\n%s\n" % (calls[0], calls[0])
+    chunks = []
+    for _ in range(nchunks or a.n(3, 8)):
+        c = a.chunk()
+        if a.chance(0.6):
+            c += "\n" + a.pick(calls)
+        if a.chance(0.3):
+            c = a.pick(["\\everycr{\\noalign{\\kern1pt}}", "\\def\\pre{\\kern2pt}", "\\tabskip=2pt",
+                        "\\let\\endrow=\\crcr", "\\hsize=80pt"]) + "\n" + c
+        chunks.append(c)
+    chunks.append("\\penalty-20000\\deadcycles=0 \\output={\\plainoutput}\n" + calls[0] + "\n" + calls[-1])
+    return gen.Doc(seed, pre, chunks, False)
+
+
+def generate_replay_plain(seed, fonts=True):
+    """generate_plain(seed) as a fuzz-replay case."""
+    return {"t.tex": generate_plain(seed).render(), "u.tex": "\\measure\n"}
+
+
 REPLAY_PRELUDE = [
     r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \catcode`\&=4 "
     r"\catcode`\^=7 \catcode`\$=3 \catcode`\~=13 \catcode`\^^I=10 \scrollmode",
