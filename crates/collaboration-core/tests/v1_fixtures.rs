@@ -530,9 +530,10 @@ fn record_hostile() {
             content: "x".into(),
         },
     ));
-    let id = fresh(&mut sim);
+    // A blob on a text file: applied by every replica alike and never
+    // shown (collab-v1 §2.6), so it is not one of the refused attacks.
     sim.inject(file_op(
-        id,
+        Id::new(0x0b10_b000, 0),
         3,
         f,
         FileOpKind::SetBlob(BlobRef {
@@ -635,13 +636,13 @@ fn record_hostile() {
     let orders = all_orders(&mut rng, frames.len());
     let json = fixture_json(
         "rejected-ops",
-        "malformed operations every replica refuses alike (origins out of order or equal, a delete or origin naming a deletion unit, a blob on a text file, lamport 0, an overlong media type), and five that wait forever",
+        "malformed operations every replica refuses alike (origins out of order or equal, a delete or origin naming a deletion unit, lamport 0, an overlong media type), a blob on a text file (stored, not shown), and five that wait forever",
         &frames,
         orders,
     );
     let (p, rejected) = replay(&frames, &(0..frames.len()).collect::<Vec<_>>());
     assert_eq!(p.pending_len(), 5);
-    assert_eq!(rejected.len(), 7);
+    assert_eq!(rejected.len(), 6);
     write_json(&dir().join("rejected-ops.json"), &json);
 }
 
@@ -788,7 +789,8 @@ fn record_legacy() {
             7,
             vec![Section::Text(f, vec![ins(Id::new(r, 3), None, "q")])],
         ),
-        // Another replica creating the same file id.
+        // Another replica creating the same file id: merged, not refused
+        // (§2.6). Its later path write, (1, r + 1), wins.
         update(
             8,
             vec![Section::FileMap(vec![FileOp {
@@ -818,12 +820,12 @@ fn record_legacy() {
     let orders = forward_orders(frames.len());
     let json = fixture_json(
         "legacy-id-reuse",
-        "id_reuse_divergence.rs in collab-v1: ids reused with different content (scalar, delete target, insert vs delete, file op, file id) are refused, identical replays are duplicates; forward orders only",
+        "id_reuse_divergence.rs in collab-v1: ids reused with different content (scalar, delete target, insert vs delete, file op) are refused, identical replays are duplicates, and a second create of a file id is merged; forward orders only",
         &frames,
         orders,
     );
     let (_, rejected) = replay(&frames, &(0..frames.len()).collect::<Vec<_>>());
-    assert_eq!(rejected.len(), 6, "{rejected:?}");
+    assert_eq!(rejected.len(), 5, "{rejected:?}");
     assert!(rejected.iter().all(|r| r.2 == "id_conflict"));
     write_json(&dir().join("legacy-id-reuse.json"), &json);
 }

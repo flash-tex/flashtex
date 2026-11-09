@@ -151,7 +151,7 @@ public final class CollabGuest {
                 s.canEdit = ack.role == "edit"
                 s.transmit = { [weak self] out in self?.transmit(out) }
                 s.onReleased = { [weak self] _, _, errors in
-                    if errors.contains(where: \.isProjectFull) { self?.endForProjectFull() }
+                    if let why = CollabSession.endMessage(for: errors) { self?.endForRefusal(why) }
                 }
                 session = s
                 s.startTimers()
@@ -181,7 +181,8 @@ public final class CollabGuest {
             session?.stopTimers()
         case let .error(e):
             switch e.code {
-            case "invite_invalid", "join_denied", "removed", "token_invalid", "session_full", "join_timeout", "project_full":
+            case "invite_invalid", "join_denied", "removed", "token_invalid", "session_full", "join_timeout", "project_full",
+                 "operation_refused":
                 leaving = true
                 state = .ended(e.message)
                 session?.stopTimers()
@@ -201,11 +202,13 @@ public final class CollabGuest {
         s.releaseReady()
         guard !leaving else { return }
         let errors = s.integrate(sections)
-        // A remote operation the caps refused (§2.4a): this copy no longer
-        // holds what the hub does, and no resync can bring it back under the
-        // cap, so the session ends here instead of going on diverged.
-        if errors.contains(where: \.isProjectFull) {
-            endForProjectFull()
+        // A remote operation refused for good: by the caps (§2.4a), or as
+        // malformed or as another version of an id this copy holds (a
+        // faulty or hostile hub; first arrival wins, §2.4). This copy no
+        // longer holds what the hub does, and a resync would be refused
+        // again, so the session ends here instead of going on diverged.
+        if let why = CollabSession.endMessage(for: errors) {
+            endForRefusal(why)
             return
         }
         if errors.contains(where: { if case .pendingFull = $0 { return true } else { return false } }) {
@@ -213,11 +216,11 @@ public final class CollabGuest {
         }
     }
 
-    private func endForProjectFull() {
+    private func endForRefusal(_ why: String) {
         guard !leaving else { return }
         leaving = true
-        state = .ended(CollabSession.projectFullMessage)
-        connection?.close(reason: "project_full")
+        state = .ended(why)
+        connection?.close(reason: why == CollabSession.projectFullMessage ? "project_full" : "operation_refused")
         session?.stopTimers()
     }
 

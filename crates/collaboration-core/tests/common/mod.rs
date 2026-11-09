@@ -359,10 +359,12 @@ impl Sim {
                     id,
                     lamport,
                     file,
+                    // A blob on a text file is stored, not refused (§2.6);
+                    // an overlong media type is refused on any file.
                     kind: FileOpKind::SetBlob(BlobRef {
                         sha256: [9; 32],
                         bytes: 1,
-                        media_type: "image/png".into(),
+                        media_type: "x".repeat(256),
                     }),
                 }])
             }

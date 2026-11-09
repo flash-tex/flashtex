@@ -121,6 +121,24 @@ public final class CollabSession {
     /// operation it was sent (§2.4a) and its copy stops following the session.
     public static let projectFullMessage =
         "The shared project reached its size limit, so this copy stopped following the session. Your copy is kept."
+    /// What a participant is told when another refusal (a malformed
+    /// operation, another version of an operation it holds) ended its part.
+    public static let refusedMessage =
+        "This copy received a change it could not apply, so it stopped following the session. Your copy is kept."
+
+    /// What ends a participant's part for `errors` it refused for good:
+    /// nil if none was (`pendingFull` resyncs instead).
+    public static func endMessage(for errors: [CollabProject.ReceiveError]) -> String? {
+        guard errors.contains(where: \.isRefusal) else { return nil }
+        return errors.contains(where: isSizeLimit) ? projectFullMessage : refusedMessage
+    }
+
+    /// A refusal by the project's or a document's size cap (§2.4, §2.4a).
+    static func isSizeLimit(_ e: CollabProject.ReceiveError) -> Bool {
+        if case .rejected(_, _, .projectFull) = e { return true }
+        if case .rejected(_, _, .documentFull) = e { return true }
+        return false
+    }
 
     public init(role: Role, replica: UInt64, name: String, colourIndex: Int) {
         self.role = role
@@ -168,14 +186,20 @@ public final class CollabSession {
 
     public func text(of file: FileID) -> String? { project.text(file)?.text }
 
+    /// Why `shareFile` refused (nothing changed).
+    public enum ShareError: Error, Equatable {
+        /// Only the hub shares files (P1): the hub drops a guest's file-map
+        /// operations, so a guest's file would exist only in its own copy.
+        case notHub
+    }
+
     /// The hub shares a file: a create plus its text, broadcast with the
-    /// next flush. Not undoable.
+    /// next flush. Not undoable. A refusal (a guest, a cap) changes nothing.
     @discardableResult
     public func shareFile(path: String, text: String) throws -> FileID {
+        guard role == .hub else { throw ShareError.notHub }
         let id = FileID.random()
-        let create = try project.fileOp { try $0.create(id, kind: .text, path: path) }
-        enqueue(create)
-        if let insert = try project.insert(text, at: 0, in: id) { enqueue(insert) }
+        for section in try project.createTextFile(id, path: path, text: text) { enqueue(section) }
         return id
     }
 

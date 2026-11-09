@@ -111,7 +111,7 @@ public final class CollabHub {
         session.transmit = { [weak self] out in self?.broadcast(out) }
         session.onReleased = { [weak self] file, ops, errors in
             self?.relay([.text(file, ops)], excluding: nil, errors: errors)
-            self?.refuseProjectFull(errors)
+            self?.refuseRefused(errors)
         }
     }
 
@@ -400,15 +400,18 @@ public final class CollabHub {
         }
         let errors = session.integrate(kept)
         relay(ready, excluding: member.id, errors: errors)
-        refuseProjectFull(errors)
+        refuseRefused(errors)
         if errors.contains(where: { if case .pendingFull = $0 { return true } else { return false } }) {
             link.connection.send(.syncRequest(session.project.stateVectors))
         }
     }
 
+    /// Relays what the hub took. An operation it did not take (refused for
+    /// any reason, or not parked because the buffer was full) goes to no
+    /// one: the others would refuse it too, or hold what the hub lacks.
     private func relay(_ sections: [Section], excluding sender: UInt64?, errors: [CollabProject.ReceiveError]) {
         var refused: [FileID: Set<CollabID>] = [:]
-        for error in errors where error.isProjectFull {
+        for error in errors {
             if case let .text(file) = error.doc { refused[file, default: []].insert(error.op) }
         }
         for other in links.values where other.member != nil && other.member != sender {
@@ -423,14 +426,21 @@ public final class CollabHub {
         }
     }
 
-    private func refuseProjectFull(_ errors: [CollabProject.ReceiveError]) {
-        for id in Set(errors.filter(\.isProjectFull).map(\.op.replica)) {
+    /// Ends the part of every guest whose operation the hub refused for
+    /// good (§2.4a, §7.4): it holds what the hub does not, and its resync
+    /// would be refused again. `project_full` for a size cap, else
+    /// `operation_refused`.
+    private func refuseRefused(_ errors: [CollabProject.ReceiveError]) {
+        let refusals = errors.filter(\.isRefusal)
+        for id in Set(refusals.map(\.op.replica)) {
             guard var member = members[id], !member.removed else { continue }
             member.removed = true
             members[id] = member
-            onEvent(.refused(reason: "project_full from participant \(id)"))
+            let why = CollabSession.endMessage(for: refusals.filter { $0.op.replica == id }) ?? CollabSession.refusedMessage
+            let code = why == CollabSession.projectFullMessage ? "project_full" : "operation_refused"
+            onEvent(.refused(reason: "\(code) from participant \(id)"))
             if let key = member.link, let link = links[key] {
-                link.connection.refuse(code: "project_full", message: CollabSession.projectFullMessage)
+                link.connection.refuse(code: code, message: why)
             }
         }
     }
