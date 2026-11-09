@@ -766,12 +766,15 @@ impl<'a, M: Metrics> Builder<'a, M> {
                 .unsupported("a vertical native font".into(), None);
         }
         // `embolden=` (fontspec's FakeBold): xdvipdfmx fills and strokes the
-        // glyphs (`2 Tr`) with a line of `embolden` (XeTeX's, a tenth of
-        // fontspec's FakeBold) times the size in TeX points over 10
-        // (measured: FakeBold=1.5 at 10 pt is `0.149994 w`), in
+        // glyphs (`2 Tr`) with a line as wide as the XDV record's
+        // `embolden`, which XeTeX has already scaled to the font: the
+        // option's value times the size in TeX points over 100. Measured
+        // against TeX Live 2026's xdvipdfmx: `embolden=1` at 20, 10 and
+        // 4 pt (and `embolden=3` at 4 pt) is `0.199997 w`, `0.100006 w`
+        // and `0.119995 w`; FakeBold=1.5 at 10 pt is `0.149994 w`. In
         // stream space for the display list (spec §11.4).
         let bold = (embolden != 0.0).then(|| {
-            let w = embolden / 10.0 * n.size as f64 / 65536.0;
+            let w = embolden;
             let [a, b, _, _, _, _] = self.cur_ref().gs.ctm.to_f64();
             Stroke {
                 width: w * (a * a + b * b).sqrt(),
