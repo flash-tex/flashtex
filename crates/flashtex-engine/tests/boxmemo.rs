@@ -535,9 +535,12 @@ fn tex_file(name: &str) -> Option<Vec<u8>> {
     std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
 }
 
+/// Files for [`check_with`]: (name, bytes).
+type Files = Vec<(&'static str, Vec<u8>)>;
+
 /// Plain TeX's four text-size fonts, as files for [`check_with`], and the
 /// lines that load them into families 0-3 at every size.
-fn math_fonts() -> Option<(Vec<(&'static str, Vec<u8>)>, &'static str)> {
+fn math_fonts() -> Option<(Files, &'static str)> {
     let mut files = vec![];
     for n in ["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"] {
         files.push((n, tex_file(n)?));
