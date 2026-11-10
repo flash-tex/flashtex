@@ -33,6 +33,9 @@ Test directives in `capture_applied.capture_id`:
                     exit 3 before recording the receipt, once (the retry succeeds)
     crash-applied-once-*
                     record the receipt durably, then exit 3 without replying, once
+    hang-applied-once-*
+                    stay alive but never answer (nor read again) before
+                    recording the receipt, once (the relaunched bridge proceeds)
 
 Like the real bridge, the capture journal is durable in `--store`
 (`fake_journal.json`, rewritten atomically on every change) so a relaunched
@@ -86,6 +89,23 @@ def persist_journal():
 def crash():
     sys.stdout.flush()
     os._exit(CRASH_STATUS)
+
+
+def once(key):
+    """True the first time `key` is seen for this store (a marker file)."""
+    marker = os.path.join(store_dir, "fake_once_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16])
+    if os.path.exists(marker):
+        return False
+    with open(marker, "w") as f:
+        f.write(key)
+    return True
+
+
+def hang():
+    """Alive, answering nothing: until killed."""
+    sys.stdout.flush()
+    while True:
+        time.sleep(3600)
 
 
 def crash_once(key):
@@ -368,6 +388,8 @@ def dispatch(kind, p):
             raise Err("revision_conflict", "Source changed after insertion was prepared; reconcile Mac edit ledger")
         if p["capture_id"].startswith("crash-applied-before-once-"):
             crash_once("applied-before:" + p["capture_id"])
+        if p["capture_id"].startswith("hang-applied-once-") and once("applied-hang:" + p["capture_id"]):
+            hang()
         rec["applied"] = {"edit_id": p["edit_id"], "new_revision": p["new_revision"]}
         persist_journal()
         if p["capture_id"].startswith("crash-applied-once-"):
