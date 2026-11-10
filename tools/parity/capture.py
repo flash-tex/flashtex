@@ -77,6 +77,8 @@ import subprocess
 import tempfile
 import threading
 
+import harness  # tools/parity, on sys.path wherever this module is imported
+
 # The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
 # §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
 # no flag at all, and each engine runs in its own default mode (texmf.cnf
@@ -137,6 +139,14 @@ TRACE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
 # The traced pass's time limit in seconds (parity.py --pt1-timeout). A pass it
 # stops is a harness error (tiers.TRACE_TIMEOUT), never a pass.
 TIMEOUT = 1800
+# Every TeX run's time limit is CPU seconds of the process, with WALL_FACTOR
+# times as many wall-clock seconds as a backstop (harness.cpu_preexec): at most
+# 6 h for the oracle's traced pass (7200 s). On Windows the backstop alone.
+WALL_FACTOR = harness.CPU_WALL_FACTOR
+CpuLimitError, cpu_preexec, cpu_stopped = harness.CpuLimitError, harness.cpu_preexec, harness.cpu_stopped
+# The limits' kind, recorded with a cached oracle entry: an entry stopped by a
+# limit of another kind (wall-clock, before 2026-11-08) is made again.
+LIMIT_KIND = "cpu"
 
 # The traced-log budget in bytes (parity.py --pt1-max-log-mb; 0: none). A log
 # over it is never read whole: a \tracingall log runs to 25 GB (arXiv
@@ -700,13 +710,17 @@ def run_engine(engine_bin, fmt, args, workdir, extra_env=None, timeout=TIMEOUT):
     """One run: argv[0] is exactly `pdftex` (pdfTeX prints argv[0] as given,
     e.g. `pdfTeX warning: ./x (file ...)`, so a path would differ per engine),
     executed through the engine's link, with the one shell-escape setting and
-    the format. Returns (exit code or None, timed out)."""
+    the format. `timeout` is CPU seconds (`cpu_preexec`), with WALL_FACTOR
+    times as many wall-clock seconds as a backstop. Returns (exit code or
+    None, timed out)."""
     link = engine_link(engine_bin)
     argv = [PROGRAM] + ([SHELL_ESCAPE] if SHELL_ESCAPE else []) + ([f"-fmt={fmt}"] if fmt else []) + list(args)
     try:
         p = subprocess.run(argv, executable=link, cwd=workdir, env=engine_env(link, extra_env),
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=timeout, check=False)
+                           timeout=WALL_FACTOR * timeout, check=False, preexec_fn=cpu_preexec(timeout))
+        if cpu_stopped(p.returncode):
+            return None, True
         return p.returncode, False
     except subprocess.TimeoutExpired:
         return None, True

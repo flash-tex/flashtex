@@ -160,6 +160,19 @@ constant memory: about 20 MiB whatever the log's size), and
   the 436 MB beamer-visuals fixture log), and processes must stay under
   6 GB. The budget no longer decides whether a document is evaluated, only
   whether a failure quotes the first differing line.
+- **Time limits are CPU seconds** of the TeX process (a soft `RLIMIT_CPU`
+  that `harness.cpu_preexec` sets in the child), for the candidate and the
+  oracles alike: every untraced pass (300), the oracle's pdflatex passes
+  (300), the traced passes below, the rasteriser and qpdf (300 each). So
+  throttling that leaves a run waiting for the CPU does not stop it: on the
+  NixOS PC a pass of arXiv 2211.03354v2 used 25 s of CPU in 250 s of wall
+  time, and four hunt-arxiv documents failed on wall-clock limits that way
+  (2026-11-08). Three times the limit in wall-clock seconds stays as a
+  backstop for a run that stops using the CPU (6 h for the oracle's traced
+  pass); throttling beyond that factor still makes a timeout. Windows has no
+  `RLIMIT_CPU`: there the backstop alone bounds a run. A hard limit below a
+  run's is a harness error, not an exit status. A cached oracle entry stopped
+  by a wall-clock limit (one without `"limit": "cpu"`) is made again.
 - **Time limit** (`--pt1-timeout S`, default 1800): the oracle's traced
   pass gets `4 × S` (7200 s), a candidate's
   `max(S, oracle log bytes / 8 MiB/s, min(3 × the oracle's traced seconds, 4 × S))`.
@@ -876,7 +889,17 @@ A blocker is one of:
 - **L1–L3**: warnings that name an unimplemented construct, plus the source
   construct at the first divergence (`pagination:`, `content:` or
   `placement:`).
-- **L3→L4**: font/outline notes.
+- **L3→L4**: font/outline notes. A rasteriser that did not run (a timeout,
+  a crash) is `harness: raster not run (…)`, never an ink difference: L4 was
+  not measured.
+
+pdflatex's reference passes (the L0 oracle) run in the candidate's
+environment, `capture.TRACE_ENV` (`max_print_line=10000`, `error_line`,
+`half_error_line`, the pinned dates), so both logs' errors are counted in the
+same lines. At pdflatex's default `max_print_line` of 79, an overfull box's
+wrapped line can begin with `! ` and counted as an error of the reference
+only (arXiv 1604.05044v1). A cached reference without that mark (`log_env`)
+that counted errors is made again.
 
 `definers.py` then **groups constructs by who defines them**, because a
 package is what a lane implements. The index is built once (~5 s) from TeX

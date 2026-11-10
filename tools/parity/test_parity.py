@@ -606,7 +606,9 @@ class Corpus(unittest.TestCase):
                    "trace_incomplete": tiers.TRACE_TIMEOUT.format(1800), "trace_timed_out": True,
                    "trace_timeout": 1800}
         self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))  # board run 37121600909's two entries
-        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        # an entry stopped by the oracle's limit is kept only if that limit was CPU seconds
+        self.assertTrue(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200, trace_limit="cpu"), "/nonexistent"))
         saved = tiers.engine_version, tiers.run_tex
         with tempfile.TemporaryDirectory() as d:
             doc = {"id": "slow", "entry": "main.tex", "dir": os.path.join(d, "src")}
@@ -625,6 +627,7 @@ class Corpus(unittest.TestCase):
                 with open(pdf, "w") as f:
                     f.write("%PDF")
                 return ({"ok": True, "passes": 2, "trace_timeout": timeout, "trace_timed_out": True,
+                         "trace_limit": capture.LIMIT_KIND, "limit": capture.LIMIT_KIND,
                          "trace_incomplete": tiers.TRACE_TIMEOUT.format(timeout)}, None, pdf)
             try:
                 tiers.engine_version, tiers.run_tex = (lambda _exe: version), run_tex
@@ -1448,6 +1451,33 @@ class PTWithOracle(unittest.TestCase):
         self.assertTrue(capture.HALT_ON_ERROR)
         self.assertEqual(tiers.oracle_key({"entry": "main.tex"}, "v", True, "t"), halting_key)
 
+    def test_the_reference_counts_errors_at_the_candidates_line_length(self):
+        """PARITY-ROOT, arXiv 1604.05044v1: at pdflatex's max_print_line of 79
+        an overfull box's wrapped line begins with `! ` and counted as an
+        error of the L0 reference only; it runs in capture.TRACE_ENV now
+        (10000), as the candidate does. A cached entry that counted errors
+        without that environment is made again."""
+        src = os.path.join(self.d, "ovf")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:  # 63 x's put the `!` at column 80
+            f.write("\\documentclass{article}\\begin{document}\\hbox to 10pt{" + "x" * 63 + "! x}\\end{document}\n")
+        doc = {"id": "ovf", "tier": "t", "dir": src, "entry": "main.tex"}
+        cache = os.path.join(self.d, "cache")
+        pdf, meta = parity.oracle_reference(doc, os.path.dirname(PDFTEX), cache, None)
+        self.assertTrue(pdf)
+        self.assertEqual((meta["exit"], meta["errors"], meta["cached"], meta["log_env"]),
+                         (0, 0, False, parity.LOG_ENV))
+        self.assertIn("max_print_line=10000", meta["argv"])
+        # an entry cached before LOG_ENV with the wrapped line's error is made again; one without errors is kept
+        with open(os.path.join(cache, "oracle", meta["key"][:2], meta["key"], "oracle.json")) as f:
+            entry = json.load(f)
+        mp = os.path.join(cache, "oracle", meta["key"][:2], meta["key"], "oracle.json")
+        for errors, cached in ((1, False), (0, True)):
+            with open(mp, "w") as f:
+                json.dump({k: v for k, v in dict(entry, errors=errors).items() if k != "log_env"}, f)
+            _, again = parity.oracle_reference(doc, os.path.dirname(PDFTEX), cache, None)
+            self.assertEqual((again["cached"], again["errors"]), (cached, 0 if not cached else errors))
+
     def test_no_halt_on_error_a_different_error_count_fails(self):
         """--no-halt-on-error (daniel-parent's review of #1998): a candidate that
         ends with another number of errors than pdfTeX fails L0 and P-T2, even
@@ -1487,6 +1517,18 @@ class PTWithOracle(unittest.TestCase):
             self.assertIs(pt["two"]["P-T2"], False)
             self.assertIn("error count 2 (exit 1), pdfTeX's 1 (exit 1)", pt["two"]["pt2"]["why"])
             self.assertIs(pt["one"]["P-T2"], True)
+        # P-T1 too (REVIEW-C on #2182): identical traced logs pass only after the oracle's error count
+        same = capture.Capture("a log", [], ref_pdf, 5, True)
+        tiers.oracle = lambda *a, **k: (dict(ref), same, ref_pdf)
+        try:
+            cfg = {"pt": "on", "oracle_pdftex": PDFTEX, "cache": self.d, "engine_kind": "tex", "qpdf": None}
+            pt1 = {n: parity.score_pt(docs[n], cfg, dict(c, capture=same), os.path.join(self.d, "count-pt1-" + n))
+                   for n, c in cands.items()}
+        finally:
+            tiers.oracle = real
+        self.assertIs(pt1["one"]["P-T1"], True)
+        self.assertIs(pt1["two"]["P-T1"], False)
+        self.assertIn("error count 2 (exit 1), pdfTeX's 1 (exit 1)", pt1["two"]["pt1"]["why"])
 
     def test_shell_escape_is_the_engines_default_mode(self):
         """Owner decision #1209: no shell-escape flag, so pdfTeX runs in TeX
@@ -2145,7 +2187,7 @@ class PTCandidateCap(unittest.TestCase):
                 cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": cache, "pt1_max_log": budget,
                        "engine_kind": "tex", "qpdf": False}
                 pt = parity.score_pt({"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}, cfg,
-                                     {"capture": cand_cap, "pdf": None}, HERE)
+                                     {"capture": cand_cap, "pdf": None, "exit": 0, "errors": 0}, HERE)
             finally:
                 tiers.oracle, capture.MAX_LOG_BYTES = real, saved
             self.assertTrue(os.path.isfile(os.path.join(odir, tiers.FINGERPRINT)))  # kept for the next run
@@ -3058,6 +3100,98 @@ class RowPadding(unittest.TestCase):
         self.assertEqual(tiers.clear_row_padding(doc, icc, b"\xff" * 10), out)
         mask = {"Subtype": "Image", "Width": 9, "Height": 1, "ImageMask": True}
         self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
+
+
+@unittest.skipUnless(os.name == "posix", "RLIMIT_CPU is POSIX: on Windows the wall-clock backstop alone")
+class CpuLimits(unittest.TestCase):
+    """Time limits are CPU seconds (harness.cpu_preexec), so throttling that
+    leaves a run waiting does not stop it: a run that waits past its limit
+    without using the CPU finishes, and one that spins past it is stopped."""
+
+    def fake_engine(self, d, body):
+        exe = os.path.join(d, "engine.sh")
+        with open(exe, "w") as f:
+            f.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(exe, 0o755)
+        return exe
+
+    def test_waiting_is_not_a_timeout_and_spinning_is(self):
+        import capture
+        with tempfile.TemporaryDirectory() as d:
+            # sleeps 2 s of wall time with a 1 s CPU limit: not stopped
+            code, timed_out = capture.run_engine(self.fake_engine(d, "sleep 2; exit 0"), None, [], d, timeout=1)
+            self.assertEqual((code, timed_out), (0, False))
+        with tempfile.TemporaryDirectory() as d:
+            # spins: SIGXCPU after 1 s of CPU, long before the wall-clock backstop
+            exe = self.fake_engine(d, "exec python3 -c 'while True: pass'")
+            t0 = __import__("time").monotonic()
+            code, timed_out = capture.run_engine(exe, None, [], d, timeout=1)
+            self.assertEqual((code, timed_out), (None, True))
+            self.assertLess(__import__("time").monotonic() - t0, capture.WALL_FACTOR)
+
+    def test_argv0_is_still_pdftex(self):
+        import capture
+        with tempfile.TemporaryDirectory() as d:
+            exe = self.fake_engine(d, 'echo "$0 $*" > argv.txt')
+            self.assertEqual(capture.run_engine(exe, "pdflatex", ["x.tex"], d, timeout=5), (0, False))
+            with open(os.path.join(d, "argv.txt")) as f:
+                words = f.read().split()
+            self.assertEqual(os.path.basename(words[0]), capture.PROGRAM)
+            self.assertEqual(words[-2:], ["-fmt=pdflatex", "x.tex"])
+
+    def test_harness_run_with_cpu_limits_the_rasteriser_and_others(self):
+        import harness
+        code, _, _, _, timed_out = harness.run(["sleep", "2"], timeout=1, cpu=True)
+        self.assertEqual((code, timed_out), (0, False))
+        code, _, _, secs, timed_out = harness.run(["python3", "-c", "while True: pass"], timeout=1, cpu=True)
+        self.assertEqual((code, timed_out), (None, True))
+        self.assertLess(secs, harness.CPU_WALL_FACTOR)
+        self.assertEqual(harness.run(["sleep", "2"], timeout=1)[4], True)  # without cpu: wall-clock, as before
+
+    def test_a_raster_that_did_not_run_is_not_an_ink_difference(self):
+        """PARITY-ROOT, arXiv 2509.09089v1 and 2509.21232v3: a pdftoppm timeout
+        left them at L3 blamed on "ink differs"; it is a harness note now, and
+        the rasteriser runs under a CPU-time limit (harness.run(cpu=True))."""
+        why = "rasterizer exit None timeout=True: "
+        res = {"level": 3, "candidate": {}, "raster": {"available": False, "why": why}}
+        self.assertEqual(parity.causes_for(res, {}), [f"harness: raster not run ({why})"])
+        res["raster"] = {"available": True, "ok": False}
+        self.assertEqual(parity.causes_for(res, {}),
+                         ["raster: ink differs with every glyph origin in place (rules, images, outlines)"])
+
+    def test_a_limit_the_host_cannot_give_is_a_harness_error(self):
+        import capture
+        import resource
+        real = resource.getrlimit
+        try:
+            resource.getrlimit = lambda _r: (10, 10)
+            with self.assertRaises(capture.CpuLimitError):
+                capture.cpu_preexec(300)
+            self.assertTrue(callable(capture.cpu_preexec(5)))
+        finally:
+            resource.getrlimit = real
+
+    def test_windows_has_the_wall_clock_backstop_alone(self):
+        import harness
+        real = harness.resource
+        try:
+            harness.resource = None  # as on Windows: no `resource` module
+            self.assertIsNone(harness.cpu_preexec(5))
+            then = object()
+            self.assertIs(harness.cpu_preexec(5, then), then)
+            code, _, _, _, timed_out = harness.run(["sleep", "2"], timeout=1, cpu=True)  # 3 s backstop
+            self.assertEqual((code, timed_out), (0, False))
+        finally:
+            harness.resource = real
+
+    def test_a_wall_clock_timeout_in_the_cache_is_made_again(self):
+        import tiers
+        stopped = {"ok": False, "why": "exit None (timeout)"}
+        self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))
+        self.assertFalse(tiers.stale_entry(dict(stopped, limit="cpu"), "/nonexistent"))
+        traced = {"ok": True, "trace_timed_out": True, "trace_timeout": tiers.oracle_pt1_timeout()}
+        self.assertTrue(tiers.stale_entry(traced, "/nonexistent"))
+        self.assertFalse(tiers.stale_entry(dict(traced, trace_limit="cpu", limit="cpu"), "/nonexistent"))
 
 
 if __name__ == "__main__":
