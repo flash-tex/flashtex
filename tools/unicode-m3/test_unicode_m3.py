@@ -105,6 +105,18 @@ class CorpusAssemble(unittest.TestCase):
             idx = json.loads(_r(os.path.join(tmp, "t1", ".m3case.json")))
             self.assertEqual(idx["source_path"], "tools/unicode-m3/README.md")
 
+    def test_path_case_substitutes_and_marks_reference_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = corpus.assemble_case(
+                {"name": "t2", "family": "polyglossia", "reference_clean": True,
+                 "path": "tools/xetex-corpus/docs/p04-polyglossia-hebrew/main.tex",
+                 "subst": [["{Libertinus Serif}", "{LibertinusSerif}[Extension=.otf]"]]},
+                {}, tmp, os.path.join(tmp, "cache"), None)
+            self.assertEqual(meta["substituted"], ["{Libertinus Serif}"])
+            self.assertIn("{LibertinusSerif}[Extension=.otf]", _r(os.path.join(tmp, "t2", "t2.tex")))
+            idx = json.loads(_r(os.path.join(tmp, "t2", ".m3case.json")))
+            self.assertTrue(idx["reference_clean"])
+
     def test_fonts_case_without_fonts_line_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             meta = corpus.assemble_case(
