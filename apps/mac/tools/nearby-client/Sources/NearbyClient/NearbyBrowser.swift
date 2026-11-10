@@ -69,24 +69,40 @@ public final class NearbyBrowser: @unchecked Sendable {
     public func start() { browser.start(queue: queue) }
     public func stop() { browser.cancel() }
 
+    /// Stops browsing and drops the handlers (on `queue`).
+    private func finishDiscovery() {
+        stop()
+        onResults = nil
+        onFailure = nil
+    }
+
     /// Browses for up to `seconds`, returning early as soon as `until` accepts
     /// a result (e.g. the fingerprint of a stored pairing).
     public static func discover(seconds: TimeInterval, until: ((DiscoveredMac) -> Bool)? = nil) async throws -> [DiscoveredMac] {
-        let b = NearbyBrowser()
+        try await discover(seconds: seconds, until: until, using: NearbyBrowser())
+    }
+
+    /// `discover` on a given browser (tests hold it weakly to see it freed).
+    static func discover(seconds: TimeInterval, until: ((DiscoveredMac) -> Bool)?, using b: NearbyBrowser) async throws -> [DiscoveredMac] {
         let box = ResultBox()
+        // The handlers reach the browser weakly: it holds them, so a strong
+        // capture was a cycle that leaked every discovery's browser. The
+        // timeout below keeps it alive until then, and finishing drops the
+        // handlers, so it is freed once discovery is over.
         return try await withCheckedThrowingContinuation { cont in
-            b.onResults = { results in
+            b.onResults = { [weak b] results in
                 box.latest = results
                 if let until, results.contains(where: until), box.finish() {
-                    b.stop(); cont.resume(returning: results)
+                    b?.finishDiscovery(); cont.resume(returning: results)
                 }
             }
-            b.onFailure = { e in
-                if box.finish() { b.stop(); cont.resume(throwing: NearbyError.browseFailed(String(describing: e))) }
+            b.onFailure = { [weak b] e in
+                if box.finish() { b?.finishDiscovery(); cont.resume(throwing: NearbyError.browseFailed(String(describing: e))) }
             }
             b.start()
             b.queue.asyncAfter(deadline: .now() + seconds) {
-                if box.finish() { b.stop(); cont.resume(returning: box.latest) }
+                if box.finish() { cont.resume(returning: box.latest) }
+                b.finishDiscovery()
             }
         }
     }
