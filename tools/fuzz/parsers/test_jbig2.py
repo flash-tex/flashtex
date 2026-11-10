@@ -157,7 +157,12 @@ class ClassifyTest(unittest.TestCase):
 
     def test_differential(self):
         ok = (0, b"", "**job a", b"PDF")
-        self.assertEqual(jb.classify_diff(ok, ok), "equal")
+        self.assertEqual(jb.classify_diff(ok, ok), "equal-pdf")
+        err = (1, b"", "**job !pdfTeX error: x", None)
+        self.assertEqual(jb.classify_diff(err, err), "equal-error")
+        # neither engine wrote a PDF or a log: nothing was compared
+        none = (1, b"", "", None)
+        self.assertEqual(jb.classify_diff(none, none), "inconclusive")
         self.assertEqual(jb.classify_diff(ok, (0, b"", "**job a", b"P2")),
                          "diverge")
         self.assertEqual(jb.classify_diff(ok, (1, b"", "**job a", b"PDF")),
@@ -231,8 +236,48 @@ class RunTest(unittest.TestCase):
         a = make_engine(self.tmp, "a", OK_BODY)
         b = make_engine(self.tmp, "b", OK_BODY)
         counts = jb.run_fuzz(a, self.out, 4, 1, 10, oracle=b)
-        self.assertEqual(counts["equal"], 4)
+        self.assertEqual(counts["equal-pdf"], 4)
         self.assertEqual(stored(self.out), [])
+
+    def test_differential_equal_error(self):
+        a = make_engine(self.tmp, "a", OTHER_LOG_BODY)
+        b = make_engine(self.tmp, "b", OTHER_LOG_BODY)
+        counts = jb.run_fuzz(a, self.out, 3, 1, 10, oracle=b)
+        self.assertEqual(counts["equal-error"], 3)
+        self.assertEqual(counts["equal-pdf"], 0)
+        self.assertEqual(stored(self.out), [])
+
+    def test_differential_both_fail_without_log_is_inconclusive(self):
+        # both engines exit 1 and write no job.log (e.g. no format)
+        a = make_engine(self.tmp, "a", FAIL_BODY)
+        b = make_engine(self.tmp, "b", FAIL_BODY)
+        self.assertEqual(jb.classify_diff(
+            jb.run_engine(a, b"x", "x", 10, jb.engine_env(True)),
+            jb.run_engine(b, b"x", "x", 10, jb.engine_env(False))),
+            "inconclusive")
+        # a whole run that compared nothing is a harness failure
+        self.assertEqual(jb.run_fuzz(a, self.out, 3, 1, 10, oracle=b), 2)
+        self.assertEqual(jb.main(["--candidate", a, "--oracle", b,
+                                  "--iterations", "3", "--seed", "1",
+                                  "--out", self.out]), 2)
+        self.assertEqual(stored(self.out), [])
+
+    def test_differential_some_inconclusive_still_passes(self):
+        # oracle writes output on some iterations: counted, run is fine
+        a = make_engine(self.tmp, "a", FAIL_BODY)
+        flag = os.path.join(self.tmp, "flag")
+        b = make_engine(self.tmp, "b",
+                        "if [ -f %s ]; then exit 1; fi\ntouch %s\n"
+                        % (flag, flag) + OTHER_LOG_BODY)
+        counts = jb.run_fuzz(a, self.out, 3, 1, 10, oracle=b)
+        self.assertIsInstance(counts, dict)
+        self.assertEqual(counts["inconclusive"], 2)
+        self.assertEqual(counts["diverge"], 1)
+
+    def test_zero_iterations_is_not_a_harness_failure(self):
+        a = make_engine(self.tmp, "a", FAIL_BODY)
+        self.assertIsInstance(jb.run_fuzz(a, self.out, 0, 1, 10, oracle=a),
+                              dict)
 
     def test_differential_diverge_pdf_and_log(self):
         a = make_engine(self.tmp, "a", OK_BODY)
@@ -249,8 +294,9 @@ class RunTest(unittest.TestCase):
     def test_differential_oracle_crash(self):
         a = make_engine(self.tmp, "a", OK_BODY)
         b = make_engine(self.tmp, "b", SEGV_BODY)
-        counts = jb.run_fuzz(a, self.out, 2, 1, 10, oracle=b)
-        self.assertEqual(counts["oracle-crash"], 2)
+        # the oracle crashed every time and wrote nothing: still stored,
+        # but the run compared nothing, so it is a harness failure
+        self.assertEqual(jb.run_fuzz(a, self.out, 2, 1, 10, oracle=b), 2)
         files = stored(self.out)
         self.assertEqual(len(files), 1)
         self.assertIn(os.sep + "oracle-crash" + os.sep, files[0])

@@ -48,12 +48,16 @@ or exit 101), `hang` (over `--timeout`), `ok`, `graceful-error`,
 With `--oracle` (differential; nightly runs it this way): the exit
 status, the PDF bytes and the log from the `**` line on (lines joined,
 the program name after `pdfTeX warning:` / `!pdfTeX error:` replaced, the
-end-of-run accounting cut) must agree. Classes as in `run.py`: `equal`,
-`diverge`, `candidate-crash`, `oracle-crash` (a signal; exit 101 from
+end-of-run accounting cut) must agree. Classes: `equal-pdf` (same PDF
+bytes), `equal-error` (no PDF from either, the same non-empty log),
+`inconclusive` (no PDF and no log from either engine: nothing compared,
+counted but not stored), then as in `run.py`: `diverge`, `candidate-crash`, `oracle-crash` (a signal; exit 101 from
 pdfTeX is not a crash), `both-crash`, `timeout` (one side; the signature
-says which), `both-hang`, `output-flood`, `both-flood`.
+says which), `both-hang`, `output-flood`, `both-flood`. A differential run with iterations in which
+the oracle never wrote a PDF or a log exits 2 (harness failure), so a
+night cannot pass with nothing compared.
 
-Every class but `ok`/`graceful-error`/`equal` is stored once per
+Every class but `ok`/`graceful-error`/`equal-*`/`inconclusive` is stored once per
 signature as `OUT/<class>/<sha256-prefix>.jbig2` with a `.json` sidecar
 (seed, mutation, the job, both return codes, the last output line, the
 panic location). Deterministic given `--seed`.
