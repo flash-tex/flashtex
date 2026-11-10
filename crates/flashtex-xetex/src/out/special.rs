@@ -678,6 +678,8 @@ impl<M: Metrics> Builder<'_, M> {
             },
             Obj::Array(a) => Obj::Array(a.into_iter().map(|e| self.fixup(e)).collect()),
             Obj::Dict(d) => Obj::Dict(self.fixup_dict(d)),
+            // xdvipdfmx keeps a number as a double (`0.5` is written `.5`)
+            Obj::Num(t) => Obj::Num(super::pdfobj::special_number(&t)),
             o => o,
         }
     }
@@ -1419,6 +1421,93 @@ pub fn read_dims(p: &mut Parser) -> Dims {
 /// `rotate` (`make_transmatrix`).
 pub fn read_transform(p: &mut Parser) -> Mat {
     Mat(read_dims(p).info().matrix.map(fx))
+}
+
+/// The keys whose string values dvipdfmx takes for text strings
+/// (spc_pdfm.c's `default_taintkeys`).
+const TEXT_KEYS: [&[u8]; 11] = [
+    b"Title",
+    b"Author",
+    b"Subject",
+    b"Keywords",
+    b"Creator",
+    b"Producer",
+    b"Contents",
+    b"Subj",
+    b"TU",
+    b"T",
+    b"TM",
+];
+
+/// dvipdfmx's `modify_strings` for an XDV file (spc_pdfm.c): every string
+/// under a text key ([`TEXT_KEYS`]; in an array, under the array's key;
+/// in a nested dictionary, under that dictionary's keys) that has a byte
+/// above 127 and no UTF-16BE byte order mark is read as UTF-8 and written
+/// as UTF-16BE with the mark. A string that is not UTF-8 stops the walk,
+/// as the C's error does (strings after it stay as they are); its key is
+/// the error.
+pub fn text_strings(d: &mut Dict) -> Result<(), Vec<u8>> {
+    for (k, v) in d.0.iter_mut() {
+        text_strings_of(k, v)?;
+    }
+    Ok(())
+}
+
+fn text_strings_of(k: &[u8], v: &mut Obj) -> Result<(), Vec<u8>> {
+    match v {
+        Obj::Str(s) => {
+            if TEXT_KEYS.contains(&k) && !s.starts_with(b"\xfe\xff") && s.iter().any(|&c| c > 127) {
+                match utf8_to_utf16be(s) {
+                    Some(u) => *s = u,
+                    None => return Err(k.to_vec()),
+                }
+            }
+            Ok(())
+        }
+        Obj::Array(a) => a.iter_mut().try_for_each(|e| text_strings_of(k, e)),
+        Obj::Dict(d) => text_strings(d),
+        _ => Ok(()),
+    }
+}
+
+/// `reencode_string_from_utf8_to_utf16be`: the C's UTF-8 reader
+/// (unicode.c's `UC_UTF8_decode_char`: overlong forms accepted, 5- and
+/// 6-byte forms read but out of range), `None` for a string it rejects.
+fn utf8_to_utf16be(s: &[u8]) -> Option<Vec<u8>> {
+    let mut out = vec![0xfe, 0xff];
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i];
+        i += 1;
+        let (mut u, n) = match c {
+            0..=0x7f => (c as u32, 0),
+            _ if c & 0xe0 == 0xc0 => ((c & 31) as u32, 1),
+            _ if c & 0xf0 == 0xe0 => ((c & 0x0f) as u32, 2),
+            _ if c & 0xf8 == 0xf0 => ((c & 0x07) as u32, 3),
+            _ if c & 0xfc == 0xf8 => ((c & 0x03) as u32, 4),
+            _ if c & 0xfe == 0xfc => ((c & 0x01) as u32, 5),
+            _ => return None,
+        };
+        let cont = s.get(i..i + n)?;
+        for &b in cont {
+            if b & 0xc0 != 0x80 {
+                return None;
+            }
+            u = (u << 6) | (b & 0x3f) as u32;
+        }
+        i += n;
+        if u > 0x10ffff || (0xd800..=0xdfff).contains(&u) {
+            return None;
+        }
+        if u <= 0xffff {
+            out.extend_from_slice(&(u as u16).to_be_bytes());
+        } else {
+            let v = u - 0x10000;
+            out.extend_from_slice(&((0xd800 + (v >> 10)) as u16).to_be_bytes());
+            out.extend_from_slice(&((0xdc00 + (v & 0x3ff)) as u16).to_be_bytes());
+        }
+    }
+    Some(out)
 }
 
 /// The keys whose string values dvipdfmx takes for text strings
