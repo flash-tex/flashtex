@@ -52,6 +52,15 @@
 # the self-hosted Macs have separate switches, FLASHTEX_SELFHOSTED_LINUX and
 # FLASHTEX_SELFHOSTED_MAC (see plan).
 #
+# Since 2026-11-09 (owner-approved; hosted CI had ~300 runs queued while the
+# PC idled) the PC also runs the Linux legs -- plan, build, quick, checks,
+# engine parity (engine-parity-pc) and CI required -- of a same-repository
+# pull request, a push to a branch other than main, and a merge group with no
+# fork pull request in the queue, directly, with no supervisor (plan's
+# PC_DIRECT). Fork pull requests stay GitHub-hosted (§9.3). macOS jobs are
+# unchanged. Setting FLASHTEX_SELFHOSTED_LINUX to 0 sends all of it back to
+# hosted runners from the next run.
+#
 # Nightly and weekly suites live in nightly.yml.
 #
 # scripts/gate.sh runs exactly these steps locally: `scripts/gate.sh pr` before
@@ -116,7 +125,22 @@ jobs:
   # instead of the same three expressions copied onto a dozen `if:` lines.
   plan:
     name: plan
-    runs-on: ubuntu-latest
+    # The NixOS PC for a same-repository pull request, a push to a branch
+    # other than main, and a merge group, while the PC's switch is on (owner,
+    # 2026-11-09: hosted CI had ~300 runs queued, the merge queue's `plan`
+    # among them, while the PC idled). See "PC_DIRECT" in the script below.
+    # The same expression puts `CI required` there (`&pc-light-runner`).
+    # Neither job checks out or runs repository code (plan reads the API,
+    # CI required reads `needs`), so a merge group with a fork pull request
+    # in its tree may run them on the PC; its heavy legs go to hosted runners
+    # (plan's fork check). A fork pull request runs everything hosted (§9.3).
+    # The PC runs them in its runner service's cgroup, inside flashtex.slice.
+    runs-on: &pc-light-runner >-
+      ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' &&
+      (github.event_name == 'merge_group' ||
+       (vars.FLASHTEX_PC_PR_CI != '0' && github.event_name == 'push' && github.ref != 'refs/heads/main') ||
+       (vars.FLASHTEX_PC_PR_CI != '0' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)))
+      && '["self-hosted","Linux","X64","flashtex-linux"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -179,6 +203,19 @@ jobs:
       # `hosted`. See "The gate on the NixOS PC" below.
       gate_route: ${{ steps.p.outputs.gate_route }}
       gate_pc_wait: ${{ steps.p.outputs.gate_pc_wait }}
+      # 'true' when this run's regular Linux legs (build, quick, checks, and
+      # engine parity as engine-parity-pc) run on the NixOS PC directly, with
+      # no supervisor and no fallback: a same-repository pull request, a push
+      # to a branch other than main, or a merge group with no fork pull
+      # request, while the PC's switch is on. See PC_DIRECT in the script.
+      pc_direct: ${{ steps.p.outputs.pc_direct }}
+      # `runs-on` (a JSON array) for those legs, and the shell their `run`
+      # steps use: on the PC a scope of their own in flashtex.slice (as the
+      # *-pc jobs' &pc-scope), on hosted runners GitHub's default `bash -e`.
+      linux_runner: ${{ steps.p.outputs.linux_runner }}
+      run_shell: ${{ steps.p.outputs.run_shell }}
+      # 'true' when engine parity runs as engine-parity-pc (pc_direct).
+      engine_pc: ${{ steps.p.outputs.engine_pc }}
       # How many PC jobs gate-pc must see pass: 3 legs plus 3 engine shards.
       pc_expected: ${{ steps.p.outputs.pc_expected }}
     steps:
@@ -202,6 +239,10 @@ jobs:
           # FLASHTEX_SELFHOSTED_MAC (the single switch both used to share).
           SELFHOSTED_MAC_VAR: ${{ vars.FLASHTEX_SELFHOSTED_MAC }}
           SELFHOSTED_LINUX_VAR: ${{ vars.FLASHTEX_SELFHOSTED_LINUX }}
+          # Owner, 2026-11-09 ("sweeps first on the PC"): 0 sends pull_request
+          # and branch-push runs to hosted runners while sweeps are queued
+          # (the MERGE lane's loop sets it); merge groups keep the PC. Unset = on.
+          PC_PR_CI_VAR: ${{ vars.FLASHTEX_PC_PR_CI }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -237,8 +278,10 @@ jobs:
           # Self-hosted runners (the Macs run the owner's working account, the
           # NixOS PC is on the owner's network) take only code the Commander
           # has queued or pushed to main: merge_group, push to main and manual
-          # runs. Never pull_request or branch pushes. Each side then needs its
-          # own switch to be 1.
+          # runs. Each side then needs its own switch to be 1. (Since
+          # 2026-11-09 the PC also takes same-repository pull requests and
+          # branch pushes, by the owner's approval: PC_DIRECT below. The Macs
+          # still never do.)
           trusted_event=false
           case "$EVENT" in
             merge_group|workflow_dispatch) trusted_event=true ;;
@@ -354,8 +397,35 @@ jobs:
           # never reaches a self-hosted runner; any API failure counts as a
           # fork). gate-pc watches those jobs and falls back to the hosted
           # jobs when one is not picked up within gate_pc_wait minutes.
+          #
+          # PC_DIRECT (owner, 2026-11-09). Hosted CI had ~300 runs queued and
+          # ~5 running, the merge queue (27 groups) waited hours with even its
+          # `plan` job queued, and the PC's runners idled. The owner approved
+          # running in-repo code on the PC for three events, while the PC's
+          # switch (FLASHTEX_SELFHOSTED_LINUX, as above) is 1:
+          #   - pull_request whose head is this repository (never a fork);
+          #   - push to a branch other than main (only people with write
+          #     access can push here, and gh-readonly-queue/* never runs);
+          #   - merge_group, when this group's own pull request and every
+          #     pull request in the queue are from this repository (the
+          #     fork check below; any API failure counts as a fork).
+          # Then plan, build, quick, checks, engine-parity-pc and CI required
+          # run on the PC (`linux_runner`), and the merge group's supervised
+          # route (gate_route=pc, gate-pc, *-fallback) is NOT used: a supervisor
+          # waiting on the PC would itself hold one of its three runners, and
+          # its hosted fallback is the queue this escapes. The fallback is the
+          # switch: set FLASHTEX_SELFHOSTED_LINUX to 0 and every job is hosted
+          # again from the next run. gate_route=pc stays for a manual gate run
+          # with gate_runner=pc, and engine_nixos for the push to main.
           gate_route=hosted
           fork_check=n/a
+          pc_direct=false
+          if [ "$linux_switch" = "1" ] && [ "${PC_PR_CI_VAR:-1}" != "0" ]; then
+            case "$EVENT" in
+              pull_request) [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$THIS_REPO" ] && pc_direct=true ;;
+              push) [ "$REF" != "refs/heads/main" ] && pc_direct=true ;;
+            esac
+          fi
           if [ "$tier" = "gate" ] && [ "$selfhosted_linux" = "true" ]; then
             want_pc=false
             case "$EVENT" in
@@ -384,7 +454,9 @@ jobs:
                       2>/dev/null || echo fork)
               fork_check="this PR: $own; queue: $queue"
               if [ "$own" = "ok" ] && [ "$queue" = "ok" ]; then
-                gate_route=pc
+                # A merge group goes direct (PC_DIRECT above); a manual gate
+                # run keeps the supervised route.
+                if [ "$EVENT" = "merge_group" ]; then pc_direct=true; else gate_route=pc; fi
               fi
             fi
           fi
@@ -393,7 +465,12 @@ jobs:
 
           engine_nixos=false
           engine_hosted=false
-          if [ "$engine" = "true" ]; then
+          engine_pc=false
+          if [ "$engine" = "true" ] && [ "$pc_direct" = "true" ]; then
+            # The PC's three shards, as a regular job (engine-parity-pc):
+            # no supervisor, no hosted copy.
+            engine_pc=true
+          elif [ "$engine" = "true" ]; then
             if [ "$gate_route" = "pc" ]; then
               engine_nixos=true
             elif [ "$selfhosted_linux" = "true" ] && [ "$tier" = "all" ]; then
@@ -505,6 +582,18 @@ jobs:
             echo "trip_os=$trip_os"
             echo "gate_route=$gate_route"
             echo "gate_pc_wait=$gate_pc_wait"
+            echo "pc_direct=$pc_direct"
+            echo "engine_pc=$engine_pc"
+            if [ "$pc_direct" = "true" ]; then
+              echo 'linux_runner=["self-hosted","Linux","X64","flashtex-linux"]'
+              # &pc-scope's shell: every run step in a scope of its own in
+              # flashtex.slice, never in the runner service's cgroup.
+              echo 'run_shell=systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0 nice -n 10 bash --noprofile --norc -eo pipefail {0}'
+            else
+              echo 'linux_runner=["ubuntu-latest"]'
+              # What a hosted Linux job runs when no shell is set.
+              echo 'run_shell=bash -e {0}'
+            fi
             pc_expected=0
             [ "$gate_route" = "pc" ] && pc_expected=3
             [ "$engine_nixos" = "true" ] && pc_expected=$((pc_expected + 3))
@@ -523,7 +612,8 @@ jobs:
             echo "| self-hosted Macs | $selfhosted_mac |"
             echo "| self-hosted NixOS | $selfhosted_linux |"
             echo "| Mac runner | \`$mac_runner\` |"
-            echo "| new engine parity | $engine (NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
+            echo "| Linux legs on the NixOS PC, direct (PC_DIRECT) | **$pc_direct** |"
+            echo "| new engine parity | $engine (PC direct: $engine_pc, NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
             echo "| Mac app / iPad | $apple |"
             echo "| engine-v3 host tests (Mac app) | $v3_app |"
             echo "| real-document gate (T7 infdesc-x2 late page, app stalls) | $realdoc |"
@@ -550,9 +640,17 @@ jobs:
     name: build (workspace, all targets)
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.gate_route != 'pc'
-    # GitHub-hosted on every event since 2026-10-05: on the PC it queued
-    # behind the gate's engine-parity shards (30 minutes, measured).
-    runs-on: ubuntu-latest
+    # GitHub-hosted since 2026-10-05 (on the PC it queued behind the gate's
+    # engine-parity shards, 30 minutes measured), except on plan's PC_DIRECT
+    # events (2026-11-09): there the NixOS PC, every run step in a scope of
+    # its own in flashtex.slice (plan's run_shell). The fork guard repeats
+    # plan's (§9.3): a fork pull request is always hosted.
+    runs-on: &linux-runner >-
+      ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && fromJSON(needs.plan.outputs.linux_runner) || 'ubuntu-latest' }}
+    defaults: &linux-shell
+      run:
+        shell: ${{ needs.plan.outputs.run_shell }}
     timeout-minutes: 30
     env: &build-env
       # In the merge queue, and on the push to main whose cache the queue
@@ -622,9 +720,10 @@ jobs:
     name: quick (touched crates)
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.gate_route != 'pc'
-    # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing.
-    runs-on: ubuntu-latest
+    # GitHub-hosted (owner, 2026-09-30: light, and free for a public
+    # repository), except on plan's PC_DIRECT events (2026-11-09; see build).
+    runs-on: *linux-runner
+    defaults: *linux-shell
     timeout-minutes: 45
     steps: &quick-steps
       - uses: actions/checkout@v4
@@ -717,13 +816,20 @@ jobs:
   #
   # Linux on every run, the merge queue included; macOS (T0 only) after the
   # merge (push to main, where a failure files `main-red`) and on manual
-  # runs (plan's `trip_os`). The Linux leg is always GitHub-hosted; the macOS
-  # leg's runner comes from plan.
+  # runs (plan's `trip_os`). The Linux leg is GitHub-hosted, except on plan's
+  # PC_DIRECT events (2026-11-09; see build), where it runs on the NixOS PC;
+  # the macOS leg's runner comes from plan.
   checks:
     name: gate checks and engine T0 (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.gate_route != 'pc'
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
+    runs-on: >-
+      ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) ||
+      ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+       && fromJSON(needs.plan.outputs.linux_runner) || 'ubuntu-latest') }}
+    defaults:
+      run:
+        shell: ${{ matrix.os == 'macos-15' && 'bash -e {0}' || needs.plan.outputs.run_shell }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -971,7 +1077,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     defaults: *pc-scope
     timeout-minutes: 30
-    strategy:
+    strategy: &engine-nixos-strategy
       # A red shard frees the other two runners at once for the next group.
       fail-fast: true
       matrix:
@@ -984,9 +1090,9 @@ jobs:
           # and the fixtures tier crawled (over 14 minutes instead of about 2).
           - {shard: P-T fixtures, id: fixtures, steps: build parity, jobs: 4}
           - {shard: engine tests, id: tests, steps: tests, jobs: 4}
-    env:
+    env: &engine-nixos-env
       FLASHTEX_REQUIRE_TEXLIVE: "1"
-    steps:
+    steps: &engine-nixos-steps
       - uses: actions/checkout@v4
       - *pc-stand-down
       - uses: dtolnay/rust-toolchain@stable
@@ -1018,6 +1124,26 @@ jobs:
             ${{ runner.temp }}/engine-parity/parity/documents.json
           if-no-files-found: ignore
           retention-days: 14
+
+  # The same three shards as a regular job on plan's PC_DIRECT events
+  # (a same-repository pull request, a branch push, a merge group with no fork
+  # pull request; owner, 2026-11-09): no supervisor and no hosted copy, and
+  # `CI required` needs it directly. Every run step in a scope of its own in
+  # flashtex.slice (&pc-scope). Its stand-down step never fires here (it
+  # runs only when gate_route is pc or engine_nixos is true).
+  engine-parity-pc:
+    name: engine parity (PC, ${{ matrix.shard }})
+    needs: [plan]
+    if: >-
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.engine_pc == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
+    timeout-minutes: 30
+    strategy: *engine-nixos-strategy
+    env: *engine-nixos-env
+    steps: *engine-nixos-steps
 
   engine-parity-hosted:
     name: engine parity (GitHub-hosted, ${{ matrix.shard }})
@@ -1789,6 +1915,8 @@ jobs:
       - quick-fallback
       - checks-fallback
       - engine-parity-fallback
+      # engine parity on plan's PC_DIRECT events (no supervisor there)
+      - engine-parity-pc
       - parity-fixtures
       - parity-fixtures-hosted
       - engine-parity-hosted
@@ -1800,7 +1928,10 @@ jobs:
       # queue) and, after the merge, its instruction budget on a self-hosted Mac
       - real-doc-gate
       - real-doc-instr
-    runs-on: ubuntu-latest
+    # plan's runner (see plan): the NixOS PC on a same-repository pull
+    # request, a branch push and a merge group while the PC's switch is on.
+    # It runs no repository code, only the python below on `needs`.
+    runs-on: *pc-light-runner
     timeout-minutes: 5
     steps:
       - name: Every job that ran, passed
@@ -1826,6 +1957,7 @@ jobs:
           pc_engine = "success" if gate_pc.get("engine") == "success" else "not passed"
           if (os.environ["EVENT"] == "merge_group" and plan_out.get("engine") != "false"
                   and "success" not in (pc_engine,
+                                        needs["engine-parity-pc"]["result"],
                                         needs["engine-parity-hosted"]["result"],
                                         needs["engine-parity-fallback"]["result"])):
               bad["engine-parity (PC, hosted or fallback; every shard)"] = "did not run"

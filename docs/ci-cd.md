@@ -266,6 +266,27 @@ do nothing" is one click, not an investigation.
 Target: a `merge_group` run's critical path **≤ 12 minutes when the group
 touches the engine, ≤ 5 minutes otherwise**.
 
+**Directly on the NixOS PC (owner-approved, 2026-11-09).** Hosted CI had about
+300 runs queued and 5 running, and the merge queue's groups waited hours with
+even `plan` queued, while the PC's three runners idled. Now, while
+`FLASHTEX_SELFHOSTED_LINUX` is 1, a **same-repository pull request**, a **push
+to a branch other than `main`** and a **merge group** whose own and queued pull
+requests are all from this repository run their Linux legs on the PC directly:
+`plan`, `build`, `quick`, the checks' Linux leg, the engine's parity as
+`engine-parity-pc` (three shards) and `CI required`, with no supervisor and no
+hosted copy (`plan`'s `pc_direct`, `linux_runner`, `run_shell`). Every `run`
+step of the heavy legs runs in a scope of its own in `flashtex.slice`
+(`MemoryMax=10G`, `MemoryHigh=9G`, no swap, nice 10); `plan` and `CI required`
+run no repository code and stay in the runner service's cgroup, which is itself
+in `flashtex.slice` (20 GB for all project work on the PC). A **fork pull
+request stays on GitHub-hosted runners** for every job (§9.3); a merge group
+with a fork pull request in the queue runs only `plan` and `CI required` on the
+PC (neither checks out code) and its heavy legs hosted. macOS jobs are
+unchanged. **The fallback is the switch:** `gh variable set
+FLASHTEX_SELFHOSTED_LINUX --body 0` sends every job back to hosted runners from
+the next run. The supervised route below (`gate-pc`, `*-fallback`) remains for
+a manual gate run with `gate_runner=pc`, and `gate-pc` for the push to `main`.
+
 **On the NixOS PC, with a hosted fallback (2026-11-01).** The gate's jobs are
 minutes long but waited up to 64 minutes for GitHub-hosted runners (the org's
 free plan runs about ten at once, shared with every pull request). When
@@ -692,7 +713,8 @@ Routing uses the same eligibility as the Macs but its own switch,
 `FLASHTEX_SELFHOSTED_LINUX` (unset: it follows `FLASHTEX_SELFHOSTED_MAC`):
 `plan`'s `selfhosted_linux` output is `true` for merge_group, push to main and
 workflow_dispatch when that switch is `1` — never for `pull_request` or a
-branch push. In `ci.yml` the PC runs the merge queue's Linux legs (`gate-pc`,
+branch push. (Since 2026-11-09, `pc_direct` also sends a same-repository pull request
+and a branch push to the PC; see [the merge-queue gate](#the-merge-queue-gate).) In `ci.yml` the PC runs the merge queue's Linux legs (`gate-pc`,
 above), and engine parity on every push to `main` and on a full manual run
 (`engine_nixos` in `plan`); nothing waits for it more than 5 minutes. Until
 2026-10-05 it ran the workspace build, the Linux leg of the Rust workspace and
@@ -702,7 +724,7 @@ share 8 cores). Owner, 2026-09-30: hosted Linux is free for this public
 repository, so every Linux job of `ci.yml` runs on `ubuntu-latest`. In `nightly.yml`
 (schedule, workflow_dispatch) the Linux debug workspace, excluded crates, clippy
 debt and the parity scoreboard's arxiv tier (its templates tier stays on a Mac;
-see `nightly.yml` below). `plan` and `CI required` stay on hosted Ubuntu.
+see `nightly.yml` below). `plan` and `CI required` run on the PC on `pc_direct` events, hosted otherwise.
 
 Two NixOS specifics: the engine's `build.rs` records the C++ runtime's directory
 as an rpath when it lies outside `/usr` and `/lib` (without it every engine
