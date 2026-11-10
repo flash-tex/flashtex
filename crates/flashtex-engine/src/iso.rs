@@ -2067,6 +2067,19 @@ const DEAD_SCALARS: &[&str] = &[
     "def_ref",
     "cur_box",
     "cur_mlist",
+    // `mlist_to_hlist`'s style, size, mu and penalties (tex.web §719,
+    // §726): every caller sets `cur_mlist`, `cur_style` and
+    // `mlist_penalties` right before it (`after_math` §1194, §1196,
+    // §1199; `clean_box` §720; a nucleus's sub-mlist §754, with the running
+    // conversion's own style), which sets `cur_size` and `cur_mu` from
+    // `cur_style` (§703) before anything reads them; all of it within
+    // the one command that ends the formula. Lane AUDIT-MATH: a replayed
+    // call left the last formula's style before it (the full verifier's
+    // `cur_style: 0x0 -> 0x6`)
+    "cur_style",
+    "cur_size",
+    "cur_mu",
+    "mlist_penalties",
     "just_box",
     "passive",
     "printed_node",
