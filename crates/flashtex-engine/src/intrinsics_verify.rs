@@ -489,7 +489,11 @@ impl Globals {
                 self.describe_word(iv)
             ));
         }
-        // lists shared by both paths: the same node must have the same count
+        // an entry both paths left pointing at the same node (a list each
+        // made afresh from the same free node, or one they share): the
+        // node must hold the same tokens and the same count. The word
+        // comparison above cannot see this: the words are equal and `mem`
+        // is compared only through what reaches it.
         let dbg = std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some();
         let mut shown = 0;
         for (q, a) in &n.lists {
@@ -504,16 +508,22 @@ impl Globals {
             let w = self.eqtb[(*q - 1) as usize].hh();
             if is_list(w.b0(), w.rh()) {
                 let b = self.list_snap(w.rh());
-                if a.1 == b.1
-                    && a.0 != b.0
-                    && self.eqtb_word_n(n, *q, p) == self.eqtb[(*q - 1) as usize].0
-                {
-                    d.push(format!(
-                        "eqtb[{q}] \\{}: shared list, reference count {} -> {}",
-                        self.cs_name_string(*q),
-                        a.0,
-                        b.0
-                    ));
+                if *a != b && self.eqtb_word_n(n, *q, p) == self.eqtb[(*q - 1) as usize].0 {
+                    d.push(if a.1 == b.1 {
+                        format!(
+                            "eqtb[{q}] \\{}: shared list, reference count {} -> {}",
+                            self.cs_name_string(*q),
+                            a.0,
+                            b.0
+                        )
+                    } else {
+                        format!(
+                            "eqtb[{q}] \\{}: same node, tokens {:?} -> {:?}",
+                            self.cs_name_string(*q),
+                            &a.1[..a.1.len().min(16)],
+                            &b.1[..b.1.len().min(16)]
+                        )
+                    });
                 }
             }
         }
