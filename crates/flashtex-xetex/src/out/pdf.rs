@@ -1111,8 +1111,6 @@ impl<'a> Writer<'a> {
         used: &BTreeSet<u16>,
     ) -> Result<(), String> {
         let font = data.font.as_ref().map_err(String::clone)?;
-        let upm = font.units_per_em as f64;
-        let k = 1000.0 / upm;
         let info = FaceInfo::read(&r.program, index);
         // the codes of the content stream: glyph ids, or the CIDs of a
         // CID-keyed CFF font (its charset)
@@ -1173,26 +1171,9 @@ impl<'a> Writer<'a> {
             file.unwrap_or_default(),
         );
         self.object(fd, d.as_bytes());
-        // widths
-        let mut wa = String::from("[");
-        let mut prev: Option<u16> = None;
+        // widths, as xdvipdfmx writes them
         let by_code: BTreeMap<u16, u16> = used.iter().map(|&g| (code_of(g), g)).collect();
-        for (&c, &g) in &by_code {
-            let w = n(font.advance(g) as f64 * k, 3);
-            if prev.is_some_and(|p| p + 1 == c) {
-                let _ = write!(wa, " {w}");
-            } else {
-                if prev.is_some() {
-                    wa.push(']');
-                }
-                let _ = write!(wa, " {c} [{w}");
-            }
-            prev = Some(c);
-        }
-        if prev.is_some() {
-            wa.push(']');
-        }
-        wa.push_str(" ]");
+        let (dw, wa) = cid_widths(font, &r.program, index, cff, &by_code);
         // a CID-keyed font's own character collection, else Identity
         let ros = if cids.is_some() {
             font.cff_table().and_then(super::cffcid::ros)
@@ -1221,9 +1202,10 @@ impl<'a> Writer<'a> {
         let mut d = String::new();
         let _ = write!(
             d,
-            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo {csi} /FontDescriptor {fd} 0 R /DW {} /W {wa}{}>>",
+            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo {csi} /FontDescriptor {fd} 0 R /DW {}{}{}>>",
             if cff { "CIDFontType0" } else { "CIDFontType2" },
-            n(font.advance(0) as f64 * k, 3),
+            fmt_num(dw, 8),
+            wa.map(|w| format!(" /W {w}")).unwrap_or_default(),
             if cff { "" } else { " /CIDToGIDMap /Identity" }
         );
         self.object(cid, d.as_bytes());
@@ -1868,6 +1850,144 @@ fn font_program(
         // CIDs are its glyph ids, PDF 32000-1 §9.7.4.2)
         Err(_) => ("FontFile3", "/Subtype /OpenType", whole.to_vec(), false),
     })
+}
+
+/// `PDFUNIT` (cidtype0.c, cidtype2.c): `v` font units in thousandths of
+/// an em, rounded to an integer (`ROUND(1000.0*v/unitsPerEm, 1)`).
+fn pdfunit(v: f64, upm: u16) -> f64 {
+    (1000.0 * v / upm as f64 + 0.5).floor()
+}
+
+/// The `/DW` and `/W` of a CIDFont whose glyph `g` has CID `code_of(g)`,
+/// as xdvipdfmx writes them: every width `PDFUNIT`-rounded, `/DW` that of
+/// `.notdef` for CFF outlines (`add_CIDHMetrics`, cidtype0.c) and for
+/// TrueType outlines the advance most of the subset's glyphs have
+/// (`tt_build_tables`, tt_glyf.c: `.notdef`, the used glyphs and their
+/// composite components, each once; the smallest such advance on a tie,
+/// none above the em), CIDs whose width is `/DW`'s left out of `/W`, the
+/// others grouped in runs of consecutive CIDs (`c [w1 w2 ...]`), no `/W`
+/// when none is left (`add_TTCIDHMetrics`, cidtype2.c).
+fn cid_widths(
+    font: &flashtex_pdf::truetype::TrueTypeFont,
+    program: &[u8],
+    index: u32,
+    cff: bool,
+    by_code: &BTreeMap<u16, u16>,
+) -> (f64, Option<String>) {
+    let upm = font.units_per_em;
+    let mut dw = font.advance(0) as f64;
+    if !cff {
+        let used: BTreeSet<u16> = by_code.values().copied().collect();
+        let mut count: BTreeMap<u16, u32> = BTreeMap::new();
+        for g in glyf_closure(program, index, &used) {
+            let a = font.advance(g);
+            if a <= upm {
+                *count.entry(a).or_default() += 1;
+            }
+        }
+        // the first (smallest) advance with the highest count
+        let mut best: Option<(u16, u32)> = None;
+        for (&a, &c) in &count {
+            if best.is_none_or(|(_, b)| c > b) {
+                best = Some((a, c));
+            }
+        }
+        if let Some((a, _)) = best {
+            if a != 0 {
+                dw = a as f64;
+            }
+        }
+    }
+    let dw = pdfunit(dw, upm);
+    let mut wa = String::from("[");
+    let mut prev: Option<u16> = None;
+    for (&c, &g) in by_code {
+        let w = pdfunit(font.advance(g) as f64, upm);
+        if w == dw {
+            if prev.take().is_some() {
+                wa.push(']');
+            }
+            continue;
+        }
+        if prev.is_some_and(|p| p + 1 == c) {
+            let _ = write!(wa, " {}", fmt_num(w, 8));
+        } else {
+            if prev.is_some() {
+                wa.push(']');
+            }
+            let _ = write!(wa, " {c} [{}", fmt_num(w, 8));
+        }
+        prev = Some(c);
+    }
+    if prev.is_some() {
+        wa.push(']');
+    }
+    if wa == "[" {
+        return (dw, None);
+    }
+    wa.push_str(" ]");
+    (dw, Some(wa))
+}
+
+/// `.notdef`, the glyphs of `used` and every glyph their composite glyphs
+/// draw (`glyf`/`loca` of face `index`): the glyphs a TrueType subset of
+/// `used` holds.
+fn glyf_closure(data: &[u8], index: u32, used: &BTreeSet<u16>) -> BTreeSet<u16> {
+    use super::tounicode::table;
+    let rd16 = |t: &[u8], o: usize| t.get(o..o + 2).map(|s| u16::from_be_bytes([s[0], s[1]]));
+    let rd32 = |t: &[u8], o: usize| {
+        t.get(o..o + 4)
+            .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+    };
+    let mut out = BTreeSet::new();
+    let (Some(head), Some(loca), Some(glyf)) = (
+        table(data, index, b"head"),
+        table(data, index, b"loca"),
+        table(data, index, b"glyf"),
+    ) else {
+        out.insert(0);
+        out.extend(used);
+        return out;
+    };
+    let long = rd16(head, 50) == Some(1);
+    let at = |g: u16| -> Option<(usize, usize)> {
+        let (s, e) = if long {
+            (rd32(loca, 4 * g as usize)?, rd32(loca, 4 * g as usize + 4)?)
+        } else {
+            (
+                2 * rd16(loca, 2 * g as usize)? as u32,
+                2 * rd16(loca, 2 * g as usize + 2)? as u32,
+            )
+        };
+        Some((s as usize, e as usize))
+    };
+    let mut stack: Vec<u16> = std::iter::once(0).chain(used.iter().copied()).collect();
+    while let Some(g) = stack.pop() {
+        if !out.insert(g) {
+            continue;
+        }
+        let Some((s, e)) = at(g) else { continue };
+        let Some(d) = glyf.get(s..e) else { continue };
+        if d.len() < 10 || (rd16(d, 0).unwrap_or(0) as i16) >= 0 {
+            continue;
+        }
+        let mut p = 10;
+        while let (Some(flags), Some(part)) = (rd16(d, p), rd16(d, p + 2)) {
+            stack.push(part);
+            p += 4 + if flags & 1 != 0 { 4 } else { 2 };
+            if flags & 8 != 0 {
+                p += 2;
+            } else if flags & 0x40 != 0 {
+                p += 4;
+            } else if flags & 0x80 != 0 {
+                p += 8;
+            }
+            if flags & 0x20 == 0 {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// What the PDF writer last made for one face (`super::fonts::FaceData`),
@@ -2882,8 +3002,10 @@ mod tests {
             .resolve(&f.get("DescendantFonts").and_then(Obj::as_array).unwrap()[0])
             .as_dict()
             .unwrap();
-        let w = d.get("W").and_then(Obj::as_array).unwrap();
-        assert_eq!(w[0].as_number(), Some(cid.to_string().as_str()));
+        // a full-width glyph: its width is .notdef's, so `/DW`'s, and
+        // xdvipdfmx writes no `/W` (measured with FandolSong)
+        assert_eq!(d.get("DW").and_then(Obj::as_number), Some("1000"));
+        assert!(d.get("W").is_none());
         let fd = pdf
             .resolve(d.get("FontDescriptor").unwrap())
             .as_dict()
@@ -2966,6 +3088,65 @@ mod tests {
         for c in ['日', '文'] {
             let g = font.glyph_id(c).unwrap();
             assert_eq!(rev.get(&g), Some(&c));
+        }
+    }
+
+    /// `/DW` and `/W` as xdvipdfmx writes them, measured (TeX Live 2026
+    /// xetex + xdvipdfmx 20260317, the text drawn by `\font\f="[path]"`):
+    /// JetBrains Mono (in the repository) has every width `/DW`'s, so no
+    /// `/W`; Georgia (macOS) and DejaVu Sans (TeX Live), when present, have
+    /// a `/DW` most of the subset's glyphs share, composite components
+    /// counted, and integer widths in runs.
+    #[test]
+    fn cid_widths_are_xdvipdfmxs() {
+        let widths = |path: &str, text: &str| -> Option<(f64, Option<String>)> {
+            let data = std::fs::read(path).ok()?;
+            let font = flashtex_pdf::truetype::TrueTypeFont::parse(data.clone()).unwrap();
+            let by_code: BTreeMap<u16, u16> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| font.glyph_id(c).unwrap())
+                .map(|g| (g, g))
+                .collect();
+            Some(cid_widths(&font, &data, 0, false, &by_code))
+        };
+        let jb = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-Regular.ttf"
+        );
+        assert_eq!(widths(jb, "Héllo wörld ÆŒ ñ ü"), Some((600.0, None)));
+        if let Some(g) = widths(
+            "/System/Library/Fonts/Supplemental/Georgia.ttf",
+            "The quick brown fox jumps over the lazy dog Ééàü",
+        ) {
+            assert_eq!(
+                g,
+                (
+                    500.0,
+                    Some(
+                        "[ 55 [619] 68 [504 560 454 574 483 325 509 582 293 292 536 286 881 \
+                         591 539 571 560 410 432 345 575 497 737 505 492 444] 101 [653] \
+                         106 [504] 112 [483] 129 [575] ]"
+                            .into()
+                    )
+                )
+            );
+        }
+        if let Some(d) = widths(
+            "/Library/TeX/Root/texmf-dist/fonts/truetype/public/dejavu/DejaVuSans.ttf",
+            "Ééàüñ ÅÇ ŷ ẅ ǖ",
+        ) {
+            assert_eq!(
+                d,
+                (
+                    500.0,
+                    Some(
+                        "[ 135 [684] 137 [698] 139 [632] 162 [613] 171 [615] 179 [634] \
+                         190 [634] 313 [592] 408 [634] 2430 [818] ]"
+                            .into()
+                    )
+                )
+            );
         }
     }
 
