@@ -670,7 +670,7 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
         ));
     }
     let ck = p.ck;
-    g.retain_checkpoints(&|id| id != ck);
+    g.drop_checkpoint(ck);
     let name = g.cs_name_string(g.intr_slot_cs(slot));
     if !diffs.is_empty() {
         eprintln!(
@@ -702,7 +702,7 @@ pub(crate) fn verify_aborted(g: &mut Globals, slot: usize, why: Why) {
         return;
     };
     let ck = p.ck;
-    g.retain_checkpoints(&|id| id != ck);
+    g.drop_checkpoint(ck);
     let name = g.cs_name_string(g.intr_slot_cs(slot));
     STATS.with(|s| {
         let mut s = s.borrow_mut();

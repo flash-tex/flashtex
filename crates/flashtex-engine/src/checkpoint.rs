@@ -2080,6 +2080,31 @@ impl Globals {
         records.retain(|(i, _)| ids.contains(i));
     }
 
+    /// Drop checkpoint `id` alone, keeping every other one. The newest goes
+    /// as if it had never been taken (`Arena::drop_newest`, where
+    /// `retain_checkpoints` keeps the newest): the open log becomes the
+    /// previous checkpoint's, and so does the line journal since it.
+    ///
+    /// Precondition: `id` is its caller's own, made and given up within a
+    /// stretch of the run (the intrinsics verifier's, BOX-MEMO's full
+    /// verification); never one a page, a restart point or a pending
+    /// branch still holds.
+    pub fn drop_checkpoint(&mut self, id: CheckpointId) {
+        let pending = self.layer_ref().is_some_and(|l| l.pending.is_some());
+        if pending || self.arena.checkpoint_ids().last() != Some(&id) {
+            // (a pending branch may start at the newest: `retain_checkpoints`
+            // keeps it)
+            self.retain_checkpoints(&|k| k != id);
+            return;
+        }
+        self.arena.drop_newest();
+        let records = &mut self.layer().records;
+        if let Some(k) = records.iter().rposition(|(i, _)| *i == id) {
+            let (_, r) = records.remove(k);
+            crate::lineshift::unrecord(r.lines.here);
+        }
+    }
+
     /// `retain_checkpoints` for the pending branch (the old run's future,
     /// detached by the last restore): drop every checkpoint of it that
     /// `keep` rejects, except the restore target and the old run's newest,

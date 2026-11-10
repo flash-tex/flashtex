@@ -137,6 +137,17 @@ pub fn record(g: &Globals) -> Rec {
     })
 }
 
+/// The newest checkpoint was dropped as if never taken
+/// (`Globals::drop_checkpoint`): the journal entries `record` took for it
+/// go back in front of those made since.
+pub fn unrecord(mut here: Vec<LineRead>) {
+    with(|s| {
+        s.taken -= here.len() as u64;
+        here.append(&mut s.events);
+        s.events = here;
+    })
+}
+
 /// For BOX-MEMO (src/boxmemo.rs): the journal entries made so far, the
 /// live taints, and whether a definition is confining reads. A recorded
 /// call whose run changes any of them is not replayed (a replay would make
