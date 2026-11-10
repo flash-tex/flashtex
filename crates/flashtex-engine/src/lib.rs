@@ -44,6 +44,8 @@ pub use flashtex_runtime::bundle;
 pub mod checkpoint;
 pub mod cli;
 #[cfg(not(feature = "tex82"))]
+pub mod csindex;
+#[cfg(not(feature = "tex82"))]
 pub mod diag;
 #[cfg(not(feature = "tex82"))]
 pub mod displaylist;

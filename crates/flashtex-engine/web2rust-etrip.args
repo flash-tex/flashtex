@@ -35,6 +35,9 @@
 --change crates/flashtex-engine/changes/intrinsics.ch
 --change crates/flashtex-engine/changes/diagnostics.ch
 --change crates/flashtex-engine/changes/throughput.ch
+# changes/throughput.ch [9]: id_lookup's index of names lives outside the
+# word space, in Globals' `host` field (src/csindex.rs).
+--host-state crate::csindex::Host
 # Where the line-shift journal observes the engine (DESIGN.md 5.3 rule (c);
 # changes nothing the program computes).
 --change crates/flashtex-engine/changes/lineshift.ch

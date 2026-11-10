@@ -192,6 +192,90 @@
 % block where one has length len, newest first, so the strings compared
 % with str_eq_str are the loop's, in its order. Neither writes anything.
 % len=0 is still answered here (""); s, the loop's variable, goes.
+%
+% [9] id_lookup (section 259): a direct-mapped index in front of the chain
+% walk (DESIGN.md section 5.6 item 3, a fast \csname lookup; lane L6,
+% docs/design/engine-v2/L6.md section 4, E2; src/csindex.rs).
+%
+% A LaTeX format holds tens of thousands of multiletter names in
+% hash_prime=8501 chains, so a lookup walks several entries, each a
+% dependent load of hash and str_start. flashtex_csx_find(j,l) looks the
+% name buffer[j..j+l-1] up in an index outside the word space (Globals'
+% host field) that maps a fingerprint of a name to the location the walk
+% returned for it before; it returns that location p only if p's text in
+% the current state is that name, character for character, and 0 otherwise,
+% when the walk runs as before and flashtex_csx_note(j,l,p) records where
+% it ended (found or inserted; never undefined_control_sequence).
+%
+% Proof that a nonzero answer is the walk's. The walk returns the first
+% location in the chain from h(name)+hash_base whose text is the name. A
+% location in the hash proper (hash_base..hash_base+hash_size-1 and web2c's
+% hash_extra region) gets its text only from section 260's insertion, at the
+% end of the chain the walk from h(name) has just searched without finding
+% the name, and a next field is set only from 0, so whatever a chain reached
+% it still reaches. (BOX-MEMO's replays enter names where section 260 would,
+% src/boxmemo.rs bm_new_cs_placeable; readset.rs only takes a name out of
+% its chain, linking its predecessor past it, and clears its text, and
+% renumbers strings without changing their characters: every other name
+% stays where the walk finds it.) So in every state at most one such
+% location holds a given name, and it is on the walk from h(name), which
+% returns it. The index holds only
+% locations the walk returned, which are in the hash proper (the frozen and
+% font-identifier locations, whose texts repeat real names, are never
+% returned by it), so an index location whose text is the name is the walk's
+% answer, in every state: after a restore, a convergence jump, a format
+% loaded or restored, or a name removed, the check reads the state as it is
+% now. Neither routine writes the word space; the hooks after found
+% (read-sets, BOX-MEMO, intrinsics) run as before, with the same j, l, p.
+
+@x [18] m.259 l.6566 - id_lookup: a direct-mapped index in front of the chain walk [9]
+@p function id_lookup(@!j,@!l:integer):pointer; {search the hash table}
+label found; {go here if you found it}
+var h:integer; {hash code}
+@!d:integer; {number of characters in incomplete current string}
+@!p:pointer; {index in |hash| array}
+@!k:pointer; {index in |buffer| array}
+begin @<Compute the hash code |h|@>;
+p:=h+hash_base; {we start searching here; note that |0<=h<hash_prime|}
+loop@+begin if text(p)>0 then if length(text(p))=l then
+    if str_eq_buf(text(p),j) then goto found;
+  if next(p)=0 then
+    begin if no_new_control_sequence then
+      p:=undefined_control_sequence
+    else @<Insert a new control sequence after |p|, then make
+      |p| point to it@>;
+    goto found;
+    end;
+  p:=next(p);
+  end;
+@y
+@p function flashtex_csx_find(@!j,@!l:integer):pointer; external;
+procedure flashtex_csx_note(@!j,@!l:integer;@!p:pointer); external;
+function id_lookup(@!j,@!l:integer):pointer; {search the hash table}
+label done, {go here when the walk has found or entered the name}
+  found; {go here if you found it}
+var h:integer; {hash code}
+@!d:integer; {number of characters in incomplete current string}
+@!p:pointer; {index in |hash| array}
+@!k:pointer; {index in |buffer| array}
+begin p:=flashtex_csx_find(j,l);
+if p<>0 then goto found;
+@<Compute the hash code |h|@>;
+p:=h+hash_base; {we start searching here; note that |0<=h<hash_prime|}
+loop@+begin if text(p)>0 then if length(text(p))=l then
+    if str_eq_buf(text(p),j) then goto done;
+  if next(p)=0 then
+    begin if no_new_control_sequence then
+      begin p:=undefined_control_sequence; goto found;
+      end
+    else @<Insert a new control sequence after |p|, then make
+      |p| point to it@>;
+    goto done;
+    end;
+  p:=next(p);
+  end;
+done: flashtex_csx_note(j,l,p);
+@z
 
 @x [24] m.363 l.8501 - get_next: the external-file part out of line.
 @p procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
