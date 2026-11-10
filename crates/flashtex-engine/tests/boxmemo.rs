@@ -207,6 +207,24 @@ fn void_box_reads_are_part_of_the_key() {
 }
 
 #[test]
+fn the_error_count_is_part_of_the_key() {
+    // (#2294, lane FUZZ-REPLAY) a paragraph's end sets `error_count` to 0
+    // (`end_graf`, tex.web §1096). A call recorded at 0 replayed after an
+    // error left the count at 1, and the 99 errors after it then stopped
+    // the run at 100 ("That makes 100 errors"), where pdfTeX goes on
+    let s = check(
+        "error-count",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\hsize=100pt \\parfillskip=0pt plus 1fil\n\
+         \\def\\measure#1{\\setbox0\\vbox{\\noindent\\vrule\\par}\\global\\dimen1=\\ht0 \\setbox0\\hbox{}}\n\
+         \\def\\e#1{\\ifnum#1>0 \\errmessage{e}\\expandafter\\e\\expandafter{\\number\\numexpr#1-1\\relax}\\fi}\n\
+         \\errmessage{s}\\noindent\\par\n\
+         \\measure{1}\\measure{1}\\measure{1}\\errmessage{a}\\measure{1}\\e{99}\\message{[done]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn draw_calls_replay_with_their_hole() {
     // a call in restricted horizontal mode that moves a box out of a
     // register it did not make (`\\box9`) and appends a frame around it:
@@ -637,14 +655,16 @@ fn calls_in_math_groups_compare_their_save_stack() {
     // `\\label` in `equation`). The full verifier walks the save stack
     // group by group as `show_save_groups` does; it took the display's
     // nest level for inline math under a math group, read the `$$` as an
-    // `\\eqno` with a saved word, and misread every entry below
+    // `\\eqno` with a saved word, and misread every entry below. (Each
+    // display is an error here, for want of math fonts; the `\\par` after
+    // it sets the error count back to 0, which the key holds, #2294)
     let s = check(
         "math-group",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
          \\hsize=100pt \\tracingonline=0\n\
          \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
          \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
-         \\one\\one\\one\\end\n",
+         \\one\\par\\one\\par\\one\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
