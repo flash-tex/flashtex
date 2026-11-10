@@ -215,6 +215,8 @@ struct Target {
     /// steps (`checkpoint::take_restore_steps`), taken then.
     first_marks: Vec<crate::os::PhaseMark>,
     first_restore_us: [u64; 5],
+    /// Every restore to the first page (`checkpoint::take_restores`).
+    first_restores: Vec<[u64; 9]>,
     first_io: [(u32, u64); 8],
     /// Pages below `next` the cache did not hold when they were due, so
     /// that the client was not sent them (a reopen from S₁, `incr::Session::
@@ -520,6 +522,7 @@ impl Live {
                 crate::os::phase_mark('d');
                 t.first_marks = crate::os::phase_marks();
                 t.first_restore_us = crate::checkpoint::take_restore_steps();
+                t.first_restores = crate::checkpoint::take_restores();
                 t.first_io = crate::os::io_times();
                 // (`FLASHTEX_PERF_MARKS`: `d`, the first page delivered)
                 crate::os::perf_mark_as('d');
@@ -943,6 +946,8 @@ impl Engine {
             conn.id
         ));
         let cpu0 = incr::thread_cpu_s();
+        // (what restores before this compile left: an abandoned run's)
+        drop(crate::checkpoint::take_restores());
         let pmu0 = crate::os::thread_counts();
         let flt0 = crate::os::events();
         let out = conn.out.clone();
@@ -1113,6 +1118,7 @@ impl Engine {
             first_flt: None,
             first_marks: vec![],
             first_restore_us: [0; 5],
+            first_restores: Vec::new(),
             first_io: [(0, 0); 8],
             missing: Default::default(),
             owed: Vec::new(),
@@ -1599,6 +1605,17 @@ impl Engine {
                         t.first_restore_us
                             .iter()
                             .map(|&u| Json::Int(u as i64))
+                            .collect(),
+                    ),
+                ));
+                // (every restore to the first page: steps, then the rewind's
+                // kind, chunks, threads and copying µs)
+                st.push((
+                    "restores".to_string(),
+                    Json::Arr(
+                        t.first_restores
+                            .iter()
+                            .map(|r| Json::Arr(r.iter().map(|&u| Json::Int(u as i64)).collect()))
                             .collect(),
                     ),
                 ));

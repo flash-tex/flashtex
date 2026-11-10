@@ -7088,7 +7088,9 @@ impl Session {
             system::guard_every_output(true);
             g.restore_discard(r)
         } else {
-            g.restore(r)
+            // (a comparison that holds restores to `p2` next: by way of
+            // there, which that restore then moves ahead to, `arena::Ahead`)
+            g.restore_via(r, probe.as_ref().map(|p| p.p2))
         };
         crate::os::phase_mark('r');
         if let Err(e) = restored {
@@ -7422,7 +7424,11 @@ impl Session {
                         let held = std::mem::take(&mut o.probe_shifts);
                         drop(o);
                         let (edits, changed, shifts, fixed_writes) = again.ok_or("no edits")?;
-                        if let Err(e) = g.reattach_pending() {
+                        // (lazily: the restore to `p2` follows, which moves
+                        // there from the reattach's target when the restore
+                        // to it moved back from `p2`, `arena::Ahead`; the
+                        // compile makes a reattach it leaves whole)
+                        if let Err(e) = g.reattach_pending_lazily() {
                             return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
                         }
                         if let Err(e) = self.held_shifts(r, p2, &held, &edits) {

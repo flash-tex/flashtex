@@ -313,6 +313,21 @@ pub fn take_restore_steps() -> [u64; 5] {
     RESTORE_STEPS.with(|c| c.replace([0; 5]))
 }
 
+thread_local! {
+    /// Every [`Globals::restore`] since the last [`take_restores`]: its
+    /// [`RESTORE_STEPS`], then its rewind (`arena::take_rewind_stats`: how,
+    /// chunks, threads, the copying's µs). Measurement only (lane
+    /// TYPING-50MS); a few entries a compile, at most [`RESTORES_MAX`].
+    static RESTORES: std::cell::RefCell<Vec<[u64; 9]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+const RESTORES_MAX: usize = 16;
+
+/// [`RESTORES`], cleared.
+pub fn take_restores() -> Vec<[u64; 9]> {
+    RESTORES.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
 /// Newer work may be waiting for the engine (the host's server thread).
 pub fn hint_preempt() {
     PREEMPT_HINT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1225,18 +1240,28 @@ impl Globals {
     /// checkpoints, the word space's redo log, its output files' tails) so
     /// that `redo_to` can jump back to it.
     pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
+        self.restore_via(id, None)
+    }
+
+    /// `restore(id)` where a restore to the later checkpoint `then` is
+    /// likely next (`Arena::restore_branch_via`): the same result.
+    pub fn restore_via(
+        &mut self,
+        id: CheckpointId,
+        then: Option<CheckpointId>,
+    ) -> Result<(), String> {
         let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
         // A lazy reattach (`reattach_pending_lazily`) stays lazy only for a
-        // restore to its target, and only while what the host state's
-        // capture reads of the word space is the scalars (filled from the
-        // state): the conditionals' lines `lineshift::marks` reads from
-        // `mem` when they nest deeper than its tags.
-        if self
-            .arena
-            .lazy_target()
-            .is_some_and(|t| t != id || crate::lineshift::marks_read_mem(self))
-        {
+        // restore to its target, or one the arena moves to from there over
+        // the logs between the two (`arena::Ahead`), and only while what the
+        // host state's capture reads of the word space is the scalars
+        // (filled from the state): the conditionals' lines
+        // `lineshift::marks` reads from `mem` when they nest deeper than its
+        // tags.
+        if self.arena.lazy_target().is_some_and(|t| {
+            (t != id && !self.arena.lazy_moves_to(id)) || crate::lineshift::marks_read_mem(self)
+        }) {
             self.arena.materialize();
         }
         system::file_trace(|| format!("restore {id}"));
@@ -1340,7 +1365,10 @@ impl Globals {
         let rs_old = self.layer().rs.clone();
         self.spill_scalars();
         let t_pre = t0.elapsed();
-        let branch = self.arena.restore_branch(id)?;
+        let branch = match then {
+            Some(t) => self.arena.restore_branch_via(id, t)?,
+            None => self.arena.restore_branch(id)?,
+        };
         self.fill_scalars();
         let t_branch = t0.elapsed();
         let detached_ids: std::collections::HashSet<CheckpointId> =
@@ -1367,14 +1395,21 @@ impl Globals {
         {
             let us = |d: std::time::Duration| d.as_micros() as u64;
             let all = t0.elapsed();
-            RESTORE_STEPS.with(|c| {
-                c.set([
-                    us(t_drop),
-                    us(t_tails - t_drop),
-                    us(t_pre - t_tails),
-                    us(t_branch - t_pre),
-                    us(all - t_branch),
-                ])
+            let steps = [
+                us(t_drop),
+                us(t_tails - t_drop),
+                us(t_pre - t_tails),
+                us(t_branch - t_pre),
+                us(all - t_branch),
+            ];
+            RESTORE_STEPS.with(|c| c.set(steps));
+            let [kind, chunks, threads, copy] = crate::arena::take_rewind_stats();
+            RESTORES.with(|c| {
+                let mut v = c.borrow_mut();
+                if v.len() < RESTORES_MAX {
+                    let [a, b, c, d, e] = steps;
+                    v.push([a, b, c, d, e, kind, chunks, threads, copy]);
+                }
             });
         }
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
