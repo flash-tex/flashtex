@@ -178,6 +178,12 @@ pub struct Options {
     /// Pages around the cursor whose checkpoints all stay (`thin`;
     /// `DEFAULT_DENSE`, a performance mode's `crate::profile::Profile::dense`).
     pub dense: usize,
+    /// Beyond `dense` pages from the cursor, page checkpoints are kept one
+    /// in 2, 4, ... up to one in `far` (log-spaced by the distance's octave,
+    /// `far_every`; 1: every one): the far pages' logs merged, a far edit
+    /// restarting from the nearest kept page before it (lane MEMORY,
+    /// DESIGN.md §5.2's retention; `crate::profile::Profile::far`).
+    pub far: usize,
     /// A checkpoint after this much engine time without one (0: never).
     pub timed_s: f64,
     /// Checkpoints between shipouts, after `build_page` (`Point::Segment`),
@@ -225,6 +231,7 @@ impl Default for Options {
             t1_cache: 32 << 20,
             fmt_image: true,
             dense: 0,
+            far: 1,
             timed_s: 0.0,
             segment_s: None,
             // FLASHTEX_PREAMBLE_LINE_S: another interval, or `off`
@@ -256,6 +263,7 @@ impl Options {
     pub fn apply_profile(&mut self, p: &crate::profile::Profile) {
         self.budget = p.budget;
         self.dense = p.dense;
+        self.far = p.far;
         self.timed_s = p.timed_s;
         self.segment_s = p.segment_s;
         self.t1_cache = match p.mode {
@@ -627,6 +635,7 @@ struct Obs {
     /// checkpoints before the run.
     budget: usize,
     dense: usize,
+    far: usize,
     cursor: usize,
     s0: Option<CheckpointId>,
     keep_r: Option<CheckpointId>,
@@ -803,6 +812,7 @@ impl Obs {
             g,
             self.budget,
             self.dense,
+            self.far,
             self.cursor,
             self.s0,
             self.keep_r,
@@ -6839,6 +6849,7 @@ impl Session {
             pre_patch_result: None,
             budget: self.opts.budget,
             dense: self.opts.dense,
+            far: self.opts.far,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
             keep_r: None,
@@ -8219,7 +8230,7 @@ impl Session {
         let s0 = self.s0.as_ref().map(|s| s.id);
         // (the loaded format's image is held within the same budget)
         let budget = self.opts.budget.saturating_sub(crate::fmtimage::bytes());
-        let dense = self.opts.dense;
+        let (dense, far) = (self.opts.dense, self.opts.far);
         let Some(g) = self.g.as_mut() else { return };
         // (`crate::midline`: the checkpoints a refill left holding the old line)
         let stale = std::mem::take(&mut self.stale_midline);
@@ -8238,6 +8249,7 @@ impl Session {
             g,
             budget,
             dense,
+            far,
             cursor,
             s0,
             self.s1_open,
@@ -8539,10 +8551,37 @@ pub const MAX_PASSES: usize = 5;
 /// (`Point::PreambleLine`: a preamble edit restarts at one) are always kept. `pages` maps a page
 /// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
 #[allow(clippy::too_many_arguments)]
+/// Of the page checkpoints `d` pages from the cursor, beyond `dense`, the
+/// one in `far_every(d)` kept always (`Options::far`): 1 within `2 dense`,
+/// then 2, 4, ... by the octave of `d / dense`, at most `far`.
+fn far_every(d: usize, dense: usize, far: usize) -> usize {
+    if far <= 1 || d <= 2 * dense.max(1) {
+        return 1;
+    }
+    let octave = (usize::BITS - 1 - (d / dense.max(1)).leading_zeros()).min(40);
+    (1usize << octave).min(far)
+}
+
+#[cfg(test)]
+#[test]
+fn far_every_is_log_spaced_and_capped() {
+    // within twice the dense window every page; then by octave, capped
+    let e = |d| far_every(d, 16, 4);
+    assert_eq!(
+        [e(0), e(16), e(32), e(33), e(63), e(64), e(127), e(1000)],
+        [1, 1, 1, 2, 2, 4, 4, 4]
+    );
+    assert_eq!(far_every(1000, 16, 1), 1);
+    assert_eq!(far_every(1000, 0, 8), 8);
+    assert_eq!(far_every(100, 4, 8), 8);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn thin(
     g: &mut Globals,
     budget: usize,
     dense: usize,
+    far: usize,
     cursor: usize,
     s0: Option<CheckpointId>,
     keep_also: Option<CheckpointId>,
@@ -8583,11 +8622,17 @@ fn thin(
             || Some(id) == last_page
             || preamble.contains(&id)
     };
+    // Far from the cursor, one page checkpoint in `far_every`: a far edit
+    // restarts at most `far - 1` pages earlier, and its run takes the pages
+    // between again, near the cursor then. Merged, never dropped: every
+    // state kept stays exact (`retain_checkpoints`).
     let near = |id: CheckpointId| {
-        pages.contains_key(&id)
-            || ck_pages
-                .get(&id)
-                .is_some_and(|&p| p.abs_diff(cursor) <= dense)
+        pages.get(&id).is_some_and(|&j| {
+            let d = j.abs_diff(cursor);
+            d <= dense || j.is_multiple_of(far_every(d, dense, far))
+        }) || ck_pages
+            .get(&id)
+            .is_some_and(|&p| p.abs_diff(cursor) <= dense)
     };
     if g.checkpoints().iter().any(|&id| !pinned(id) && !near(id)) {
         g.retain_checkpoints(&|id| pinned(id) || near(id));
