@@ -864,6 +864,18 @@ impl Type1<'_, '_> {
             }
             return Ok(());
         }
+        // writet1.c's `cc_stack`/`stack_ptr` are file statics that no font
+        // start resets (pdfTeX 1.40.29 writet1.c: `cs_init` and `writet1`
+        // leave them, only `cc_clear` empties them): the walks start on the
+        // stack the last font's walks left, and leave theirs to the next.
+        self.cs.set_stack(&self.persist.cc_stack);
+        let walked = self.mark_walks();
+        self.persist.cc_stack = self.cs.stack_values();
+        walked
+    }
+
+    /// The walks of [`Self::mark_glyphs`]: `.notdef`, then the glyph set.
+    fn mark_walks(&mut self) -> Result<()> {
         let mut env = MarkEnv {
             len_iv: self.len_iv,
             last_arg_other_subr3: &mut self.persist.last_arg_other_subr3,
@@ -1066,6 +1078,17 @@ pub(super) mod tests {
     }
 
     fn embed_with(font: &[u8], typ: u16, slant: i32, glyphs: &[&str]) -> Result<Run> {
+        embed_after(font, typ, slant, glyphs, &mut Persist::default())
+    }
+
+    /// [`embed_with`] with writet1.c's statics as an earlier font left them.
+    fn embed_after(
+        font: &[u8],
+        typ: u16,
+        slant: i32,
+        glyphs: &[&str],
+        persist: &mut Persist,
+    ) -> Result<Run> {
         let mut fm = FmEntry::new();
         fm.typ = typ | F_TYPE1;
         fm.slant = slant;
@@ -1073,12 +1096,11 @@ pub(super) mod tests {
             gl_tree: Some(glyphs.iter().map(|g| g.as_bytes().to_vec()).collect()),
             ..Default::default()
         };
-        let mut persist = Persist::default();
         let mut host = TestHost::default();
         let job = Job {
             fm: &fm,
             fd: &mut fd,
-            persist: &mut persist,
+            persist,
             fb_base: 0,
         };
         let out = embed(font, job, &mut host)?;
@@ -1170,6 +1192,31 @@ pub(super) mod tests {
     fn an_undefined_glyph_is_a_warning() {
         let Run { host, .. } = run(F_SUBSETTED, 0, &["A", "nosuch"]);
         assert_eq!(host.warnings, ["glyph `nosuch' undefined"]);
+    }
+
+    #[test]
+    fn the_operand_stack_is_kept_from_font_to_font() {
+        // writet1.c's `cc_stack`/`stack_ptr` are statics that only
+        // `cc_clear` empties (#2408): an operand an earlier font's walks
+        // left is under `.notdef`'s `hsbw`, which takes exactly two.
+        let mut persist = Persist {
+            cc_stack: vec![7],
+            ..Persist::default()
+        };
+        // a font embedded whole is not walked: the stack stays
+        embed_after(&pfa(), 0, 0, &[], &mut persist).unwrap();
+        assert_eq!(persist.cc_stack, [7]);
+        let e = embed_after(&pfa(), F_SUBSETTED, 0, &["A"], &mut persist)
+            .err()
+            .unwrap();
+        assert_eq!(
+            e.0,
+            "CharString (/.notdef): more arguments on stack (3) than required (2)"
+        );
+        // with an empty stack the walks end on it empty (`endchar` clears)
+        let mut persist = Persist::default();
+        embed_after(&pfa(), F_SUBSETTED, 0, &["A"], &mut persist).unwrap();
+        assert!(persist.cc_stack.is_empty());
     }
 
     #[test]
