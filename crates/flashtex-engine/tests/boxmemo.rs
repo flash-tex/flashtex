@@ -176,6 +176,37 @@ fn the_key_falls_back() {
 }
 
 #[test]
+fn a_replay_keeps_the_normal_paths_capacity_errors() {
+    // (lane AUDIT-GROUPS, #2265) a replay pushes none of TeX's stacks, and
+    // the key holds no stack position: a call recorded with room to spare
+    // was replayed where its normal path stops with `TeX capacity
+    // exceeded` -- here six groups 250 levels deep (grouping levels=255),
+    // and four macro levels 9993 deep (input stack size=10000). On main the
+    // replay went on (`[survived 250]`)
+    let s = check(
+        "capacity-levels",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\
+         \\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 \\endgroup\\endgroup\\endgroup\\endgroup\\endgroup\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\nest{\\begingroup\\ifnum\\currentgrouplevel<250 \\expandafter\\nest\\fi}\n\
+         \\nest\\measure\\message{[survived \\the\\currentgrouplevel]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    let s = check(
+        "capacity-input",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\ia{\\ib\\relax}\\def\\ib{\\ic\\relax}\\def\\ic{\\id\\relax}\\def\\id{\\ie\\relax}\n\
+         \\def\\ie{\\if\\relax\\relax\\global\\dimen1=2pt\\fi\\relax}\n\
+         \\def\\measure{\\begingroup\\ia\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\r{\\ifnum\\count1<9993 \\advance\\count1 1 \\expandafter\\r\\else\\count1=0 \\expandafter\\measure\\fi\\relax}\n\
+         \\r\\message{[survived]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn outside_the_model_never_replays() {
     // output, the contents of a box register it did not make (`\\copy`),
     // and the main vertical list: recorded calls are abandoned, so nothing

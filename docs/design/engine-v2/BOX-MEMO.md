@@ -313,6 +313,22 @@ The log of a `\fb@sizeofframe` around a TikZ frame holds a few thousand operatio
 costs a few M instructions, against 37–40 M for the call. A replay skips the groups whose
 operations are all local (§11.2, MACRO-REPLAY revision 5's §11.5).
 
+**Room on TeX's stacks** (lane AUDIT-GROUPS, #2265). A replay pushes no input level, macro
+parameter or semantic level, and makes fewer groups than the call, while the key holds no stack
+position. A call recorded with room to spare would therefore replay where its normal path stops with
+`TeX capacity exceeded`, at 255 grouping levels or 10000 input levels, for example.
+
+An entry keeps how far above the call's start its normal path takes each stack, as the overflow
+tests check them:
+- the deepest `cur_level` at which it opens a group;
+- `save_ptr`, `input_ptr`, `param_ptr` and `nest_ptr`, bounded by the statistics' high-water marks
+  at the call's end (`max_save_stack` & co.): exact when the call raised the mark, more than enough
+  when it did not. `save_ptr` gets two words more for each local assignment at the call's own
+  level, which saves the old value or not, depending on that location's level.
+
+An offer replays only where every limit would hold. Otherwise the normal path runs, and overflows
+as pdfTeX does.
+
 ## 6. Storage, checkpoints and restores
 
 - **Where the entries live.** In Rust, outside the word space (`src/boxmemo.rs`), per macro.
