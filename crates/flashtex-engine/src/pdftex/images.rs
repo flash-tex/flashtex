@@ -40,6 +40,12 @@ pub struct PdfImage {
     /// points above. The display list's IMAGE resource sends it
     /// (docs/protocol/display-list-v3.md §5.2: the box in bp).
     pub box_bp: [f32; 4],
+    /// Not pdfTeX's: the `attr` of the `\pdfximage` writes a `/Group` into
+    /// the XObject's dictionary (LaTeX's pdftex.def gives every included
+    /// PDF page `/Group <</S/Transparency/K false/I false>>`). The display
+    /// list's IMAGE resource says so (§5.2 `group`), as a viewer paints
+    /// such a form through a transparency group.
+    pub attr_group: bool,
 }
 
 /// `image_struct`, the part that depends on the type.
@@ -463,6 +469,8 @@ impl Globals {
                         page_box: p.page_box,
                         doc: info.doc,
                         box_bp: [info.orig_x, info.orig_y, info.width, info.height],
+                        // (from the attr, not the file)
+                        attr_group: p.attr_group,
                     };
                     let key = |p: &PdfImage| {
                         (
@@ -566,6 +574,38 @@ impl Globals {
         Ok(())
     }
 
+    /// Not pdfTeX's: whether the `attr` of the `\pdfximage` being scanned
+    /// (`obj_ximage_attr(k)`, which `scan_image` sets before it calls
+    /// `read_image`, with `k = obj_ptr`) holds `/Group`: the characters of
+    /// its token list, a control sequence breaking a match. Read only.
+    fn ximage_attr_has_group(&self) -> bool {
+        const CS_TOKEN_FLAG: i32 = 0o7777;
+        let Some(o) = self.obj_tab.get(self.obj_ptr as usize) else {
+            return false;
+        };
+        let Some(&attr) = self.pdf_mem.get((o.int4 + 3) as usize) else {
+            return false;
+        };
+        if attr == 0 {
+            return false;
+        }
+        // A token list's reference count node, then the tokens.
+        let mut chars = Vec::new();
+        let mut p = self.mem[attr as usize].hh().rh();
+        let mut n = 0;
+        while p != 0 && n < 1 << 20 {
+            let t = self.mem[p as usize].hh().lh();
+            if t >= CS_TOKEN_FLAG {
+                chars.push(0); // (a control sequence: no match across it)
+            } else {
+                chars.push((t & 0xFF) as u8);
+            }
+            p = self.mem[p as usize].hh().rh();
+            n += 1;
+        }
+        chars.windows(6).any(|w| w == b"/Group")
+    }
+
     /// `readimage` (`\pdfximage`): find and read image `s`, and return its
     /// number.
     #[allow(clippy::too_many_arguments)]
@@ -627,6 +667,7 @@ impl Globals {
                         page_box: pagebox,
                         doc: info.doc,
                         box_bp: [info.orig_x, info.orig_y, info.width, info.height],
+                        attr_group: g.ximage_attr_has_group(),
                     });
                     // page group present, but new object number not set
                     // yet; or no page group
@@ -833,6 +874,8 @@ impl Globals {
                             page_box,
                             doc: info.doc,
                             box_bp: [info.orig_x, info.orig_y, info.width, info.height],
+                            // (not known for an image read with the format)
+                            attr_group: false,
                         });
                     }
                     IMAGE_TYPE_PNG => {
@@ -999,6 +1042,7 @@ impl crate::persist::Codec for State {
                     [p.orig_x, p.orig_y, p.selected_page, p.page_box].enc(w);
                     p.doc.enc(w);
                     p.box_bp.map(f32::to_bits).enc(w);
+                    p.attr_group.enc(w);
                 }
                 ImageData::Png(_) => 2u8.enc(w),
                 ImageData::Jpg(j) => {
@@ -1058,6 +1102,7 @@ impl crate::persist::Codec for State {
                         page_box,
                         doc: usize::dec(r)?,
                         box_bp: <[u32; 4]>::dec(r)?.map(f32::from_bits),
+                        attr_group: bool::dec(r)?,
                     })
                 }
                 2 => ImageData::Png(PngImage::unopened(e.name.as_deref().unwrap_or_default())),
@@ -1127,6 +1172,7 @@ mod tests {
                         page_box: 2,
                         doc: 0,
                         box_bp: [0.5, -1.25, 612.0, 791.999],
+                        attr_group: true,
                     }),
                 ),
                 e(
