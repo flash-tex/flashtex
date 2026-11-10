@@ -30,7 +30,7 @@
 //! is structural and visual, not byte-level).
 
 use super::agl::Agl;
-use super::doc::{Doc, Named, Supplement};
+use super::doc::{Doc, Named, Outline, Supplement};
 use super::fonts::{FaceData, FontRes, ResKind};
 use super::images::Kind;
 use super::num::{fmt_num, push_num, push_uint};
@@ -1447,8 +1447,13 @@ impl<'a> Writer<'a> {
         };
         // the catalog
         let mut cat = doc.catalog.clone();
-        for k in [&b"Type"[..], b"Pages", b"Outlines", b"Names"] {
+        for k in [&b"Type"[..], b"Pages", b"Names"] {
             cat.remove(k);
+        }
+        // pdf_doc_close_bookmarks replaces `/Outlines` only when there is
+        // an outline: a document's own `/Outlines` stays otherwise
+        if outlines.is_some() {
+            cat.remove(b"Outlines");
         }
         let mut d = format!("<</Type /Catalog /Pages {root} 0 R");
         if let Some(o) = outlines {
@@ -1469,101 +1474,99 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    /// The outline tree from the flat list of `pdf:outline` entries.
+    /// The outline tree, built from the `pdf:outline` entries as
+    /// dvipdfmx's `spc_handler_pdfm_outline` and pdfdoc.c's
+    /// `pdf_doc_bookmarks_up`/`_down`/`_add` build it, and written as
+    /// `flush_bookmarks` writes it:
+    ///
+    /// * a level counts from the lowest level seen so far
+    ///   (`lowest_level`, from 255);
+    /// * a jump of more than one level down fills each level skipped with
+    ///   dvipdfmx's `<No Title>` entry (red, italic, a JavaScript alert);
+    /// * `/Count` of an entry with children is the number of entries
+    ///   visible below it when it is open (its children, and theirs
+    ///   through open children), negated when it is closed;
+    /// * the root has `/First`, `/Last` and `/Count`, and no `/Type`.
+    ///
+    /// An entry's own keys stay unless one of these replaces them.
     fn outlines(&mut self) -> u32 {
-        let doc = self.doc;
-        let n_items = doc.outlines.len();
-        let root = self.alloc();
-        let nums: Vec<u32> = (0..n_items).map(|_| self.alloc()).collect();
-        // parent of each item (None: the root), by levels
-        let mut parent: Vec<Option<usize>> = vec![None; n_items];
-        let mut stack: Vec<usize> = Vec::new();
-        for (i, o) in doc.outlines.iter().enumerate() {
-            while let Some(&top) = stack.last() {
-                if doc.outlines[top].level >= o.level {
-                    stack.pop();
-                } else {
+        let items = outline_items(&self.doc.outlines);
+        // the items with a dictionary in the chain from `first`
+        let chain = |first: Option<usize>| -> Vec<usize> {
+            let mut v = Vec::new();
+            let mut it = first;
+            while let Some(i) = it {
+                if items[i].dict.is_none() {
                     break;
                 }
+                v.push(i);
+                it = items[i].next;
             }
-            parent[i] = stack.last().copied();
-            stack.push(i);
+            v
+        };
+        // flush_bookmarks's count for each item's children: the entries
+        // visible below it when it is open. Children come after their
+        // parent, so from the last item back.
+        let mut below = vec![0i64; items.len()];
+        for i in (0..items.len()).rev() {
+            below[i] = chain(items[i].first)
+                .iter()
+                .map(|&c| 1 + if items[c].is_open != 0 { below[c] } else { 0 })
+                .sum();
         }
-        let children =
-            |p: Option<usize>| -> Vec<usize> { (0..n_items).filter(|&i| parent[i] == p).collect() };
-        // visible descendants (counting through open items)
-        fn visible(
-            i: usize,
-            kids: &dyn Fn(Option<usize>) -> Vec<usize>,
-            open: &dyn Fn(usize) -> bool,
-        ) -> i64 {
-            let c = kids(Some(i));
-            c.iter()
-                .map(|&k| 1 + if open(k) { visible(k, kids, open) } else { 0 })
-                .sum()
+        let root = self.alloc();
+        let top = chain(Some(0));
+        // object numbers, a parent's before its children's; each entry
+        // with its parent's object and its previous sibling
+        let mut nums: Vec<u32> = vec![0; items.len()];
+        let mut order: Vec<(usize, u32, Option<usize>)> = Vec::new();
+        let mut todo = vec![(top.clone(), root)];
+        while let Some((sibs, par)) = todo.pop() {
+            for &i in &sibs {
+                nums[i] = self.alloc();
+            }
+            for (k, &i) in sibs.iter().enumerate() {
+                order.push((i, par, k.checked_sub(1).map(|p| sibs[p])));
+                let kids = chain(items[i].first);
+                if !kids.is_empty() {
+                    todo.push((kids, nums[i]));
+                }
+            }
         }
-        let open = |i: usize| doc.outlines[i].open;
-        for i in 0..n_items {
-            let o = &doc.outlines[i];
-            let mut d = o.dict.clone();
-            if let Some(g) = &o.goto {
-                g.apply(&mut d);
+        for (i, par, prev) in order {
+            let mut d = items[i].dict.clone().unwrap_or_default();
+            let kids = chain(items[i].first);
+            if let (Some(&f), Some(&l)) = (kids.first(), kids.last()) {
+                d.set(b"First", Obj::Ref(nums[f], 0));
+                d.set(b"Last", Obj::Ref(nums[l], 0));
+                let c = if items[i].is_open != 0 {
+                    below[i]
+                } else {
+                    -below[i]
+                };
+                d.set(b"Count", Obj::Num(c.to_string().into_bytes()));
             }
-            for k in [
-                &b"Parent"[..],
-                b"Prev",
-                b"Next",
-                b"First",
-                b"Last",
-                b"Count",
-            ] {
-                d.remove(k);
+            d.set(b"Parent", Obj::Ref(par, 0));
+            if let Some(p) = prev {
+                d.set(b"Prev", Obj::Ref(nums[p], 0));
             }
-            let mut body = b"<<".to_vec();
-            let e = self.ser_dict_entries(&d);
-            body.extend_from_slice(&e);
-            let par = parent[i].map_or(root, |p| nums[p]);
-            let sibs = children(parent[i]);
-            let pos = sibs.iter().position(|&s| s == i).unwrap_or(0);
-            let _ = write!(Bytes(&mut body), " /Parent {par} 0 R");
-            if pos > 0 {
-                let _ = write!(Bytes(&mut body), " /Prev {} 0 R", nums[sibs[pos - 1]]);
+            if let Some(n) = items[i].next.filter(|&n| items[n].dict.is_some()) {
+                d.set(b"Next", Obj::Ref(nums[n], 0));
             }
-            if pos + 1 < sibs.len() {
-                let _ = write!(Bytes(&mut body), " /Next {} 0 R", nums[sibs[pos + 1]]);
-            }
-            let kids = children(Some(i));
-            if let (Some(f), Some(l)) = (kids.first(), kids.last()) {
-                let cnt = visible(i, &children, &open);
-                let cnt = if o.open { cnt } else { -(kids.len() as i64) };
-                let _ = write!(
-                    Bytes(&mut body),
-                    " /First {} 0 R /Last {} 0 R /Count {cnt}",
-                    nums[*f],
-                    nums[*l]
-                );
-            }
-            body.extend_from_slice(b">>");
+            let body = self.ser(&Obj::Dict(d));
             self.object(nums[i], &body);
         }
-        let top = children(None);
         let total: i64 = top
             .iter()
-            .map(|&k| {
-                1 + if open(k) {
-                    visible(k, &children, &open)
-                } else {
-                    0
-                }
-            })
+            .map(|&k| 1 + if items[k].is_open != 0 { below[k] } else { 0 })
             .sum();
-        let mut body = b"<</Type /Outlines".to_vec();
-        if let (Some(f), Some(l)) = (top.first(), top.last()) {
+        let mut body = b"<<".to_vec();
+        if let (Some(&f), Some(&l)) = (top.first(), top.last()) {
             let _ = write!(
                 Bytes(&mut body),
-                " /First {} 0 R /Last {} 0 R /Count {total}",
-                nums[*f],
-                nums[*l]
+                "/First {} 0 R /Last {} 0 R /Count {total}",
+                nums[f],
+                nums[l]
             );
         }
         body.extend_from_slice(b">>");
@@ -1627,6 +1630,116 @@ impl<'a> Writer<'a> {
         );
         out
     }
+}
+
+/// An outline item as pdfdoc.c keeps it (`pdf_olitem`): item 0 is the
+/// first item `pdf_doc_init_bookmarks` makes.
+struct OlItem {
+    dict: Option<Dict>,
+    first: Option<usize>,
+    next: Option<usize>,
+    parent: Option<usize>,
+    /// 1 open, 0 closed, -1 the place for a next sibling (which counts as
+    /// open in `flush_bookmarks`'s `if (item->is_open)` if a `<No Title>`
+    /// entry fills it).
+    is_open: i32,
+}
+
+/// dvipdfmx's entry for a level an outline skipped
+/// (`pdf_doc_bookmarks_down`).
+fn no_title_entry() -> Dict {
+    let num = |t: &[u8]| Obj::Num(t.to_vec());
+    let js = b"app.alert(\"The author of this document made this bookmark item empty!\", 3, 0)";
+    Dict(vec![
+        (b"Title".to_vec(), Obj::Str(b"<No Title>".to_vec())),
+        (
+            b"C".to_vec(),
+            Obj::Array(vec![num(b"1"), num(b"0"), num(b"0")]),
+        ),
+        (b"F".to_vec(), num(b"1")),
+        (
+            b"A".to_vec(),
+            Obj::Dict(Dict(vec![
+                (b"S".to_vec(), Obj::Name(b"JavaScript".to_vec())),
+                (b"JS".to_vec(), Obj::Str(js.to_vec())),
+            ])),
+        ),
+    ])
+}
+
+/// The outline items `pdf:outline` entries make, as
+/// `spc_handler_pdfm_outline` moves through levels
+/// (`pdf_doc_bookmarks_up`, `_down`) and `pdf_doc_bookmarks_add` adds an
+/// entry, with TeX Live's `-O 0` (an entry without `[]` is closed).
+fn outline_items(entries: &[Outline]) -> Vec<OlItem> {
+    fn new_item(items: &mut Vec<OlItem>, parent: Option<usize>, is_open: i32) -> usize {
+        items.push(OlItem {
+            dict: None,
+            first: None,
+            next: None,
+            parent,
+            is_open,
+        });
+        items.len() - 1
+    }
+    let mut items = Vec::new();
+    let mut current = new_item(&mut items, None, 1);
+    let mut depth: i64 = 1;
+    let mut lowest: i64 = 255;
+    for o in entries {
+        lowest = lowest.min(o.level as i64);
+        let level = o.level as i64 + 1 - lowest;
+        while depth > level {
+            // up: to the parent's next sibling
+            let Some(parent) = items[current].parent else {
+                break;
+            };
+            current = match items[parent].next {
+                Some(n) => n,
+                None => {
+                    let gp = items[parent].parent;
+                    let n = new_item(&mut items, gp, 0);
+                    items[parent].next = Some(n);
+                    n
+                }
+            };
+            depth -= 1;
+        }
+        while depth < level {
+            // down: a first child, the level filled if it is empty
+            if items[current].dict.is_none() {
+                items[current].dict = Some(no_title_entry());
+            }
+            let f = new_item(&mut items, Some(current), 0);
+            items[current].first = Some(f);
+            current = f;
+            depth += 1;
+        }
+        let mut item = current;
+        if items[item].dict.is_some() {
+            item = match items[item].next {
+                Some(n) => n,
+                None => {
+                    let p = items[item].parent;
+                    let n = new_item(&mut items, p, -1);
+                    items[item].next = Some(n);
+                    n
+                }
+            };
+        }
+        let mut d = o.dict.clone();
+        if let Some(g) = &o.goto {
+            g.apply(&mut d);
+        }
+        items[item].dict = Some(d);
+        items[item].first = None;
+        items[item].is_open = i32::from(o.open);
+        let p = items[item].parent;
+        let n = new_item(&mut items, p, -1);
+        items[item].next = Some(n);
+        current = item;
+    }
+    items
 }
 
 /// The file's first two lines: the version, and a comment of non-ASCII
@@ -2927,6 +3040,127 @@ mod tests {
         plain.drain(s..s + 13);
         assert!(image_color_space(Kind::Png, &plain).is_none());
         assert!(image_color_space(Kind::Jpeg, &[0xFF, 0xD8, 0xFF, 0xD9]).is_none());
+    }
+
+    /// The outline written for `entries` (level, `[]`, title): the root's
+    /// `/Count`, whether it has `/Type`, and each entry in order as
+    /// "depth title /Count".
+    fn outline_of(entries: &[(i32, bool, &str)]) -> (String, bool, Vec<String>) {
+        use super::super::doc::Outline;
+        use super::super::pdfobj::{Dict as D, Obj as O};
+        let mut doc = Doc::new();
+        for &(level, open, title) in entries {
+            doc.outlines.push(Outline {
+                level,
+                open,
+                dict: D(vec![(b"Title".to_vec(), O::Str(title.as_bytes().to_vec()))]),
+                goto: None,
+            });
+        }
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let root = pdf.resolve(cat.get("Outlines").unwrap()).as_dict().unwrap();
+        fn walk(
+            pdf: &PdfFile,
+            d: &std::collections::BTreeMap<String, Obj>,
+            depth: usize,
+            out: &mut Vec<String>,
+        ) {
+            let mut it = d.get("First").map(|o| pdf.resolve(o));
+            while let Some(e) = it.and_then(Obj::as_dict) {
+                let t = match e.get("Title") {
+                    Some(Obj::String(s)) => String::from_utf8_lossy(s).into_owned(),
+                    _ => "?".into(),
+                };
+                let c = e.get("Count").and_then(Obj::as_number).unwrap_or("");
+                out.push(format!("{depth} {t} {c}").trim_end().to_string());
+                walk(pdf, e, depth + 1, out);
+                it = e.get("Next").map(|o| pdf.resolve(o));
+            }
+        }
+        let mut got = Vec::new();
+        walk(&pdf, root, 1, &mut got);
+        let count = root
+            .get("Count")
+            .and_then(Obj::as_number)
+            .unwrap_or("")
+            .to_string();
+        (count, root.contains_key("Type"), got)
+    }
+
+    /// The outline tree xdvipdfmx (TeX Live 2026, `-O 0`) builds from these
+    /// entries, measured (#2357): a closed entry's `/Count` counts the
+    /// entries visible below it once opened (B: -3, F: -2), a jump of two
+    /// levels (I to J) fills the level skipped with `<No Title>`, and the
+    /// root has no `/Type`.
+    #[test]
+    fn the_outline_tree_is_xdvipdfmxs() {
+        let (count, typed, got) = outline_of(&[
+            (1, true, "A"),
+            (2, false, "B"),
+            (3, true, "C"),
+            (4, true, "D"),
+            (4, false, "E"),
+            (1, false, "F"),
+            (2, true, "G"),
+            (3, true, "H"),
+            (1, false, "I"),
+            (3, false, "J"),
+        ]);
+        assert_eq!(count, "4");
+        assert!(!typed);
+        assert_eq!(
+            got,
+            [
+                "1 A 1",
+                "2 B -3",
+                "3 C 2",
+                "4 D",
+                "4 E",
+                "1 F -2",
+                "2 G 1",
+                "3 H",
+                "1 I -1",
+                "2 <No Title> -1",
+                "3 J",
+            ]
+        );
+    }
+
+    /// Levels count from the lowest seen so far (#2366, measured): A2 and
+    /// B3 start at depth 1 and 2; C1 then lowers the base, so D3 is two
+    /// levels below C1, under a `<No Title>` entry.
+    #[test]
+    fn outline_levels_count_from_the_lowest_so_far() {
+        let (count, _, got) = outline_of(&[
+            (2, true, "A2"),
+            (3, true, "B3"),
+            (1, true, "C1"),
+            (3, true, "D3"),
+            (1, false, "E1"),
+            (2, false, "F2"),
+            (2, false, "G2"),
+        ]);
+        assert_eq!(count, "5");
+        assert_eq!(
+            got,
+            [
+                "1 A2 1",
+                "2 B3",
+                "1 C1 1",
+                "2 <No Title> -1",
+                "3 D3",
+                "1 E1 -2",
+                "2 F2",
+                "2 G2",
+            ]
+        );
     }
 
     /// RULE_GEOMETRY is the numbers the content stream draws each rule with.
