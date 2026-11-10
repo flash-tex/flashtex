@@ -1573,6 +1573,9 @@ impl Globals {
     /// Subroutine `save_for_after` puts a token on the stack for save-keeping.
     // §310
     pub fn save_for_after(&mut self, mut t: halfword) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(17i32, self.cur_level, 0i32, 0i32);
+        }
         if (self.cur_level > level_one) {
             {
                 if (self.save_ptr > self.max_save_stack) {
@@ -3221,6 +3224,9 @@ impl Globals {
             }
             if __goto_1 <= 1 { // exit
                 // §371
+                if self.intr_verify_on {
+                    self.flashtex_intr_op(18i32, 0i32, 0i32, 0i32);
+                }
             }
             break 'l_dispatch_1;
         }

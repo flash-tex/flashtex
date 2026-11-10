@@ -14,7 +14,9 @@
 //! kept for replay only when the call left the group level, conditionals,
 //! alignment state, strings, errors, mode, list tail, scanner and output as
 //! it found them, and made no glue, shape, box or sparse-register
-//! definition (`not_replayable.*` otherwise).
+//! definition, no write to a `\tracing...` parameter, no `\read`,
+//! `\openin` or `\closein`, and no `\aftergroup` at its own level
+//! (`not_replayable.*` otherwise).
 //!
 //! An eligible call with a kept recording from the previous guarded call is
 //! *checked* (`crate::intrinsics_verify`): checkpoint C, replay the previous
@@ -23,14 +25,40 @@
 
 use crate::generated::consts::{
     box_ref, cs_token_flag, end_match_token, global_defs_code, glue_ref, hash_base, int_base,
-    null_cs, protected_token, shape_ref, single_base, token_list, tracing_assigns_code,
-    tracing_commands_code, tracing_groups_code, tracing_ifs_code, tracing_macros_code,
-    tracing_nesting_code, tracing_restores_code, v_template,
+    level_one, null_cs, protected_token, shape_ref, single_base, token_list, tracing_assigns_code,
+    tracing_char_sub_def_code, tracing_commands_code, tracing_groups_code, tracing_ifs_code,
+    tracing_lost_chars_code, tracing_macros_code, tracing_nesting_code, tracing_online_code,
+    tracing_output_code, tracing_pages_code, tracing_paragraphs_code, tracing_restores_code,
+    tracing_scan_tokens_code, tracing_stack_levels_code, tracing_stats_code, v_template,
 };
 use crate::Globals;
 use std::collections::BTreeMap;
 
 const NAME: &[u8] = b"pdfstringdefPreHook";
+
+/// Whether `eqtb` location `p` is a `\tracing...` integer parameter.
+fn is_tracing(p: i32) -> bool {
+    [
+        tracing_online_code,
+        tracing_macros_code,
+        tracing_stats_code,
+        tracing_paragraphs_code,
+        tracing_pages_code,
+        tracing_output_code,
+        tracing_lost_chars_code,
+        tracing_commands_code,
+        tracing_restores_code,
+        tracing_char_sub_def_code,
+        tracing_stack_levels_code,
+        tracing_assigns_code,
+        tracing_groups_code,
+        tracing_ifs_code,
+        tracing_scan_tokens_code,
+        tracing_nesting_code,
+    ]
+    .iter()
+    .any(|&c| p == int_base + c)
+}
 const MAX_BODY_TOKENS: usize = 4096;
 const MAX_OPS: usize = 10_000;
 // xetex.web's `null` is negative, unlike a C null pointer.
@@ -283,15 +311,38 @@ impl Globals {
             return;
         }
         let global = k & 8 != 0;
-        let op = match k & 7 {
-            1 if [glue_ref, shape_ref, box_ref].contains(&t) => Err("GlueShapeOrBox"),
-            1 => Ok(Op::Def(p, t, self.intr_val(t, e), global)),
-            2 => Ok(Op::Word(p, t, global)),
-            3 => Ok(Op::Begin(p)),
-            4 => Ok(Op::End),
-            5 => Err("SparseRegister"),
-            6 => Err("BoxDimen"),
-            _ => Err("FileOutput"),
+        let (call_level, base) = r
+            .rec
+            .as_ref()
+            .map(|rec| (rec.at.0, rec.base))
+            .expect("checked");
+        let op = match k {
+            // a token from below the body's level (the body used up, a
+            // look-ahead or a scan reading on): the call reads past itself,
+            // which a replay does not
+            18 if self.input_ptr < base => Err("ReadPast"),
+            18 => return,
+            // the input files' positions are not compared
+            16 => Err("FileInput"),
+            // an `\aftergroup` token left at the call's level (or below,
+            // after closing an outer group) is on the save stack after the
+            // call, which a replay does not push; one inside a group the
+            // call opens comes back at its end and its effects are recorded
+            17 if p > level_one && p <= call_level => Err("AfterGroup"),
+            17 => return,
+            _ => match k & 7 {
+                1 if [glue_ref, shape_ref, box_ref].contains(&t) => Err("GlueShapeOrBox"),
+                1 => Ok(Op::Def(p, t, self.intr_val(t, e), global)),
+                // a replay's group ends would trace (restores, nesting)
+                // where the real path's did, or not, as the tracing now is
+                2 if is_tracing(p) => Err("Tracing"),
+                2 => Ok(Op::Word(p, t, global)),
+                3 => Ok(Op::Begin(p)),
+                4 => Ok(Op::End),
+                5 => Err("SparseRegister"),
+                6 => Err("BoxDimen"),
+                _ => Err("FileOutput"),
+            },
         };
         let rec = self.host.intrinsics.rec.as_mut().expect("checked");
         match op {

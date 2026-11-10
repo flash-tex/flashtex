@@ -294,6 +294,137 @@ fn immediate_writes_are_not_replayable() {
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
 
+/// `\read` moves an input file's position, which is not compared: with a
+/// file of equal lines, a replay would define the same macro and its check
+/// pass, while the real path read a line further (#2141). Not replayable.
+#[test]
+fn file_reads_are_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.dat\n\
+         \\immediate\\write\\IntrW{x}\\immediate\\write\\IntrW{x}\\immediate\\write\\IntrW{x}\n\
+         \\immediate\\write\\IntrW{x}\\immediate\\closeout\\IntrW\n\
+         \\newread\\IntrR\\openin\\IntrR=\\jobname.dat\n\
+         \\def\\pdfstringdefPreHook{\\read\\IntrR to\\IntrL}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\n\\IntrL\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.FileInput"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}
+
+/// `\openin` and `\closein` open and close an input file, whose position
+/// is not compared: not replayable (#2141).
+#[test]
+fn opening_and_closing_input_files_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newread\\IntrR\n\
+         \\def\\pdfstringdefPreHook{\\closein\\IntrR\\openin\\IntrR=\\jobname.tex\\relax}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\closein\\IntrR\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.FileInput"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}
+
+/// An `\aftergroup` token at the call's own level stays on the save stack
+/// after the call, which a replay would not push (its check found a
+/// difference, #2141): not replayable. One inside a group the call opens
+/// comes back at that group's end, within the call: replayable, and its
+/// checks find nothing.
+#[test]
+fn aftergroup_at_the_calls_level_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\aftergroup\\relax}\n\
+         \\begin{document}x\\begingroup\\pdfstringdefPreHook\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\\endgroup\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.AfterGroup"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\IntrX{\\gdef\\IntrY{y}}\n\
+         \\def\\pdfstringdefPreHook{\\begingroup\\aftergroup\\IntrX\\endgroup}\n\
+         \\begin{document}x\\begingroup\\pdfstringdefPreHook\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\\endgroup\\IntrY\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.AfterGroup"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+}
+
+/// A recorded write to a `\tracing...` parameter is not replayable: a
+/// replay's group ends trace (or not) as the parameters are then, and the
+/// recording would print where the real path did not (#2141).
+#[test]
+fn tracing_writes_are_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\tracingnesting=0 }\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.Tracing"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}
+
+/// A call that reads a token from below its body's input level reads past
+/// itself (here `scan_int` looks for the end of `1` and finds the caller's
+/// `\relax`, which it backs up): a replay would not, so the call is not
+/// replayable (the XeTeX analogue of pdfTeX's #2198/#2199). Before this
+/// rule the call was kept and every check of it differed in `input`. The
+/// same body with its own `\relax` reads nothing past it and is checked.
+#[test]
+fn a_call_that_reads_past_its_body_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\count255=1}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\relax\n\
+         \\pdfstringdefPreHook\\relax\n\\pdfstringdefPreHook\\relax\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.ReadPast"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\count255=1\\relax}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\relax\n\
+         \\pdfstringdefPreHook\\relax\n\\pdfstringdefPreHook\\relax\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.ReadPast"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 2, "{s}");
+}
+
+/// Reading `\prevgraf` copies `cur_list` to `nest[nest_ptr]`, which is
+/// dead (the top of the stack is `cur_list`): between the calls the
+/// paragraph grows, so the real path's copy differs from the one a replay
+/// leaves there. Only `nest` below `nest_ptr` is compared, and the checks
+/// find nothing.
+#[test]
+fn the_dead_top_of_the_nest_is_not_compared() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\ifnum\\prevgraf<0 \\fi\\relax}\n\
+         \\begin{document}x\\relax\\pdfstringdefPreHook y\\relax\\pdfstringdefPreHook\n\
+         z\\relax\\pdfstringdefPreHook\\par\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.differing.nest"), 0, "{s}");
+}
+
 /// `\limits` changes the noad at the list's tail in place
 /// (`math_limit_switch`: `subtype(tail)`): no definition, no group, the
 /// same `tail`. A replay would leave the second and third `\sum` with

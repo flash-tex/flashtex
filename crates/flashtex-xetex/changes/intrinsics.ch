@@ -6,7 +6,11 @@
 % group boundaries the real path makes are reported to |flashtex_intr_op|
 % (kinds: 1 |eq_define|, 2 |eq_word_define|, plus 8 when global; 3
 % |new_save_level|, 4 |unsave|; 5 a sparse-array definition, 6 a box
-% dimension, 7 |out_what|, which a recording cannot hold), and |big_switch| asks |flashtex_intr_switch|
+% dimension, 7 |out_what|, which a recording cannot hold; 16 |read_toks|
+% and |open_or_close_in|, whose input files a check does not compare; 17
+% |save_for_after| at level |p|; 18 the end of |get_next|, which reads past
+% the call when the token comes from below its body's input level), and
+% |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 %
 % The verifier compares every |mem| word either path wrote but those of the
@@ -122,12 +126,30 @@ begin if intr_verify_on then flashtex_intr_op(10,p,w,0);
 assign_trace(p,"globally changing")@;@/
 @z
 
+@x xetex.web - an \.{\\aftergroup} token, for the recording (kind 17)
+@p procedure save_for_after(@!t:halfword);
+begin if cur_level>level_one then
+@y
+@p procedure save_for_after(@!t:halfword);
+begin if intr_verify_on then flashtex_intr_op(17,cur_level,0,0);
+if cur_level>level_one then
+@z
+
 @x xetex.web - a group's end, for the recording
 @!a:boolean; {have we already processed an \.{\\aftergroup} ?}
 begin a:=false;
 @y
 @!a:boolean; {have we already processed an \.{\\aftergroup} ?}
 begin a:=false; if intr_verify_on then flashtex_intr_op(4,0,0,0);
+@z
+
+@x xetex.web - a token read from below the body's input level: not replayable (kind 18)
+@<If an alignment entry has just ended, take appropriate action@>;
+exit:end;
+@y
+@<If an alignment entry has just ended, take appropriate action@>;
+exit: if intr_verify_on then flashtex_intr_op(18,0,0,0);
+end;
 @z
 
 @x xetex.web - expansion other than big_switch's direct macro
@@ -148,6 +170,15 @@ if intr_verify_on then flashtex_intr_observe;
 intr_at_switch:=false;
 @z
 
+@x xetex.web - \.{\\read} and \.{\\readline} read a file: not replayable (kind 16)
+begin scanner_status:=defining; warning_index:=r;
+def_ref:=get_avail; token_ref_count(def_ref):=null;
+@y
+begin if intr_verify_on then flashtex_intr_op(16,0,0,0);
+scanner_status:=defining; warning_index:=r;
+def_ref:=get_avail; token_ref_count(def_ref):=null;
+@z
+
 @x after changes/checkpoint.ch - observe the main-control entry
 big_switch: flashtex_poll; if ckpt_request<>0 then flashtex_checkpoint_hook;
 get_x_token;@/
@@ -162,6 +193,15 @@ begin c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
 @y
 begin if intr_verify_on then flashtex_intr_op(6,0,0,0);
 c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
+@z
+
+@x xetex.web - \.{\\openin} and \.{\\closein}: not replayable (kind 16)
+begin c:=cur_chr; scan_four_bit_int; n:=cur_val;
+if read_open[n]<>closed then
+@y
+begin if intr_verify_on then flashtex_intr_op(16,0,0,0);
+c:=cur_chr; scan_four_bit_int; n:=cur_val;
+if read_open[n]<>closed then
 @z
 
 @x after changes/filenames.ch - \immediate output: not replayable (kind 7)
