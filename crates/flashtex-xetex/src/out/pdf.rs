@@ -931,21 +931,48 @@ impl<'a> Writer<'a> {
                 trans,
             }) = png_passthrough(&data)
             {
-                let base = if let Some(icc) = &col.icc {
-                    let o = self.alloc();
-                    let d = format!(" /N {n_base} /Filter /FlateDecode");
-                    self.stream(o, d.as_bytes(), icc, false);
-                    format!("[/ICCBased {o} 0 R]")
+                let device = if n_base == 1 {
+                    "/DeviceGray"
                 } else {
-                    cal_space(&col, n_base).unwrap_or_else(|| {
-                        if n_base == 1 {
-                            "/DeviceGray"
-                        } else {
-                            "/DeviceRGB"
-                        }
-                        .to_string()
-                    })
+                    "/DeviceRGB"
                 };
+                let base = if let Some(icc) = &col.icc {
+                    // create_cspace_ICCBased: a profile xdvipdfmx refuses
+                    // leaves the Device space (no Cal* fallback)
+                    let want = if n_base == 1 { b"GRAY" } else { b"RGB " };
+                    let ok = flashtex_pdf::inflate::inflate_zlib(icc, 1 << 26)
+                        .is_ok_and(|p| icc_profile_accepted(&p, want));
+                    if ok {
+                        let o = self.alloc();
+                        let d = format!(" /N {n_base} /Filter /FlateDecode");
+                        self.stream(o, d.as_bytes(), icc, false);
+                        format!("[/ICCBased {o} 0 R]")
+                    } else {
+                        device.to_string()
+                    }
+                } else {
+                    cal_space(&col, n_base).unwrap_or_else(|| device.to_string())
+                };
+                // png_set_gamma(png_ptr, 2.2, G) for an uncalibrated PNG:
+                // the palette, or 8-bit grey/RGB samples, gamma-corrected
+                let gamma = png_gamma_table(&col);
+                let palette = match (palette, &gamma) {
+                    (Some(p), Some(t)) => Some(p.iter().map(|&b| t[b as usize]).collect()),
+                    (p, _) => p,
+                };
+                let mut corrected = None;
+                if let (Some(t), None) = (&gamma, &palette) {
+                    if let Ok(rows) = flashtex_pdf::raster::decode_png(&png_without_trns(&data)) {
+                        if rows.bits == 8 {
+                            corrected = Some(
+                                rows.samples
+                                    .iter()
+                                    .map(|&b| t[b as usize])
+                                    .collect::<Vec<u8>>(),
+                            );
+                        }
+                    }
+                }
                 let space = match &palette {
                     Some(p) => {
                         let hex: String = p.iter().map(|b| format!("{b:02x}")).collect();
@@ -954,6 +981,12 @@ impl<'a> Writer<'a> {
                     None => base,
                 };
                 let mut dict = dict.replace("@CS@", &space);
+                if corrected.is_some() {
+                    // the samples are written decoded: no PNG predictor
+                    if let Some(i) = dict.find(" /Filter /FlateDecode") {
+                        dict.truncate(i);
+                    }
+                }
                 if let Some(intent) = col.srgb_intent.filter(|_| col.icc.is_none()) {
                     let name = [
                         "Perceptual",
@@ -987,12 +1020,26 @@ impl<'a> Writer<'a> {
                         dict.push_str(&format!(" /SMask {o} 0 R"));
                     }
                 }
-                self.stream(num, dict.as_bytes(), &idat, false);
+                match &corrected {
+                    Some(s) => self.stream(num, dict.as_bytes(), s, true),
+                    None => self.stream(num, dict.as_bytes(), &idat, false),
+                }
                 return Ok(());
             }
         }
+        // JPEG_copy_stream drops the ICC segments whether or not the
+        // profile is embedded
+        let jpeg_has_icc = img.kind == Kind::Jpeg && jpeg_icc(&data).is_some();
         let jpeg_profile = if img.kind == Kind::Jpeg {
-            jpeg_icc(&data)
+            // jpeg_include_image: the profile is checked against the
+            // image's own components (1 grey, 4 CMYK, else RGB)
+            use flashtex_pdf::raster::DeviceSpace;
+            let want: &[u8; 4] = match flashtex_pdf::raster::parse_jpeg(&data).map(|j| j.space) {
+                Ok(DeviceSpace::Gray) => b"GRAY",
+                Ok(DeviceSpace::Cmyk) => b"CMYK",
+                _ => b"RGB ",
+            };
+            jpeg_icc(&data).filter(|p| icc_profile_accepted(p, want))
         } else {
             None
         };
@@ -1056,7 +1103,7 @@ impl<'a> Writer<'a> {
                 Some(s) => {
                     let mut d = String::from(" ");
                     d.push_str(&body);
-                    if i == 0 && icc_space.is_some() {
+                    if i == 0 && jpeg_has_icc {
                         let s = jpeg_without_icc(s);
                         self.stream(nums[i], d.as_bytes(), &s, false);
                     } else {
@@ -2431,6 +2478,84 @@ fn png_without_trns(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Whether xdvipdfmx embeds ICC profile `p` for an image whose colours are
+/// `want` (`"RGB "`, `"GRAY"`, `"CMYK"`): pdfcolor.c
+/// `iccp_check_colorspace`, then `iccp_load_profile`'s checks:
+/// - `iccp_unpack_header`: size a multiple of 4 and equal to the header's,
+///   `acsp`, the reserved bytes 100..128 zero;
+/// - `iccp_version_supported` for PDF 1.7 (the writer's version): at most
+///   4.2 (major byte 4, minor byte 0x20);
+/// - `iccp_devClass_allowed`: `scnr`, `mntr`, `prtr`, `spac`;
+/// - the profile ID, when not zero, must be the MD5 of the profile with
+///   bytes 56..68 and 84..100 zeroed (`iccp_get_checksum`).
+///
+/// Measured: an sRGB profile of version 4.4 (Pillow/LittleCMS) is not
+/// embedded; the image stays DeviceRGB.
+fn icc_profile_accepted(p: &[u8], want: &[u8; 4]) -> bool {
+    if p.len() < 128 || &p[16..20] != want {
+        return false;
+    }
+    let size = u32::from_be_bytes([p[0], p[1], p[2], p[3]]) as usize;
+    if !p.len().is_multiple_of(4) || size != p.len() {
+        return false;
+    }
+    if &p[36..40] != b"acsp" || p[100..128].iter().any(|&b| b != 0) {
+        return false;
+    }
+    let (major, minor) = (p[8], p[9]);
+    if major > 4 || (major == 4 && minor > 0x20) {
+        return false;
+    }
+    if !matches!(&p[12..16], b"scnr" | b"mntr" | b"prtr" | b"spac") {
+        return false;
+    }
+    let id = &p[84..100];
+    if id.iter().any(|&b| b != 0) {
+        let mut m = Vec::with_capacity(p.len());
+        m.extend_from_slice(&p[..56]);
+        m.extend_from_slice(&[0; 12]);
+        m.extend_from_slice(&p[68..84]);
+        m.extend_from_slice(&[0; 16]);
+        m.extend_from_slice(&p[100..]);
+        if flashtex_engine::pdftex::md5::digest(&m) != id {
+            return false;
+        }
+    }
+    true
+}
+
+/// libpng's 8-bit gamma table for `png_set_gamma(png_ptr, 2.2, G)`, which
+/// pngimage.c asks for when a PNG has a `gAMA` and no `iCCP`, `sRGB` or
+/// `cHRM`; None when libpng finds the correction insignificant
+/// (`png_gamma_threshold`: screen x file gamma within 5% of 1).
+/// Fixed-point as libpng 1.6 computes it: file gamma = the chunk's value,
+/// screen 220000; the exponent `png_reciprocal2(file, screen)`; entries
+/// 1..254 `floor(255 * (v/255)^e + .5)` (`png_gamma_8bit_correct`).
+fn png_gamma_table(col: &PngColor) -> Option<[u8; 256]> {
+    if col.icc.is_some() || col.srgb_intent.is_some() || col.chrm.is_some() {
+        return None;
+    }
+    let file = (col.gamma? * 100_000.0 + 0.5).floor();
+    if file <= 0.0 {
+        return None;
+    }
+    let screen = 220_000.0;
+    let product = (screen * 1e-5 * file + 0.5).floor();
+    if (95_000.0..=105_000.0).contains(&product) {
+        return None;
+    }
+    let e = (1e15 / file / screen + 0.5).floor();
+    let mut t = [0u8; 256];
+    for (v, x) in t.iter_mut().enumerate() {
+        *x = if v == 0 || v == 255 || (95_000.0..=105_000.0).contains(&e) {
+            v as u8
+        } else {
+            (255.0 * (v as f64 / 255.0).powf(e * 1e-5) + 0.5).floor() as u8
+        };
+    }
+    Some(t)
+}
+
 /// A CIE-based space from a PNG's `sRGB` chunk, or its `gAMA` and `cHRM`
 /// (measured: dvipdfmx writes an `sRGB` grey PNG as `[/CalGray <</Gamma
 /// 2.2 /WhitePoint [.95046 1 1.08906]>>]`).
@@ -2438,13 +2563,28 @@ fn cal_space(col: &PngColor, n: u8) -> Option<String> {
     let srgb = [0.3127, 0.329, 0.64, 0.33, 0.3, 0.6, 0.15, 0.06];
     let (gamma, chrm) = if col.srgb_intent.is_some() {
         (2.2, srgb)
-    } else if col.gamma.is_some() || col.chrm.is_some() {
-        let g = col
-            .gamma
-            .map_or(2.2, |g| if g > 0.0 { 1.0 / g } else { 2.2 });
-        (g, col.chrm.unwrap_or(srgb))
     } else {
-        return None;
+        // create_cspace_CalRGB/CalGray: only with a cHRM (a gAMA alone
+        // leaves the Device space, png_set_gamma corrects the samples)
+        let c = col.chrm?;
+        let [xw, yw, xr, yr, xg, yg, xb, yb] = c;
+        if xw <= 0.0
+            || yw < 1.0e-10
+            || xr < 0.0
+            || yr < 0.0
+            || xg < 0.0
+            || yg < 0.0
+            || xb < 0.0
+            || yb < 0.0
+        {
+            return None;
+        }
+        let g = match col.gamma {
+            Some(g) if g < 1.0e-2 => return None,
+            Some(g) => 1.0 / g,
+            None => 2.2,
+        };
+        (g, c)
     };
     let [xw, yw, xr, yr, xg, yg, xb, yb] = chrm;
     let wp = [xw / yw, 1.0, (1.0 - xw - yw) / yw];
@@ -3556,5 +3696,85 @@ mod tests {
             0x80, 0xff, 0xff, 0x00, 0xff, 0xff, 0x00,
         ];
         assert_eq!(png_soft_mask(&rows, 4, 7, 5, &[0, 0x80, 0xff, 0x40]), want);
+    }
+
+    /// pngimage.c's `png_set_gamma(png_ptr, 2.2, G)`: a grey PNG with only
+    /// `gAMA` 100000 is written DeviceGray with its samples corrected; the
+    /// pairs are TeX Live 2026's xdvipdfmx's (input -> written). `gAMA`
+    /// 45455 is within libpng's threshold: no correction, and no CalRGB
+    /// without a cHRM.
+    #[test]
+    fn png_gamma_as_libpng() {
+        let col = |g: f64| PngColor {
+            gamma: Some(g),
+            ..PngColor::default()
+        };
+        let t = png_gamma_table(&col(1.0)).expect("significant");
+        for (i, o) in [
+            (0x96, 0xc8),
+            (0x98, 0xca),
+            (0x9a, 0xcb),
+            (0x7e, 0xb9),
+            (0x80, 0xba),
+            (0x65, 0xa7),
+            (0x67, 0xa9),
+            (0x7d, 0xb8),
+            (0x81, 0xbb),
+            (0x66, 0xa8),
+            (0x68, 0xaa),
+            (0x97, 0xc9),
+            (0x99, 0xca),
+            (0x69, 0xaa),
+        ] {
+            assert_eq!(t[i], o, "{i:#x}");
+        }
+        assert_eq!((t[0], t[255]), (0, 255));
+        assert!(png_gamma_table(&col(0.45455)).is_none());
+        assert!(cal_space(&col(0.45455), 3).is_none());
+        // with an sRGB chunk, a profile or a cHRM there is no correction
+        let mut c = col(1.0);
+        c.srgb_intent = Some(0);
+        assert!(png_gamma_table(&c).is_none());
+    }
+
+    /// pdfcolor.c's profile checks. Measured: Pillow's sRGB profile
+    /// (version 4.4) is not embedded under PDF 1.7.
+    #[test]
+    fn icc_profiles_as_pdfcolor() {
+        let mut p = vec![0u8; 132];
+        p[..4].copy_from_slice(&132u32.to_be_bytes());
+        p[8] = 4;
+        p[9] = 0x20;
+        p[12..16].copy_from_slice(b"mntr");
+        p[16..20].copy_from_slice(b"RGB ");
+        p[36..40].copy_from_slice(b"acsp");
+        assert!(icc_profile_accepted(&p, b"RGB "));
+        assert!(!icc_profile_accepted(&p, b"GRAY"));
+        let mut v44 = p.clone();
+        v44[9] = 0x40;
+        assert!(!icc_profile_accepted(&v44, b"RGB "));
+        let mut v2 = p.clone();
+        v2[8] = 2;
+        v2[9] = 0x40;
+        assert!(icc_profile_accepted(&v2, b"RGB "));
+        let mut class = p.clone();
+        class[12..16].copy_from_slice(b"link");
+        assert!(!icc_profile_accepted(&class, b"RGB "));
+        let mut size = p.clone();
+        size[3] = 128;
+        assert!(!icc_profile_accepted(&size, b"RGB "));
+        let mut pad = p.clone();
+        pad[120] = 1;
+        assert!(!icc_profile_accepted(&pad, b"RGB "));
+        // a wrong profile ID; then the right one (MD5 with 56..68, 84..100 zeroed)
+        let mut id = p.clone();
+        id[84] = 1;
+        assert!(!icc_profile_accepted(&id, b"RGB "));
+        let mut m = p.clone();
+        m[56..68].fill(0);
+        let sum = flashtex_engine::pdftex::md5::digest(&m);
+        let mut good = p.clone();
+        good[84..100].copy_from_slice(&sum);
+        assert!(icc_profile_accepted(&good, b"RGB "));
     }
 }
