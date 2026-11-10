@@ -1940,6 +1940,13 @@ impl Globals {
                 }
             }
         }
+        // (before the old run's bytes go back: what the new run wrote last
+        // to a file the old run opens again later, `keep_instances_before_jump`)
+        system::keep_instances_before_jump(
+            now.opens,
+            old_opens_after(usize::MAX),
+            &open_outputs(&now),
+        );
         // Output files: the new run's bytes up to their length now, then the
         // old run's from their length at `id`. A file open at `id` is
         // spliced there; one the old run opened (again) after `id` is the

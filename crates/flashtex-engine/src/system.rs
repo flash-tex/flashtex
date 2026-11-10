@@ -4046,6 +4046,11 @@ pub fn opens_len() -> usize {
     OPENS.with(|o| o.borrow().len())
 }
 
+/// Whether one of the first `n` output opens is of `k` (an `out_key`).
+pub fn opened_before(n: usize, k: &str) -> bool {
+    OPENS.with(|o| o.borrow().iter().take(n).any(|p| p == k))
+}
+
 /// The files opened for output after the first `n`.
 pub fn opens_since(n: usize) -> Vec<String> {
     OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
@@ -4170,6 +4175,14 @@ fn keep_instance(path: &str, k: &str) {
     let Some(i) = OPENS.with(|o| o.borrow().iter().rposition(|p| p == k)) else {
         return;
     };
+    keep_instance_at(i, path, k);
+}
+
+/// `keep_instance` for the instance of open `i` (of key `k`).
+fn keep_instance_at(i: usize, path: &str, k: &str) {
+    if OPENS.with(|o| o.borrow().get(i).is_none_or(|p| p != k)) {
+        return;
+    }
     if INSTANCES.with(|v| v.borrow().get(i).is_none_or(|x| x.is_some())) {
         return;
     }
@@ -4188,6 +4201,35 @@ fn keep_instance(path: &str, k: &str) {
             *slot = Some(std::sync::Arc::new(data));
         }
     });
+}
+
+/// A convergence jump is about to append `later`, the old run's output
+/// opens after the convergence point, to the new run's first `n` (lane
+/// BEAMER, #2006). A file the new run opened last before `n` and the old run
+/// opens again in `later` would have that instance kept at the reopen
+/// (`keep_instance`), which the jump appends as done: keep it now, from the
+/// file as the new run left it, before the jump writes the old run's bytes
+/// there. Without it every checkpoint between the new run's open and the
+/// old run's next one was unrestorable. Not for a file open for output at
+/// the jump (`open_out`, by `out_key`): its instance is not done with.
+pub fn keep_instances_before_jump(n: usize, later: &[String], open_out: &[String]) {
+    let todo: Vec<(usize, String)> = OPENS.with(|o| {
+        let o = o.borrow();
+        let n = n.min(o.len());
+        let mut v: Vec<(usize, String)> = vec![];
+        for k in later {
+            if k.is_empty() || open_out.contains(k) || v.iter().any(|(_, p)| p == k) {
+                continue;
+            }
+            if let Some(i) = o[..n].iter().rposition(|p| p == k) {
+                v.push((i, k.clone()));
+            }
+        }
+        v
+    });
+    for (i, k) in todo {
+        keep_instance_at(i, &k, &k);
+    }
 }
 
 /// A restore put back the files open for output at its target

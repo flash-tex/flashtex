@@ -6983,7 +6983,16 @@ impl Session {
         // Now that the restore holds the old run's output: the files a
         // settled run truncated after `r` as the last complete run left
         // them, then the fixed inputs as the run they stand for read them.
-        put_back(self.baseline.iter().filter(|b| b.at >= rec.opens))?;
+        // A file opened for output before `r` too (written, closed and read
+        // back again and again: fancyvrb's VerbatimOut, beamer's `.vrb`)
+        // holds its own instance at `r`, which the restore put back
+        // (`system::instances_at`); the last complete run's content is a
+        // later instance (#2148: the rest of a read open at `r` found it).
+        put_back(
+            self.baseline
+                .iter()
+                .filter(|b| b.at >= rec.opens && !system::opened_before(rec.opens, &b.path)),
+        )?;
         for (p, c) in &fixed_writes {
             std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
             // (the run's own output again, not another program's)
