@@ -5512,6 +5512,67 @@ fn twin_files_edited_alike_both_shift() {
     }
 }
 
+/// #1896 (lane LOG-PARITY): a chain of READ-REVALIDATE windows whose
+/// second holds the end of one reading of the edited file and the whole read
+/// (`\pdffilesize`) of the next, then restarts in that next reading, before
+/// its edit. The file ends inside a group (`\begingroup`), so the state the
+/// first reading leaves holds the group's line, below a newline typed in the
+/// file: the restart point owed that line's shift, and the log printed the
+/// old line at `\end` (`### semi simple group (level 1) entered at line
+/// 121`, a scratch run 122). Read once under one name, then under two (a
+/// link). Each line edit is followed by an edit late in the document, which
+/// restarts from the corrected checkpoints, and both are reverted.
+/// `FLASHTEX_TIMED_S` keeps the checkpoints to pages and read points, which
+/// makes the windows the same in every run.
+#[test]
+fn a_revalidated_restart_in_a_second_reading_moves_the_first_readings_lines() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let mut at_read = 0;
+    for (tag, second) in [("same", "chapx"), ("alias", "alias/chapx")] {
+        let dir = e.dir.join(format!("lines-reread-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.with_extension("ref"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(".", dir.join("alias")).unwrap();
+        let mut chap: String = (0..60).map(|i| para(1000 + i, "ipsum")).collect();
+        chap.push_str("\\begingroup\n");
+        let doc = lines_doc(
+            "",
+            150,
+            &[
+                (60, "\\input{chapx}"),
+                (61, &format!("\\input{{{second}}}")),
+            ],
+        );
+        let late = doc.replacen("Paragraph 140 with", "Paragraph 140 now with", 1);
+        assert_ne!(late, doc);
+        std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "1000")]);
+        settle(&e, &mut h, &dir, &doc);
+        for at in [1045, 1055, 1058] {
+            let from = format!("Paragraph {at} with the word");
+            let nl = chap.replacen(&from, &format!("Paragraph {at} with\nthe word"), 1);
+            assert_ne!(nl, chap);
+            for (file, text, what) in [
+                ("chapx.tex", &nl, "a newline"),
+                ("doc.tex", &late, "a late edit"),
+                ("doc.tex", &doc, "its revert"),
+                ("chapx.tex", &chap, "the newline's revert"),
+            ] {
+                let what = format!("lines-reread-{tag}: {what} (paragraph {at})");
+                let r = compile_and_check(&e, &mut h, &dir, &[(file, text)], &what);
+                if field(&r, "revalidated_at_read") == "true" {
+                    at_read += 1;
+                }
+            }
+        }
+    }
+    assert!(at_read > 0, "no compile revalidated at a read point");
+}
+
 /// Lane P4-MEMORY-BUDGET (`Obs::thin_pending`): a run that does not
 /// converge -- extra text early on moves every later page break and label
 /// -- thins the old run's future behind it (here once it is a page past its
