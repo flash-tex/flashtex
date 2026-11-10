@@ -416,6 +416,9 @@ impl Page {
         if !self.colorspaces.is_empty() {
             sections.push((section::COLORSPACES, self.enc_colorspaces()));
         }
+        // The body is kept (the host's page cache holds every page's), so it
+        // gets the bytes it needs, not the slack of a doubled vector.
+        out.reserve_exact(4 + sections.iter().map(|(_, d)| 8 + d.len()).sum::<usize>());
         out.put_u32(sections.len() as u32);
         for (tag, data) in sections {
             out.put_u32(tag);
