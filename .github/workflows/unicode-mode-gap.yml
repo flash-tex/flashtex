@@ -49,8 +49,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: unicode-mode-gap-${{ github.ref }}
-  cancel-in-progress: true
+  # One group per branch, whichever event started the run: a unicode lane's
+  # branch push and its pull request's run test the same head, and each
+  # cancelled the other's queue position only by luck before (the push ran
+  # in refs/heads/<b>, the pull request in refs/pull/<n>/merge). Keyed on
+  # the head repository too, so a fork's branch never shares a group with
+  # ours. Main is never cancelled (one runs, the newest waits); a manual run
+  # gets a group of its own.
+  group: unicode-mode-gap-${{ github.event_name == 'workflow_dispatch' && github.run_id || format('{0}:{1}', github.event.pull_request.head.repo.full_name || github.repository, github.head_ref || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: never

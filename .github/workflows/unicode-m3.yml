@@ -61,8 +61,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: unicode-m3-${{ github.ref }}
-  cancel-in-progress: true
+  # One group per branch, whichever event started the run: a unicode lane's
+  # branch push and its pull request's run test the same head, and each
+  # cancelled the other's queue position only by luck before (the push ran
+  # in refs/heads/<b>, the pull request in refs/pull/<n>/merge). Keyed on
+  # the head repository too, so a fork's branch never shares a group with
+  # ours. Main is never cancelled (one runs, the newest waits); a manual run
+  # gets a group of its own.
+  group: unicode-m3-${{ github.event_name == 'workflow_dispatch' && github.run_id || format('{0}:{1}', github.event.pull_request.head.repo.full_name || github.repository, github.head_ref || github.ref_name) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -80,7 +87,52 @@ jobs:
     name: build (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      mac: ${{ steps.scope.outputs.mac }}
     steps:
+      # Hosted macOS is the organisation's scarcest runner (5 at once, shared
+      # with ci.yml's app legs and the merge queue), and every comparison in
+      # the mac leg is a report (`|| true`). So it runs on main, on a manual
+      # run, on a pull request labelled full-ci, and on a pull request or
+      # branch push whose own change (against its base) reaches what the leg
+      # exercises: the host and font code with macOS-only paths, the output,
+      # the bundle, the leg's scripts. Anything unknown runs it.
+      - name: does this change reach the macOS leg?
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR: ${{ github.event.pull_request.number }}
+          FULL_CI: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          SHA: ${{ github.sha }}
+          MAC_PATHS: '^(crates/flashtex-xetex/(build\.rs|Cargo\.(toml|lock)|fontlibs/|src/(fontmgr|native|host|bin|out)/)|crates/(font-discovery|pdf|display-list-v3)/|tools/unicode-m3/(notex_corpus|visual|corpus|summarize)\.py|tools/bundle/|\.github/workflows/unicode-m3\.yml)'
+        run: |
+          set -uo pipefail
+          why=""
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != push ]; then why="$EVENT run"
+          elif [ "$REF" = refs/heads/main ]; then why="main"
+          elif [ "$FULL_CI" = true ]; then why="full-ci label"
+          else
+            if [ "$EVENT" = pull_request ]; then
+              files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename') || files=""
+            else
+              # the branch's own change since it left main (a merge of main
+              # into the branch brings main's files in, which are not its own)
+              files=$(gh api "repos/$REPO/compare/main...$SHA" --jq 'if (.files | length) >= 300 then "TOO-MANY" else .files[].filename end') || files=""
+            fi
+            if [ -z "$files" ] || [ "$files" = TOO-MANY ]; then why="file list unknown"
+            else
+              hit=$(printf '%s\n' "$files" | grep -E "$MAC_PATHS" | head -1)
+              [ -n "$hit" ] && why="touches $hit"
+            fi
+          fi
+          if [ -n "$why" ]; then echo "mac=true" >> "$GITHUB_OUTPUT"; echo "macOS leg runs: $why"
+          else echo "mac=false" >> "$GITHUB_OUTPUT"; echo "macOS leg skipped: no file matches MAC_PATHS (label full-ci, or gh workflow run, to run it)"; fi
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -245,8 +297,12 @@ jobs:
 
   mac:
     name: macos-15 (no TeX Live; Core Graphics)
-    needs: linux
-    if: always()
+    needs: [build, linux]
+    # Not `always()`: that also starts this 3-hour leg in a run that has been
+    # cancelled (a newer push), holding one of the five macOS runners for
+    # nothing. A failed Linux part still lets it run, as before; a scope step
+    # that never ran (empty output) runs it too.
+    if: ${{ !cancelled() && needs.build.outputs.mac != 'false' }}
     runs-on: macos-15
     timeout-minutes: 180
     steps:
@@ -331,15 +387,12 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # The six fixed U3 commits build the same binaries every time, so their
+      # rows only change with the runner: a manual run measures them (with
+      # this commit, on the same runner generation); a push or pull request
+      # builds this commit alone, one job instead of seven.
       matrix:
-        include:
-          - {at: "pre-U3 (06b8b6f86^1)", sha: d24387cfe7dc54f657a8f62c7bd5903647aad608}
-          - {at: "#1732 merge", sha: 06b8b6f8662980f2f727ce46d4fe913a7deb451d}
-          - {at: "08708c4e2^1", sha: 2b634dbf680d6fa904fb5ab44ca5457a293f15f1}
-          - {at: "#1734 merge", sha: 08708c4e2a8e185029dfc20794a7e02a7bf19b93}
-          - {at: "6b97bae22^1", sha: c9eeb2a664ff3379bb1897c1675db250dfdfef18}
-          - {at: "#1762 merge", sha: 6b97bae22671777df744289ee36a2699adda34a5}
-          - {at: "this commit", sha: ""}
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[{"at":"pre-U3 (06b8b6f86^1)","sha":"d24387cfe7dc54f657a8f62c7bd5903647aad608"},{"at":"#1732 merge","sha":"06b8b6f8662980f2f727ce46d4fe913a7deb451d"},{"at":"08708c4e2^1","sha":"2b634dbf680d6fa904fb5ab44ca5457a293f15f1"},{"at":"#1734 merge","sha":"08708c4e2a8e185029dfc20794a7e02a7bf19b93"},{"at":"6b97bae22^1","sha":"c9eeb2a664ff3379bb1897c1675db250dfdfef18"},{"at":"#1762 merge","sha":"6b97bae22671777df744289ee36a2699adda34a5"},{"at":"this commit","sha":""}]' || '[{"at":"this commit","sha":""}]') }}
     steps:
       - uses: actions/checkout@v4
         with:
