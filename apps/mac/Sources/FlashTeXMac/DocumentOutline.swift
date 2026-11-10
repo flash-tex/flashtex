@@ -110,6 +110,17 @@ enum DocumentOutline {
         }
     }
 
+    /// Index of the last line start `<= utf16` (a binary search: a linear
+    /// `lastIndex` per item made the scan items × lines, 90 s at 2 MB).
+    static func lineIndex(of utf16: Int, in lineStarts: [Int]) -> Int {
+        var lo = 0, hi = lineStarts.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if lineStarts[mid] <= utf16 { lo = mid + 1 } else { hi = mid }
+        }
+        return max(0, lo - 1)
+    }
+
     static func scan(_ text: String) -> [Item] {
         let ns = text as NSString
         guard ns.length <= maxScannedUTF16 else { return [] }
@@ -140,7 +151,7 @@ enum DocumentOutline {
         for range in searchRanges where range.length > 0 {
             for m in pattern.matches(in: text, range: range) {
                 func group(_ i: Int) -> String? { m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)) }
-                let line = (lineStarts.lastIndex { $0 <= m.range.location } ?? 0) + 1
+                let line = lineIndex(of: m.range.location, in: lineStarts) + 1
                 if let name = group(1), let arg = group(2) {
                     out.append(Item(kind: .section, command: name, title: arg.trimmingCharacters(in: .whitespaces),
                                     level: sectionLevels[name] ?? 1, utf16: m.range, line: line))
