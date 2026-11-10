@@ -296,24 +296,53 @@ fn get_half(b: &[u8], p: usize, t: usize) -> u32 {
 }
 
 /// Append `vals`, packed, to `out`.
+///
+/// Each half is stored as all 4 of its bytes, of which its width keeps the
+/// low ones; the next half's store, or the end of the packed bytes, covers
+/// the rest. The stores go to the vector's spare capacity, without zeroing
+/// it first, and each tag byte is written whole (two words' nibbles): every
+/// byte up to the new length is written once, so the bytes are those of the
+/// bounds-checked version (`packed_words_round_trip`), at a fraction of its
+/// cost (lane BEAMER: the checkpoint at each page's shipout seals its log
+/// with this, on an edit's path to the edited page).
 fn pack_words(vals: &[u64], out: &mut Vec<u8>) {
     let t0 = out.len();
     let n = vals.len();
-    let mut p = t0 + n.div_ceil(2);
-    // Room for every half at its widest plus 4 bytes: each half is stored
-    // as all 4 of its bytes, of which its width keeps the low ones; the
-    // next half's store, or the truncation, covers the rest.
-    out.resize(p + n * 8 + 4, 0);
-    for (i, &x) in vals.iter().enumerate() {
-        let (lo, hi) = (x as u32, (x >> 32) as u32);
-        let (tl, th) = (half_tag(lo), half_tag(hi));
-        out[t0 + i / 2] |= ((tl | th << 2) as u8) << ((i & 1) * 4);
-        out[p..p + 4].copy_from_slice(&lo.to_le_bytes());
-        p += HALF_LEN[tl];
-        out[p..p + 4].copy_from_slice(&hi.to_le_bytes());
-        p += HALF_LEN[th];
+    let tags = n.div_ceil(2);
+    // every half at its widest, plus the 4 bytes the last store may write
+    // past the end
+    out.reserve(tags + n * 8 + 4);
+    // SAFETY: `out` has room for `tags + n * 8 + 4` more bytes. The tag
+    // stores write `tags` bytes from `t0`; the half stores write 4 bytes at
+    // `q`, which advances at most 8 bytes a word from `t0 + tags`, so the
+    // last ends at most `t0 + tags + n * 8 + 4`. Every byte of
+    // `t0..t0 + len` is written (a tag byte, or the low bytes of the half
+    // store at or before it) before `set_len`.
+    unsafe {
+        let base = out.as_mut_ptr().add(t0);
+        let mut q = base.add(tags);
+        let half = |q: &mut *mut u8, h: u32| -> usize {
+            let t = half_tag(h);
+            std::ptr::write_unaligned(*q as *mut [u8; 4], h.to_le_bytes());
+            *q = q.add(HALF_LEN[t]);
+            t
+        };
+        let mut i = 0;
+        while i < n {
+            let x = *vals.get_unchecked(i);
+            let tl = half(&mut q, x as u32);
+            let th = half(&mut q, (x >> 32) as u32);
+            let mut tag = (tl | th << 2) as u8;
+            if let Some(&y) = vals.get(i + 1) {
+                let tl = half(&mut q, y as u32);
+                let th = half(&mut q, (y >> 32) as u32);
+                tag |= ((tl | th << 2) as u8) << 4;
+            }
+            *base.add(i / 2) = tag;
+            i += 2;
+        }
+        out.set_len(t0 + q.offset_from(base) as usize);
     }
-    out.truncate(p);
 }
 
 /// The word at byte `p` of `b` with nibble `t`.
@@ -4108,7 +4137,7 @@ mod tests {
                 out.extend_from_slice(&hi.to_le_bytes()[..HALF_LEN[th]]);
             }
         };
-        for n in [0usize, 1, 2, 3, 127, 128] {
+        for n in [0usize, 1, 2, 3, 4, 5, 63, 64, 65, 127, 128] {
             for start in [0usize, 5, 333] {
                 let chunk = &vals[start..start + n];
                 let mut bytes = vec![9u8; 3];
@@ -4140,6 +4169,15 @@ mod tests {
                     assert_eq!(dst[k], want, "n {n} start {start} word {k}");
                 }
             }
+        }
+        // every length up to 300, appended one after another to one vector
+        // (spare capacity left by the one before: lane BEAMER's unzeroed stores)
+        let (mut bytes, mut want) = (vec![], vec![]);
+        for n in 0..300usize {
+            let chunk = &vals[n * 7..n * 7 + n];
+            pack_words(chunk, &mut bytes);
+            reference(chunk, &mut want);
+            assert_eq!(bytes, want, "appended n {n}");
         }
         // scattered masks, both mask words, only the second needed
         let mask = [0x8000_0000_0000_0011u64, 0x0100_0000_0000_8001];
