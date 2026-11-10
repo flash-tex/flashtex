@@ -507,7 +507,7 @@ final class LiveShareController {
         guard allowed[file] == path, let text = session.text(of: file) else { return }
         // Only to skip an unchanged file; the write itself is confined.
         if let url = Self.safeTarget(root: root, path: path),
-           let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
+           let existing = (try? Data(contentsOf: url)).flatMap(String.init(exactUTF8:)), existing == text { return }
         guard rootFD >= 0,
               let url = try Self.writeConfined(Data(text.utf8), root: root, path: path, rootFD: rootFD,
                                                quarantine: isHost ? nil : receivedMark) else { return }
@@ -780,7 +780,7 @@ final class LiveShareController {
                   out.count < maxSharedFiles,
                   let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
                   (values.fileSize ?? 0) <= CollabLimits.maxDocumentBytes, bytes + (values.fileSize ?? 0) <= maxSharedBytes,
-                  let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                  let text = (try? Data(contentsOf: url)).flatMap(String.init(exactUTF8:)) else { continue }
             seen.insert(foldedKey(rel))
             out.append((rel, text))
             bytes += text.utf8.count
