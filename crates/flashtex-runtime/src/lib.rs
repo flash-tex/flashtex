@@ -30,6 +30,7 @@ pub mod busy;
 #[cfg(feature = "distribution")]
 pub mod formats;
 pub mod fswatch;
+pub mod kpseinputs;
 #[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
 pub mod logalloc;
 pub mod lookupproof;

@@ -42,7 +42,7 @@ use crate::system::{self, FileRead, ReadLog, StatSig, Stream};
 use std::collections::HashMap;
 
 /// v1: the first.
-pub const MAGIC: &[u8] = b"flashtex S1 v1";
+pub const MAGIC: &[u8] = b"flashtex S1 v2";
 
 /// A read of the journal between S₀ and S₁: `system::FileRead` without its
 /// content (path, hash, signature, (closed_at, written_before, stamp, size)).
@@ -604,6 +604,7 @@ impl File {
             return Err("S1 file: its counts do not match its record".into());
         }
         h.key.check(clock, first_line)?;
+        h.key.check_config()?;
         h.key.check_arm()?;
         for (p, len, bytes, hash) in &h.outputs {
             if bytes.is_none() && hash_prefix(p, *len).ok() != Some(*hash) {

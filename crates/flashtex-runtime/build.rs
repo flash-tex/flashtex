@@ -175,6 +175,11 @@ mod kpathsea {
             .include(&dst)
             .define("MAKE_KPSE_DLL", None)
             .define("HAVE_CONFIG_H", None)
+            // Every variable kpathsea reads from the environment, and every
+            // one it sets there, noted (resolver.rs, `kpathsea_env_reads`):
+            // a stored S0 holds what a run under that environment reached.
+            .define("getenv", "flashtex_env_getenv")
+            .define("putenv", "flashtex_env_putenv")
             .warnings(false)
             .flag_if_supported("-w");
         for s in SOURCES.iter().chain(conditional_sources()) {

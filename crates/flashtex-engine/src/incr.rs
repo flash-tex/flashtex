@@ -3961,6 +3961,9 @@ impl Session {
             // The session's clock is the one S₀ was taken with.
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
+            // (the switches, the resolver, the environment: #2058; first,
+            // the cheapest, and it names what changed)
+            key.check_config()?;
             key.check(key.clock, &first_line)?;
             // (the format a full run loads now: `Key::check_format`)
             key.check_format()?;
