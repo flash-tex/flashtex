@@ -603,6 +603,10 @@ struct Rec {
     /// A foreign box register just fetched, waiting for what is done with
     /// it (`flashtex_bm_box_use`): (register, box).
     pending_box: Option<(i32, i32)>,
+    /// A register the call wrote, just fetched, whose box holds a hole:
+    /// only its dimensions, a test or a move may follow (`\copy` would read
+    /// the hole's contents, which the key does not hold).
+    pending_own: Option<i32>,
     kb: Vec<(i32, Vec<i32>)>,
     /// (register, box node, key) of each box moved out of a foreign register
     holes: Vec<(i32, i32, Vec<i32>)>,
@@ -2714,6 +2718,7 @@ impl Globals {
             box_stack: vec![],
             gboxes: vec![],
             pending_box: None,
+            pending_own: None,
             kb: vec![],
             holes: vec![],
             ops: vec![],
@@ -3319,7 +3324,7 @@ impl Globals {
     #[inline(never)]
     pub fn flashtex_bm_box(&mut self, n: i32) {
         let pending = self
-            .bm_with_rec(|r| r.pending_box.is_some())
+            .bm_with_rec(|r| r.pending_box.is_some() || r.pending_own.is_some())
             .unwrap_or(false);
         if pending {
             // the previous fetch was not a dimension, a test or a move: the
@@ -3328,6 +3333,13 @@ impl Globals {
         }
         let written = self.bm_with_rec(|r| r.boxes.contains(&n)).unwrap_or(false);
         if written {
+            let holes: Vec<i32> = self
+                .bm_with_rec(|r| r.holes.iter().map(|h| h.1).collect())
+                .unwrap_or_default();
+            let p = self.bm_box_value(n);
+            if !holes.is_empty() && p != 0 && self.bm_holds_hole(p, &holes) {
+                self.bm_with_rec(|r| r.pending_own = Some(n));
+            }
             return;
         }
         let p = self.bm_box_value(n);
@@ -3344,15 +3356,35 @@ impl Globals {
 
     /// The box register a recording just fetched is used: `k` 1 for a
     /// dimension (`\wd` & co.), 2 for a test (`\ifvoid`, `\ifhbox`), 3 for a
-    /// move (`\box`, which voids the register).
+    /// move (`\box`, which voids the register), 4 for a move of its list
+    /// (`\unhbox`, `\unvbox`, which void it too).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_box_use(&mut self, n: i32, k: i32) {
+        // (a register the call wrote, holding a hole: a move takes the hole
+        // node along, its contents unread)
+        if let Some(Some(m)) = self.bm_with_rec(|r| r.pending_own.take()) {
+            if m != n {
+                self.bm_abort("BoxContent");
+            }
+            return;
+        }
         let Some(Some((m, p))) = self.bm_with_rec(|r| r.pending_box.take()) else {
             return;
         };
-        if m != n {
+        // a foreign box's list moved into the call's output is its contents,
+        // which the key does not hold
+        if m != n || k == 4 {
             return self.bm_abort("BoxContent");
+        }
+        // A box moved into a formula becomes a noad's `sub_box`, and
+        // `mlist_to_hlist` reads more of it than the key holds: `clean_box`
+        // takes it as it is and "simplifies a trivial box" by its list (a
+        // character and a kern: the kern is freed, tex.web §721), and
+        // `make_scripts` and `make_op` change its width and shift (§756,
+        // §750); `rebox` frees it
+        if k == 3 && self.cur_list.mode_field.abs() == k::mmode {
+            return self.bm_abort("MathHole");
         }
         let key = self.bm_box_key(p);
         self.bm_with_rec(|r| {
@@ -3364,6 +3396,33 @@ impl Globals {
                 r.kb.push((n, key));
             }
         });
+    }
+
+    /// Whether box `p` holds one of `holes` anywhere in its lists (the
+    /// lists `boxfrag` takes: a box's, a glue's leaders, a discretionary's).
+    fn bm_holds_hole(&self, p: i32, holes: &[i32]) -> bool {
+        let mut stack = vec![self.mem[(p + 5) as usize].hh().rh()];
+        while let Some(mut q) = stack.pop() {
+            while q != 0 {
+                if q < self.hi_mem_min {
+                    let t = self.mem[q as usize].hh().b0();
+                    if t == k::hlist_node || t == k::vlist_node || t == k::unset_node {
+                        if holes.contains(&q) {
+                            return true;
+                        }
+                        stack.push(self.mem[(q + 5) as usize].hh().rh());
+                    } else if t == k::glue_node {
+                        stack.push(self.mem[(q + 1) as usize].hh().rh());
+                    } else if t == k::disc_node {
+                        let d = self.mem[(q + 1) as usize].hh();
+                        stack.push(d.lh());
+                        stack.push(d.rh());
+                    }
+                }
+                q = self.mem[q as usize].hh().rh();
+            }
+        }
+        false
     }
 
     /// What a box's surroundings can see of it without reading its
@@ -3559,14 +3618,35 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
-        } else if c == k::make_box {
-            if chr == k::vsplit_code {
-                false
-            } else if chr == k::last_box_code {
-                self.nest_ptr > outer
-            } else {
-                true
-            }
+        } else {
+            // (`\\lastbox` and `\\vsplit`: `flashtex_bm_begin_box`, which
+            // `\\setbox`, `\\raise` and the other box contexts reach too)
+            true
+        };
+        if !ok {
+            self.bm_abort("Command");
+        }
+    }
+
+    /// `begin_box`, during a recording, for every box context: a command
+    /// (`\\lastbox`), `\\setbox`, `\\raise` and kin, `\\leaders`. `\\vsplit`
+    /// is refused; `\\lastbox` may take a box only off a list the call made
+    /// (tex.web §1080: the box leaves the list, and `\\setbox` may free it
+    /// at the end of a group).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_begin_box(&mut self) {
+        let outer = self.bm_with_rec(|r| r.start.nest_ptr).unwrap_or(i32::MAX);
+        let ok = if self.cur_chr == k::vsplit_code {
+            false
+        } else if self.cur_chr == k::last_box_code {
+            // nor a hole: it would go into a register the call wrote,
+            // whose contents the call may then read (`\\copy`)
+            let t = self.cur_list.tail_field;
+            self.nest_ptr > outer
+                && !self
+                    .bm_with_rec(|r| r.holes.iter().any(|h| h.1 == t))
+                    .unwrap_or(false)
         } else {
             true
         };
@@ -3651,7 +3731,7 @@ impl Globals {
             // paragraph, no page builder
             Some("OuterList")
         } else if self
-            .bm_with_rec(|r| r.pending_box.is_some())
+            .bm_with_rec(|r| r.pending_box.is_some() || r.pending_own.is_some())
             .unwrap_or(false)
         {
             Some("BoxContent")
@@ -3726,6 +3806,17 @@ impl Globals {
             let holes: Vec<i32> = rec.holes.iter().map(|h| h.1).collect();
             if end.tail == start.tail {
                 return self.bm_abort_taken(rec, "Hole");
+            }
+            // A replay splices in the register's box of the moment as it is
+            // (`frag_make`), so the normal path must have left the hole as
+            // the key saw it: `box_end` shifts a box moved by `\raise`,
+            // `\lower`, `\moveleft` or `\moveright` (tex.web §1076)
+            if rec
+                .holes
+                .iter()
+                .any(|(_, p, key)| self.bm_box_key(*p) != *key)
+            {
+                return self.bm_abort_taken(rec, "HoleChanged");
             }
             let first = self.bm_link(start.tail);
             match self.frag_take(first, 0, &holes, &rec.new_objs) {

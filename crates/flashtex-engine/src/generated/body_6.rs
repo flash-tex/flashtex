@@ -8550,6 +8550,9 @@ impl Globals {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         'l_exit_f: {
+            if self.bm_rec_on {
+                self.flashtex_bm_begin_box();
+            }
             match self.cur_chr {
                 box_code => {
                     {
@@ -9320,6 +9323,9 @@ impl Globals {
                                     }
                                 }
                             }
+                        }
+                        if self.bm_rec_on {
+                            self.flashtex_bm_box_use(self.cur_val, 4i32);
                         }
                         self.free_node(p, box_node_size);
                     }
