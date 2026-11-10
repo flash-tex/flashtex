@@ -106,6 +106,13 @@ fn check_in(tag: &str, src: &str, etex: bool) -> String {
         stat(&on.stats, "replays"),
         "{tag}"
     );
+    // (#2141: each check's checkpoint goes; `retain` kept the newest)
+    assert_eq!(
+        stat(&verify.stats, "checkpoints_left"),
+        0,
+        "{tag}: {}",
+        verify.stats
+    );
     on.stats
 }
 
@@ -279,6 +286,7 @@ fn verify_all_on_the_test_file() {
     assert_eq!(off.log, all.log);
     assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
     assert!(stat(&all.stats, "verified") >= 2, "{}", all.stats);
+    assert_eq!(stat(&all.stats, "checkpoints_left"), 0, "{}", all.stats);
 }
 
 /// Both paths make a `\def`'s list from the same free node, so the `eqtb`

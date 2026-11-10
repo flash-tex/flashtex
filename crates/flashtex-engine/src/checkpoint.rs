@@ -2087,6 +2087,26 @@ impl Globals {
         records.retain(|(i, _)| ids.contains(i));
     }
 
+    /// Drop checkpoint `id` as if it had never been taken (the intrinsics
+    /// verifier's admission checkpoint, `crate::intrinsics_verify`).
+    /// `retain_checkpoints` always keeps the newest, so the newest goes
+    /// through `Arena::drop_newest`, and its line journal (the entries
+    /// between the checkpoint before it and it) goes back to the front of
+    /// the open journal, as if `lineshift::record` had not taken them.
+    /// Only for a checkpoint nothing else holds: never a page checkpoint or
+    /// a branch's base.
+    pub fn drop_checkpoint(&mut self, id: CheckpointId) {
+        if self.arena.checkpoint_ids().last() != Some(&id) {
+            return self.retain_checkpoints(&|k| k != id);
+        }
+        self.arena.drop_newest();
+        let records = &mut self.layer().records;
+        if let Some(k) = records.iter().position(|(i, _)| *i == id) {
+            let (_, r) = records.remove(k);
+            crate::lineshift::unrecord(r.lines.here);
+        }
+    }
+
     /// `retain_checkpoints` for the pending branch (the old run's future,
     /// detached by the last restore): drop every checkpoint of it that
     /// `keep` rejects, except the restore target and the old run's newest,
