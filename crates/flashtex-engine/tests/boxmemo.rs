@@ -649,6 +649,120 @@ fn calls_in_math_groups_compare_their_save_stack() {
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
 
+/// #2211's review (REVIEW-C2 M1): a replay that swaps which control
+/// sequence shares which of two equal lists. Normal path: `\IntrR` shares
+/// `\IntrSrcX`'s list, `\IntrS` `\IntrSrcY`'s; the replay
+/// (FLASHTEX_BOXMEMO_FAULT=swap-let): `\IntrR` shares `\IntrSrcY`'s,
+/// `\IntrS` `\IntrSrcX`'s. Both lists have two references in both states,
+/// so no word of either differs: only the pairing of each list with itself
+/// through `\IntrSrcX` and `\IntrSrcY`, entries neither path wrote, shows
+/// it. The full walk finds it; the restricted walk must not hold where the
+/// full one does not (FLASHTEX_BOXMEMO_WALK_CHECK=1 aborts if it does).
+///
+/// The names keep the sources' `eqtb` entries out of the chunks the call
+/// writes: `\IntrR` and `\IntrS` hash to 3336 and 3337 (chunk 26 of 128
+/// entries), `\IntrSrcX` and `\IntrSrcY` to 6838 and 6839 (chunk 53).
+/// With sources next to `\IntrR` (`\IntrX`, 3342) their chunk is written,
+/// the restricted walk walks them, and the test cannot fail.
+///
+/// (The review's own example, a share and a copy swapped, changes a
+/// reference count: the shared list has two, the copy one, so the
+/// restricted walk already fails there on the count.)
+#[test]
+fn a_swapped_share_is_found_by_the_restricted_walk_too() {
+    swapped_share(
+        "swap-let",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\IntrSrcX{abc}\\def\\IntrSrcY{abc}\n\
+         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrSrcX\\global\\let\\IntrS\\IntrSrcY\\endgroup}\n\
+         \\share{x}\\share{x}\\share{x}\\share{x}\\message{[\\meaning\\IntrR|\\meaning\\IntrS]}\\end\n",
+    );
+}
+
+/// The same through a box register (#2211: the restricted walk walks every
+/// box register). Before each call `\prep` makes `\skip10` and `\skip11`
+/// equal fresh glue specifications and `\box150` an `\hbox` of two glue
+/// nodes that share them. The call shares them into `\skip20` and
+/// `\skip21` and sets `\skip10` and `\skip11` to zero; the replay
+/// (FLASHTEX_BOXMEMO_FAULT=swap-glue) shares them the other way round.
+/// Each specification has two references in both states (a glue node of
+/// the box and one register), and no register holds it but `\skip20` or
+/// `\skip21`: only the box's glue nodes, which pair each with itself, show
+/// the swap. `\box150`'s `eqtb` entry is 150 entries (1,200 bytes) above
+/// `\box0`'s, which the call writes, so it lies in a chunk neither path
+/// writes: a restricted walk that leaves it out holds where the full walk
+/// does not.
+#[test]
+fn a_swapped_share_through_a_box_is_found_by_the_restricted_walk_too() {
+    swapped_share(
+        "swap-glue",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\prep{\\global\\skip10=1pt plus 1fil \\global\\skip11=1pt plus 1fil \\global\\setbox150=\\hbox{\\hskip\\skip10 \\hskip\\skip11}}\n\
+         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\skip20=\\skip10 \\global\\skip21=\\skip11 \\global\\skip10=0pt \\global\\skip11=0pt \\endgroup}\n\
+         \\prep\\share{x}\\prep\\share{x}\\prep\\share{x}\\prep\\share{x}\\message{[\\the\\skip20|\\the\\skip21]}\\end\n",
+    );
+}
+
+/// `\share`'s replays with FLASHTEX_BOXMEMO_FAULT=`fault` and
+/// FLASHTEX_BOXMEMO_WALK_CHECK=1: with the full walk on every call, and
+/// with the restricted one on every call but the first. Both report the
+/// swap, and the restricted walk meets it and does not hold.
+fn swapped_share(fault: &str, tex: &str) {
+    let d = scratch(fault);
+    std::fs::write(d.join("t.tex"), tex).unwrap();
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let go = |every: &str| {
+        let stats = d.join(format!("stats-{every}.txt"));
+        let _ = std::fs::remove_file(&stats);
+        let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .args(["-ini", "-etex", "\\input t"])
+            .current_dir(&d)
+            .env("FLASHTEX_POOL", &pool)
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FORCE_SOURCE_DATE", "1")
+            .env("FLASHTEX_BOXMEMO", "verify")
+            .env("FLASHTEX_BOXMEMO_NAMES", "share")
+            .env("FLASHTEX_BOXMEMO_STATS", &stats)
+            .env("FLASHTEX_BOXMEMO_FAULT", fault)
+            .env("FLASHTEX_BOXMEMO_FULL_EVERY", every)
+            .env("FLASHTEX_BOXMEMO_WALK_CHECK", "1")
+            .env_remove("FLASHTEX_BOXMEMO_VERIFY_FAIL")
+            .stdin(Stdio::null())
+            .output()
+            .expect("run flashtex-initex");
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        (
+            out.status.code(),
+            err,
+            std::fs::read_to_string(&stats).unwrap_or_default(),
+        )
+    };
+    // the full walk alone (as before #2211) finds the swap
+    let (code, err, s) = go("1");
+    assert!(stat(&s, "full_verified") >= 1, "{code:?} {err}\n{s}");
+    assert!(
+        stat(&s, "full_differences") >= 1,
+        "the full walk missed the swap: {err}\n{s}"
+    );
+    // the restricted walk on every call but the first (whose replay the
+    // fault leaves whole): it meets the swap, and must not hold where the
+    // full walk does not
+    let (code, err, s) = go("1000000000");
+    assert!(!err.contains("WALK_CHECK"), "{code:?}: {err}");
+    assert_eq!(code, Some(0), "{err}");
+    assert!(stat(&s, "full_verified") >= 2, "{err}\n{s}");
+    assert!(
+        stat(&s, "full_differences") >= 1,
+        "the swap went unreported: {err}\n{s}"
+    );
+    // and it was the restricted walk that met the swap, and did not hold
+    assert!(
+        err.contains("the restricted walk did not hold"),
+        "{err}\n{s}"
+    );
+}
+
 #[test]
 fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
     // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
