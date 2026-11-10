@@ -296,7 +296,10 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                         a2.set(a2.get() + 1);
                         a2.get() == nth
                     })));
+                    // (stopped where asked: `Session::set_protect_edit`)
+                    s.set_protect_edit(false);
                     let r = s.compile(None).map(|r| r.json());
+                    s.set_protect_edit(true);
                     s.set_preempt(None);
                     r
                 }
@@ -318,7 +321,9 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                         }
                         hit
                     })));
+                    s.set_protect_edit(false);
                     let r = s.compile(None).map(|r| r.json());
+                    s.set_protect_edit(true);
                     s.set_preempt(None);
                     r
                 }

@@ -1849,11 +1849,11 @@ fn a_newer_compile_preempts_the_running_one() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// LIVE-30MS: typing faster than the edited page arrives must not starve
-/// the preview. After a compile that newer work stopped before it shipped a
-/// changed page, the next one is not stopped before its changed page, and
-/// sends it even when superseded (then stops, `cancelled`); and what the
-/// client holds at the end still equals a from-scratch compile.
+/// LIVE-30MS, TYPING-50MS: typing faster than the edited page arrives must
+/// not starve the preview. No incremental compile is stopped by newer work
+/// before its changed page: each sends it even when superseded (then stops,
+/// `cancelled`); and what the client holds at the end still equals a
+/// from-scratch compile.
 #[test]
 fn a_superseded_compile_still_sends_its_edited_page() {
     if find_texlive_bin().is_none() {
@@ -1950,22 +1950,19 @@ fn a_superseded_compile_still_sends_its_edited_page() {
         }
         assert_eq!(dones[2].int_field("id"), Some(ids[2]));
         assert_eq!(dones[2].str_field("status"), Some("ok"), "{}", dones[2]);
-        // the first stopped before a page (starved): the second, superseded
-        // too, still sent its changed page
+        // a compile superseded while it ran (the next keystroke was sent
+        // as soon as it started) still sent its changed page
         let cancelled = |d: &Json| d.str_field("status") == Some("cancelled");
-        let started = |d: &Json| d.get("stages").is_some();
-        if cancelled(&dones[0])
-            && started(&dones[0])
-            && pages.get(&ids[0]).copied().unwrap_or(0) == 0
-            && cancelled(&dones[1])
-            && started(&dones[1])
-        {
-            assert!(
-                pages.get(&ids[1]).copied().unwrap_or(0) >= 1,
-                "round {round}: the protected compile sent no page: {}",
-                dones[1]
-            );
-            sent_superseded += 1;
+        let ran =
+            |d: &Json| d.get("stages").is_some() && d.str_field("mode") == Some("incremental");
+        for (n, d) in dones[..2].iter().enumerate() {
+            if cancelled(d) && ran(d) {
+                assert!(
+                    pages.get(&ids[n]).copied().unwrap_or(0) >= 1,
+                    "round {round}: superseded compile {n} sent no page: {d}"
+                );
+                sent_superseded += 1;
+            }
         }
         let dones = [dones[0].clone(), dones[2].clone()];
         let count = dones[1].int_field("pages").unwrap_or(0) as usize;
@@ -1983,13 +1980,16 @@ fn a_superseded_compile_still_sends_its_edited_page() {
             &format!("superseded round {round}"),
         );
     }
-    // The second keystroke is sent as soon as the first has started: the
-    // first is stopped at its first checkpoint, long before its page, in
-    // practice every round; one round at least, or the test proved nothing.
-    eprintln!("{sent_superseded} of 5 rounds starved a compile and protected the next");
+    // The next keystroke is sent as soon as a compile has started: without
+    // the protection it would stop at its first checkpoint, long before its
+    // page, in practice every time; once at least, or the test proved
+    // nothing.
+    eprintln!(
+        "{sent_superseded} of 10 compiles were superseded while they ran and sent their page"
+    );
     assert!(
         sent_superseded >= 1,
-        "no round starved a compile: the protection was not exercised"
+        "no compile was superseded while it ran: the protection was not exercised"
     );
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
