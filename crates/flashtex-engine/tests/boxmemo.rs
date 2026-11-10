@@ -195,6 +195,23 @@ fn outside_the_model_never_replays() {
 }
 
 #[test]
+fn lastbox_in_a_box_context_never_takes_the_outer_list() {
+    // (lane AUDIT-MATH) `\\setbox3\\lastbox` reaches `begin_box` through
+    // `scan_box`, not as a command of its own: it took the box the call
+    // was offered after off the outer list, and `\\endgroup` freed it
+    // (`link` of the recorded tail, read at the end, was a freed node's)
+    let s = check(
+        "lastbox-outer",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\def\\measure{\\begingroup\\setbox3\\lastbox\\global\\dimen1=\\wd3 \\endgroup}\n\
+         \\def\\one#1{\\setbox1#1{\\hbox{\\vrule width 1pt}\\relax\\measure}\\showbox1 }\n\
+         \\one\\hbox\\one\\hbox\\one\\hbox\\one\\vbox\\one\\vbox\\one\\vbox\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
 fn void_box_reads_are_part_of_the_key() {
     let s = check(
         "void",

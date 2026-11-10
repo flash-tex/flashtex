@@ -3559,14 +3559,29 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
-        } else if c == k::make_box {
-            if chr == k::vsplit_code {
-                false
-            } else if chr == k::last_box_code {
-                self.nest_ptr > outer
-            } else {
-                true
-            }
+        } else {
+            // (`\\lastbox` and `\\vsplit`: `flashtex_bm_begin_box`, which
+            // `\\setbox`, `\\raise` and the other box contexts reach too)
+            true
+        };
+        if !ok {
+            self.bm_abort("Command");
+        }
+    }
+
+    /// `begin_box`, during a recording, for every box context: a command
+    /// (`\\lastbox`), `\\setbox`, `\\raise` and kin, `\\leaders`. `\\vsplit`
+    /// is refused; `\\lastbox` may take a box only off a list the call made
+    /// (tex.web §1080: the box leaves the list, and `\\setbox` may free it
+    /// at the end of a group).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_begin_box(&mut self) {
+        let outer = self.bm_with_rec(|r| r.start.nest_ptr).unwrap_or(i32::MAX);
+        let ok = if self.cur_chr == k::vsplit_code {
+            false
+        } else if self.cur_chr == k::last_box_code {
+            self.nest_ptr > outer
         } else {
             true
         };
