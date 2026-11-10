@@ -10,9 +10,10 @@
 //! what it reads, all of which is the key: the font program's bytes (by
 //! content hash), the map entry's slant, extension and subset flag, the
 //! descriptor's font name, glyph sets (`gl_tree`, `tx_tree`), all-glyphs flag
-//! and font dimensions as they come in, the persistent `lastargOtherSubr3`,
+//! and font dimensions as they come in, the persistent `lastargOtherSubr3`
+//! and `t1_fontname_offset`,
 //! and where the font buffer starts. A hit gives the same bytes, the same
-//! changes to the descriptor and the same `lastargOtherSubr3` afterwards.
+//! changes to the descriptor and the same statics afterwards.
 //!
 //! What it asks of the engine is replayed, not reused: each call to
 //! [`Host`] is recorded in order, and on a hit made again. The subset tag
@@ -27,7 +28,7 @@
 //! go first) and is off with `FLASHTEX_T1_CACHE=0`.
 
 use super::subset::{self, Embedded, Job};
-use super::{Host, Result};
+use super::{Host, Persist, Result};
 use crate::pdftex::fonts::GlyphNames;
 use crate::pdftex::writefont::IntParm;
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -46,7 +47,8 @@ struct Key {
     font_dim: Vec<(i32, bool)>,
     tx_tree: Option<BTreeSet<i32>>,
     gl_tree: Option<BTreeSet<Vec<u8>>>,
-    last_arg_other_subr3: i32,
+    /// writet1.c's statics: `lastargOtherSubr3`, `t1_fontname_offset`.
+    persist: Persist,
     fb_base: i32,
 }
 
@@ -67,15 +69,16 @@ struct Entry {
     bytes: Vec<u8>,
     length1: i32,
     length2: i32,
-    /// Where the subset tag is in `bytes`, if it was written there.
-    tag_at: Option<usize>,
+    /// Where the subset tag is in `bytes`, if it was written there, and
+    /// how many of its bytes landed (a fresh run writes no more).
+    tag_at: Option<(usize, usize)>,
     calls: Vec<Call>,
     fontname: Option<Vec<u8>>,
     subset_tag: Option<[u8; 6]>,
     font_dim: Vec<IntParm>,
     gl_tree: Option<BTreeSet<Vec<u8>>>,
     builtin_glyph_names: Option<GlyphNames>,
-    last_arg_other_subr3: i32,
+    persist: Persist,
 }
 
 impl Entry {
@@ -169,7 +172,7 @@ pub(super) fn embed(font: &[u8], job: Job, host: &mut dyn Host) -> Result<Embedd
         font_dim: job.fd.font_dim.iter().map(|d| (d.val, d.set)).collect(),
         tx_tree: job.fd.tx_tree.clone(),
         gl_tree: job.fd.gl_tree.clone(),
-        last_arg_other_subr3: job.persist.last_arg_other_subr3,
+        persist: job.persist.clone(),
         fb_base: job.fb_base,
     };
     let hit = CACHE
@@ -210,7 +213,7 @@ pub(super) fn embed(font: &[u8], job: Job, host: &mut dyn Host) -> Result<Embedd
         font_dim: fd.font_dim.to_vec(),
         gl_tree: fd.gl_tree.clone(),
         builtin_glyph_names: fd.builtin_glyph_names.clone(),
-        last_arg_other_subr3: persist.last_arg_other_subr3,
+        persist: persist.clone(),
     };
     keep(key, e);
     Ok(out)
@@ -238,7 +241,7 @@ fn keep(key: Key, e: Entry) {
 }
 
 /// A hit: the engine is asked what it was asked when the entry was made,
-/// in the same order, and the descriptor and `lastargOtherSubr3` are left
+/// in the same order, and the descriptor and writet1.c's statics are left
 /// as `embed` left them.
 fn replay(e: Entry, job: Job, host: &mut dyn Host) -> Embedded {
     let mut bytes = e.bytes;
@@ -253,8 +256,8 @@ fn replay(e: Entry, job: Job, host: &mut dyn Host) -> Embedded {
             } => {
                 let now = host.subset_tag(glyphs, fontname);
                 if now != *tag {
-                    if let Some(slot) = e.tag_at.and_then(|at| bytes.get_mut(at..at + 6)) {
-                        slot.copy_from_slice(&now);
+                    if let Some((at, n)) = e.tag_at {
+                        subset::write_tag(&mut bytes, at, &now[..n]);
                     }
                 }
                 subset_tag = Some(now);
@@ -267,7 +270,7 @@ fn replay(e: Entry, job: Job, host: &mut dyn Host) -> Embedded {
     fd.font_dim.copy_from_slice(&e.font_dim);
     fd.gl_tree = e.gl_tree;
     fd.builtin_glyph_names = e.builtin_glyph_names;
-    job.persist.last_arg_other_subr3 = e.last_arg_other_subr3;
+    *job.persist = e.persist;
     Embedded {
         bytes,
         length1: e.length1,
@@ -281,7 +284,6 @@ mod tests {
     use super::*;
     use crate::pdftex::mapfile::{FmEntry, F_SUBSETTED, F_TYPE1};
     use crate::pdftex::writefont::FdEntry;
-    use crate::pdftex::writet1::Persist;
 
     /// A host that gives out the tags it is handed, in turn, and records
     /// every call.
@@ -345,6 +347,7 @@ mod tests {
         };
         let mut persist = Persist {
             last_arg_other_subr3: persist_in,
+            ..Persist::default()
         };
         let mut host = TagHost::new(tags);
         let job = Job {
@@ -430,6 +433,59 @@ mod tests {
         let other = run(true, &["B"], 7, &[b"AAAAAA"]);
         assert_eq!(hits(), h, "a miss");
         assert_eq!(other, run(false, &["B"], 7, &[b"AAAAAA"]));
+    }
+
+    /// A late-`/FontName` font after a subset font whose stale tag offset
+    /// is 3 bytes before this font's `/Encoding`: pdfTeX's `strncpy` lands
+    /// 3 bytes there and the font's own `/Encoding` line overwrites the
+    /// rest. A hit given another tag must write those 3, not all 6.
+    #[test]
+    fn a_hit_writes_only_the_tag_bytes_a_run_wrote() {
+        let late = String::from_utf8(subset::tests::CLEAR.to_vec())
+            .unwrap()
+            .replace("/FontName /Test def\n", "")
+            .replace(
+                "readonly def\ncurrentfile",
+                "readonly def\n/FontName /Test def\ncurrentfile",
+            );
+        let font = subset::tests::pfa_with(late.as_bytes());
+        let go = |cached: bool, offset: i32, tag: &[u8; 6]| {
+            let mut fm = FmEntry::new();
+            fm.typ = F_SUBSETTED | F_TYPE1;
+            let mut fd = FdEntry {
+                gl_tree: Some([b"A".to_vec()].into_iter().collect()),
+                ..Default::default()
+            };
+            let mut persist = Persist {
+                fontname_offset: offset,
+                ..Persist::default()
+            };
+            let mut host = TagHost::new(&[tag]);
+            let job = Job {
+                fm: &fm,
+                fd: &mut fd,
+                persist: &mut persist,
+                fb_base: 0,
+            };
+            let out = if cached {
+                embed(&font, job, &mut host)
+            } else {
+                subset::embed(&font, job, &mut host)
+            }
+            .unwrap();
+            (out.bytes, out.tag_at)
+        };
+        let (probe, _) = go(false, 1, b"AAAAAA");
+        let enc = probe.windows(9).position(|w| w == b"/Encoding").unwrap();
+        let at = enc - 3;
+        let (direct, tag_at) = go(false, at as i32, b"QWERTY");
+        assert_eq!(tag_at, Some((at, 3)));
+        assert_eq!(&direct[at..at + 9], b"QWE/Encod");
+        go(true, at as i32, b"AAAAAA");
+        let h = hits();
+        let (again, _) = go(true, at as i32, b"QWERTY");
+        assert_eq!(hits(), h + 1, "a hit");
+        assert_eq!(again, direct);
     }
 
     fn find_bytes(hay: &[u8], needle: &[u8]) -> bool {
