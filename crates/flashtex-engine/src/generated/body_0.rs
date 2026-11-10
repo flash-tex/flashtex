@@ -1912,6 +1912,9 @@ impl Globals {
                     self.jump_out();
                 }
             }
+            if self.intr_rec_on {
+                self.flashtex_intr_abort(5i32);
+            }
             if (self.interaction == error_stop_mode) {
                 // §83
                 while true {

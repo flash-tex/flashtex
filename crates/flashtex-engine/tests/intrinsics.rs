@@ -171,6 +171,56 @@ fn tracing_falls_back() {
     assert_eq!(stat(&s, "Tracing"), 1, "{s}");
 }
 
+/// In `error_stop_mode` an error answered with an empty line changes no
+/// count (`error` returns before `incr(error_count)`), `history` is already
+/// `error_message_issued` after an earlier error, and before the log is
+/// open (the first line, not `\input`) it writes no log and leaves the
+/// terminal at the start of a line. Before, the recording took such a run
+/// for pure and the replays dropped two of the three `Invalid code` errors.
+#[test]
+fn an_error_answered_at_the_terminal_is_not_pure() {
+    let d = scratch("err");
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let errors = |mode: &str| {
+        let stats = d.join(format!("stats-{mode}.txt"));
+        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .args([
+                "-ini",
+                "\\catcode`\\{=1 \\catcode`\\}=2 \\undefined\
+                 \\def\\hook{\\catcode1=300 }\\hook\\hook\\hook\\end",
+            ])
+            .current_dir(&d)
+            .env("FLASHTEX_POOL", &pool)
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FORCE_SOURCE_DATE", "1")
+            .env("FLASHTEX_INTRINSICS", mode)
+            .env("FLASHTEX_INTRINSIC_NAMES", "hook")
+            .env("FLASHTEX_INTRINSICS_STATS", &stats)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run flashtex-initex");
+        use std::io::Write;
+        // an empty answer to each prompt (EOF at a prompt is a fatal error)
+        let _ = child.stdin.take().unwrap().write_all(b"\n\n\n\n\n\n");
+        let out = child.wait_with_output().unwrap();
+        let term = String::from_utf8_lossy(&out.stdout).into_owned();
+        let s = std::fs::read_to_string(&stats).unwrap_or_default();
+        (term.matches("! Invalid code").count(), s)
+    };
+    let (off, _) = errors("off");
+    assert_eq!(off, 3);
+    let (on, s) = errors("on");
+    assert_eq!(on, 3, "{s}");
+    assert_eq!(stat(&s, "replays"), 0, "{s}");
+    assert_eq!(stat(&s, "Error"), 1, "{s}");
+    let (verify, s) = errors("verify");
+    assert_eq!(verify, 3, "{s}");
+    assert_eq!(stat(&s, "verify_differences"), 0, "{s}");
+}
+
 #[test]
 fn impure_macro_is_not_replayed() {
     // \message writes to the log; \hbox typesets; \aftergroup leaves the group
