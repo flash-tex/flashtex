@@ -495,6 +495,24 @@ fn boxes_at_the_calls_level_not_its_own_never_replay() {
 }
 
 #[test]
+fn a_call_that_ends_its_paragraph_never_replays() {
+    // (lane AUDIT-GROUPS, #2268) `\\par\\noindent` in a call made in an
+    // empty paragraph: `end_graf` pops the paragraph and frees its head,
+    // which the next paragraph's `push_nest` takes back from `get_avail`,
+    // so the end check found the same list; the `\\parskip` glue went to
+    // the enclosing `\\vbox`. On main a replay dropped it
+    let s = check(
+        "repar",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\parskip=3pt\n\
+         \\def\\measure{\\par\\noindent}\n\
+         \\def\\one{\\setbox1\\vbox{\\hrule\\noindent\\measure\\vrule width 1pt\\par}\\showbox1 }\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
 fn a_box_made_in_a_group_is_not_the_calls_after_it() {
     // (lane FANCYHDR, a hole found on the way) a box register the call sets
     // inside a group gets back its old box when the group ends; read after
