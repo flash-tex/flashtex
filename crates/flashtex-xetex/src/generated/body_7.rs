@@ -3553,8 +3553,12 @@ impl Globals {
                         // §1306
                         if (self.cur_chr == 1i32) {
                             {
-                                self.new_patterns();
-                                break 'l_done_f;
+                                if self.ini_version() {
+                                    {
+                                        self.new_patterns();
+                                        break 'l_done_f;
+                                    }
+                                }
                                 {
                                     if (self.interaction == error_stop_mode) {
                                     }
@@ -9012,34 +9016,38 @@ impl Globals {
             }
             if (c == 1i32) {
                 {
-                    {
-                        let __for_end_5 = split_bot_mark_code;
-                        c = top_mark_code;
-                        while c <= __for_end_5 {
-                            if (self.cur_mark[crate::ix::U((c) as usize)] != (268435455i32).wrapping_neg()) {
-                                self.delete_token_ref(self.cur_mark[crate::ix::U((c) as usize)]);
+                    if self.ini_version() {
+                        {
+                            {
+                                let __for_end_7 = split_bot_mark_code;
+                                c = top_mark_code;
+                                while c <= __for_end_7 {
+                                    if (self.cur_mark[crate::ix::U((c) as usize)] != (268435455i32).wrapping_neg()) {
+                                        self.delete_token_ref(self.cur_mark[crate::ix::U((c) as usize)]);
+                                    }
+                                    c = c.wrapping_add(1);
+                                }
                             }
-                            c = c.wrapping_add(1);
+                            if (self.sa_root[crate::ix::U((mark_val) as usize)] != (268435455i32).wrapping_neg()) {
+                                if self.do_marks(destroy_marks, 0i32, self.sa_root[crate::ix::U((mark_val) as usize)]) {
+                                    self.sa_root[crate::ix::U((mark_val) as usize)] = (268435455i32).wrapping_neg();
+                                }
+                            }
+                            {
+                                let __for_end_7 = vsplit_code;
+                                c = last_box_code;
+                                while c <= __for_end_7 {
+                                    self.flush_node_list(self.disc_ptr[crate::ix::U(((c) - 1) as usize)]);
+                                    c = c.wrapping_add(1);
+                                }
+                            }
+                            if (self.last_glue != max_halfword) {
+                                self.delete_glue_ref(self.last_glue);
+                            }
+                            self.store_fmt_file();
+                            break 'l_exit_f;
                         }
                     }
-                    if (self.sa_root[crate::ix::U((mark_val) as usize)] != (268435455i32).wrapping_neg()) {
-                        if self.do_marks(destroy_marks, 0i32, self.sa_root[crate::ix::U((mark_val) as usize)]) {
-                            self.sa_root[crate::ix::U((mark_val) as usize)] = (268435455i32).wrapping_neg();
-                        }
-                    }
-                    {
-                        let __for_end_5 = vsplit_code;
-                        c = last_box_code;
-                        while c <= __for_end_5 {
-                            self.flush_node_list(self.disc_ptr[crate::ix::U(((c) - 1) as usize)]);
-                            c = c.wrapping_add(1);
-                        }
-                    }
-                    if (self.last_glue != max_halfword) {
-                        self.delete_glue_ref(self.last_glue);
-                    }
-                    self.store_fmt_file();
-                    break 'l_exit_f;
                     self.print_nl(66734i32);
                     break 'l_exit_f;
                 }
