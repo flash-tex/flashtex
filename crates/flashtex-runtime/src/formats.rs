@@ -247,6 +247,41 @@ fn command_progname(cmd: &[String]) -> Option<&str> {
     cmd.iter().find_map(|a| a.strip_prefix("-progname="))
 }
 
+/// The environment variables through which kpathsea lets a user override
+/// the search path of the formats INITEX looks files up in (tex-file.c's
+/// `TEX_ENVS`, `TFM_ENVS`, `WEB2C_ENVS`). kpathsea's `kpathsea_var_value`
+/// tries `VAR.progname`, then `VAR_progname`, then `VAR`, before texmf.cnf.
+///
+/// A format does not depend on them: TeX Live's formats are built by
+/// fmtutil without a document's `TEXINPUTS=./sub:` and found through
+/// `TEXFORMATS`, so pdfTeX compiles with a `TEXINPUTS` that has no default
+/// path. The cache builds without them and does not repeat its lookups in a
+/// format whose path they override (#2310).
+const PATH_ENVS: &[(Format, &[&str])] = &[
+    (Format::Tex, &["TEXINPUTS"]),
+    (Format::Tfm, &["TFMFONTS", "TEXFONTS"]),
+    (Format::Web2c, &["WEB2C"]),
+];
+
+/// Is `var` one of [`PATH_ENVS`]'s variables, in any of its spellings?
+fn is_path_env(var: &str) -> bool {
+    PATH_ENVS.iter().flat_map(|(_, v)| v.iter()).any(|n| {
+        var.strip_prefix(n)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '_']))
+    })
+}
+
+/// Does the environment override `format`'s search path for program
+/// `progname`, as kpathsea reads it (an empty value counts as unset)?
+fn env_overrides_path(format: Format, progname: &str) -> bool {
+    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
+    PATH_ENVS
+        .iter()
+        .filter(|(f, _)| *f == format)
+        .flat_map(|(_, v)| v.iter())
+        .any(|n| set(&format!("{n}.{progname}")) || set(&format!("{n}_{progname}")) || set(n))
+}
+
 /// The line that builds `fmt` with this engine (`pdftex`), from the
 /// resolver's `fmtutil.cnf` files, and its command line.
 pub fn fmtutil_line_for(
@@ -663,6 +698,11 @@ impl FormatCache {
                 let Some(format) = Format::from_kpse_name(&l.format) else {
                     continue;
                 };
+                // The build searched without the environment's override of
+                // this path (`PATH_ENVS`); this process cannot repeat it.
+                if env_overrides_path(format, progname) {
+                    continue;
+                }
                 self.last.lookups_checked += 1;
                 let found = verify
                     .find_direct(r, &l.name, format, l.must_exist)
@@ -834,6 +874,12 @@ impl FormatCache {
             .env_remove("TEXMF_OUTPUT_DIRECTORY")
             .env_remove("FLASHTEX_DISPLAY_LIST")
             .env_remove("FLASHTEX_DISPLAY_LIST_HAVE_FONTS");
+        // Nor with a document's search-path overrides (`PATH_ENVS`, #2310).
+        for (k, _) in std::env::vars_os() {
+            if k.to_str().is_some_and(is_path_env) {
+                c.env_remove(&k);
+            }
+        }
         for (k, v) in &self.env {
             c.env(k, v);
         }
@@ -985,6 +1031,30 @@ pub fn ensure_format(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_env_spellings_are_kpathseas() {
+        for v in [
+            "TEXINPUTS",
+            "TEXINPUTS_pdflatex",
+            "TEXINPUTS.pdftex",
+            "TFMFONTS",
+            "TEXFONTS_x",
+            "WEB2C",
+        ] {
+            assert!(is_path_env(v), "{v}");
+        }
+        for v in [
+            "TEXINPUTSX",
+            "TEXMFCNF",
+            "TEXMFHOME",
+            "BIBINPUTS",
+            "TEXFORMATS",
+            "XTEXINPUTS",
+        ] {
+            assert!(!is_path_env(v), "{v}");
+        }
+    }
 
     #[test]
     fn cache_root_follows_each_os_rule() {
