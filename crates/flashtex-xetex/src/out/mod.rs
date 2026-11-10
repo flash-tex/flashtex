@@ -50,6 +50,7 @@ use flashtex_display_list::frame::write_frame;
 use flashtex_display_list::kind;
 use flashtex_display_list::page::Item;
 use flashtex_display_list::resource::Font;
+use flashtex_engine::pdftex::utils::make_pdf_time;
 use std::collections::HashSet;
 use std::io::Write;
 
@@ -532,37 +533,62 @@ pub fn finish(g: &mut Globals) -> i32 {
     rc
 }
 
-/// `D:YYYYMMDDHHmmSSZ` of `SOURCE_DATE_EPOCH` when it is set (with
-/// `FORCE_SOURCE_DATE` or not: the PDF's dates are the output's), else of
-/// `session` (the pinned clock, `Host::clock`), else of now.
+/// `/CreationDate` as xdvipdfmx writes it (dpxutil.c's
+/// `dpx_util_format_asn_date` with its time zone): `SOURCE_DATE_EPOCH`,
+/// when it is valid (`dpx_util_get_unique_time_if_given`, with or without
+/// `FORCE_SOURCE_DATE`), in UTC with `Z`; else `session` (the pinned
+/// clock, `Host::clock`) or now, in local time with its offset
+/// (`+09'00'`, or `Z` at UTC).
 fn pdf_date(session: Option<i64>) -> Option<String> {
-    let secs = std::env::var("SOURCE_DATE_EPOCH")
-        .ok()
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .or(session)
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64)
-        });
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    // civil from days (Howard Hinnant's algorithm)
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    Some(format!(
-        "D:{y:04}{m:02}{d:02}{:02}{:02}{:02}Z",
-        rem / 3600,
-        rem / 60 % 60,
-        rem % 60
-    ))
+    if let Some(t) =
+        std::env::var_os("SOURCE_DATE_EPOCH").and_then(|v| source_date_epoch(v.as_encoded_bytes()))
+    {
+        return String::from_utf8(make_pdf_time(t, true)).ok();
+    }
+    let now = session.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64)
+    });
+    String::from_utf8(make_pdf_time(now, false)).ok()
+}
+
+/// `SOURCE_DATE_EPOCH` as dvipdfmx reads it: `strtoll(s, &end, 10)` must
+/// end the string, not overflow and not be negative. strtoll skips leading
+/// white space and takes a sign; with no digits it reads nothing, so the
+/// empty string is 0 and white space alone is not a number.
+fn source_date_epoch(s: &[u8]) -> Option<i64> {
+    if s.is_empty() {
+        return Some(0);
+    }
+    let mut i = 0;
+    while i < s.len() && matches!(s[i], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+        i += 1;
+    }
+    let neg = match s.get(i) {
+        Some(b'-') => {
+            i += 1;
+            true
+        }
+        Some(b'+') => {
+            i += 1;
+            false
+        }
+        _ => false,
+    };
+    let digits = &s[i..];
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut v: i64 = 0;
+    for &d in digits {
+        // an overflow sets ERANGE: not valid
+        v = v.checked_mul(10)?.checked_add(i64::from(d - b'0'))?;
+    }
+    if neg {
+        v = -v;
+    }
+    (v >= 0).then_some(v)
 }
 
 /// Send a page, and the forms and resources it needs first, to the
