@@ -96,7 +96,10 @@ mod tests {
         let p = picture("p-sound.pdf");
         assert_eq!(count_pages(&p), 1);
         let k = 72.27 / 72.0;
-        assert_eq!(get_rect(&p, 1, 1), Some([k * 10.0, k * 10.0, k * 280.0, k * 180.0]));
+        assert_eq!(
+            get_rect(&p, 1, 1),
+            Some([k * 10.0, k * 10.0, k * 280.0, k * 180.0])
+        );
         // the media box, of a page number past the end (clamped)
         assert_eq!(get_rect(&p, 9, 2), Some([0.0, 0.0, k * 300.0, k * 200.0]));
         assert_eq!(count_pages(&picture("p-pages.pdf")), 5);

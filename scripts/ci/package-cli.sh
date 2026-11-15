@@ -20,7 +20,7 @@
 #                                 notices of what it links (jemalloc, on Linux)
 #     share/flashtex/engine/LICENSE-unicode, THIRD-PARTY-NOTICES-unicode.txt
 #                                the same for flashtex-host-unicode (HarfBuzz,
-#                                 FreeType, TECkit, ICU), when it ships
+#                                 FreeType, TECkit, ICU, pplib), when it ships
 #
 # `flashtex` finds the host beside itself and the host finds its pool and
 # the bundle lock beside itself, so the directory can be moved as a whole.
@@ -124,7 +124,8 @@ if has flashtex-host-unicode; then
   FTL="$REPO_ROOT/third_party/freetype/freetype-src/docs/FTL.TXT"
   TK="$REPO_ROOT/third_party/teckit/TECkit-src/license/License_LGPLv21.txt"
   ICU="$REPO_ROOT/third_party/icu/LICENSE"
-  for f in "$XETEX_CRATE/LICENSE" "$HB" "$FT" "$FTL" "$TK" "$ICU"; do
+  PP="$REPO_ROOT/third_party/pplib/NOTICES"
+  for f in "$XETEX_CRATE/LICENSE" "$HB" "$FT" "$FTL" "$TK" "$ICU" "$PP"; do
     [[ -f "$f" ]] || die "flashtex-host-unicode is packaged but its licence or a notice is missing: $f"
   done
   mkdir -p "$ROOT/share/flashtex/engine"
@@ -145,6 +146,9 @@ if has flashtex-host-unicode; then
     echo
     echo "== ICU's line-break tables and bidi algorithm (third_party/icu) and ICU4X's segmenter and its data (Unicode License v3) =="
     cat "$ICU"
+    echo
+    echo "== pplib (used under the GNU GPL 2 or later, LICENSE-unicode; third_party/pplib) =="
+    cat "$PP"
   } > "$ROOT/share/flashtex/engine/THIRD-PARTY-NOTICES-unicode.txt"
 fi
 if [[ "$HOSTS" -eq 1 ]]; then
@@ -170,7 +174,7 @@ fi
   echo "  software under the GNU General Public License, version 2 or later"
   echo "  (\`share/flashtex/engine/\`). They link TeX Live 2026's kpathsea, zlib, libpng and"
   echo "  xpdf (xpdf is GPL version 2 or 3 only, so the hosts are distributed under GPL"
-  echo "  version 2 or 3), and flashtex-host-unicode also HarfBuzz, FreeType, TECkit and"
+  echo "  version 2 or 3), and flashtex-host-unicode also HarfBuzz, FreeType, TECkit, pplib and"
   echo "  ICU's data. These are vendored under third_party/ at the same tag, each with a"
   echo "  README that names its version and upstream pin."
   echo

@@ -186,7 +186,7 @@ The tarball, extracted by hand, works where it is; keep `bin/` together:
 Public License, version 2 or later; they link TeX Live 2026's kpathsea,
 zlib, libpng and xpdf (xpdf is GPL version 2 or 3 only, so the hosts are
 distributed under GPL version 2 or 3), and Unicode mode's host also
-HarfBuzz, FreeType, TECkit and ICU's data, vendored under `third_party/`.
+HarfBuzz, FreeType, TECkit, pplib and ICU's data, vendored under `third_party/`.
 Their complete corresponding source is this repository: every release
 links the tree at its tag from its notes, attaches it as
 `flashtex-<version>-source.tar.gz`, and `flashtex licenses` and the
