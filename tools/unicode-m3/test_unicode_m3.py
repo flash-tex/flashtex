@@ -143,6 +143,34 @@ class FontconfigConfig(unittest.TestCase):
             self.assertIn("c&amp;d", text)
 
 
+class FontconfigSystemDirs(unittest.TestCase):
+    """#2525: on NixOS the fonts fontconfig lists are in /nix/store, outside
+    the Debian directories the port scans: they must be among the system
+    directories (so TeX Live's duplicates there are rejected) and be handed
+    to the port in FLASHTEX_FONT_DIRS."""
+
+    def test_fontconfig_dirs_outside_the_ports_count(self):
+        nix = "/nix/store/x-gyre-fonts/share/fonts/opentype"
+        deb = "/usr/share/fonts/truetype/dejavu"
+        saved = fontconfig.fontconfig_dirs
+        fontconfig.fontconfig_dirs = lambda: [nix, deb]
+        try:
+            got = fontconfig.system_dirs()
+        finally:
+            fontconfig.fontconfig_dirs = saved
+        self.assertEqual(got, fontconfig.port_dirs() + [nix])
+        self.assertEqual(fontconfig.outside(got, fontconfig.port_dirs()), [nix])
+
+    def test_a_duplicate_in_a_fontconfig_dir_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tl, nix = os.path.join(tmp, "tl"), os.path.join(tmp, "nix")
+            for d in (tl, nix):
+                os.makedirs(d)
+                _w(os.path.join(d, "texgyretermes-regular.otf"), "")
+            _, rejected = fontconfig.config([tl], "/c", [nix])
+            self.assertEqual(rejected, [os.path.join(nix, "texgyretermes-regular.otf")])
+
+
 class SummarizeLoad(unittest.TestCase):
 
     def test_bad_json_is_skipped(self):
