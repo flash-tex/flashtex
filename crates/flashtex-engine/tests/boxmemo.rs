@@ -650,6 +650,56 @@ fn calls_in_math_groups_compare_their_save_stack() {
 }
 
 #[test]
+fn a_call_that_changes_the_noad_before_it_never_replays() {
+    // (lane AUDIT-MATH) in the math list a call began in, `\\limits` and
+    // `\\nolimits` change the subtype of the operator before the call
+    // (tex.web §1159), and a script fills a field of the noad before it
+    // (§1176, §1186), with the tail where it was: before, the recording
+    // saw no change, and a replay left the operator's limits and the
+    // scripts out. No fonts: the null font with 22 parameters is every
+    // family's, and boxes stand for the characters
+    let s = check(
+        "math-tail",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\catcode`\\_=8 \\catcode`\\$=3 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0 \\fontdimen22\\nullfont=1pt \\scriptspace=1pt\n\
+         \\def\\x{\\hbox{}}\\def\\one#1{\\setbox1\\hbox{$#1$}\\showbox1 }\n\
+         \\def\\measure{\\limits}\n\
+         \\one{\\mathop{\\x}\\measure_{\\x}\\x}\\one{\\mathop{\\x}\\measure_{\\x}\\x}\n\
+         \\def\\measure{\\nolimits}\n\
+         \\one{\\displaystyle\\mathop{\\x}\\measure_{\\x}\\x}\\one{\\displaystyle\\mathop{\\x}\\measure_{\\x}\\x}\n\
+         \\def\\measure{^{\\x}}\n\
+         \\one{\\x\\measure}\\one{\\x\\measure}\n\
+         \\def\\measure{_{\\x\\x}}\n\
+         \\one{\\x\\measure}\\one{\\x\\measure}\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert_eq!(stat(&s, "Command"), 4, "{s}");
+}
+
+#[test]
+fn an_italic_correction_after_the_calls_character_never_replays() {
+    // (lane AUDIT-MATH) `\\/` appends the italic correction of the
+    // character the list ends with (tex.web §1113): one before the call is
+    // read, and was not in the key, so `f`'s was replayed after an `x` and
+    // in an empty box. After the call's own character it is the call's
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "italic-correction",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0 \\font\\f=cmr10 \\f\n\
+         \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure}\\showbox1 }\n\
+         \\def\\measure{\\/}\\one{f}\\one{f}\\one{x}\\one{}\n\
+         \\def\\measure{x\\/}\\one{f}\\one{f}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+    assert_eq!(stat(&s, "Command"), 1, "{s}");
+}
+
+#[test]
 fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
     // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
     // assignments local (tex.web §1214), like `\globaldefs>0` makes its
