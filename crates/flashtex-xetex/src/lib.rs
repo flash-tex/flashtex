@@ -51,6 +51,8 @@ pub mod fontmgr;
 pub mod generated;
 #[cfg(unix)]
 pub mod host;
+pub mod intrinsics;
+mod intrinsics_verify;
 pub mod iso;
 pub mod native;
 pub mod out;
@@ -60,6 +62,7 @@ pub mod s0file;
 pub mod state;
 pub mod statediff;
 pub mod system;
+mod undefined;
 pub mod xetex_ext;
 
 pub use generated::Globals;

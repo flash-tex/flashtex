@@ -39,6 +39,7 @@
 --change crates/flashtex-xetex/changes/resident.ch
 # The checkpoints of a resident engine: S0 at the document's start (src/ckpt.rs).
 --change crates/flashtex-xetex/changes/checkpoint.ch
+--change crates/flashtex-xetex/changes/intrinsics.ch
 # Null reads on which TeX Live's xetex crashes, stopped as fatal errors (DESIGN section 13).
 --change crates/flashtex-xetex/changes/undefined.ch
 
