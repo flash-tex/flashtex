@@ -90,6 +90,10 @@ pub trait Fonts: Send {
     fn watched(&self) -> Vec<PathBuf> {
         vec![]
     }
+    /// The catalog is stale (a file it answered with changed since it read
+    /// its names, #2504): the next [`Fonts::catalog`] and [`Fonts::dirs`]
+    /// are of a new walk.
+    fn stale(&mut self) {}
     /// [`Fonts::dirs`] with only `files` of the watched files: the state
     /// S0's lookups by name depend on (the files watched when it was
     /// taken, [`S0::font_files`]), which a file found later in the body
@@ -186,6 +190,13 @@ impl Resident {
         let c = self.fonts.catalog();
         self.catalog_dirs = Some(dirs);
         c
+    }
+
+    /// [`Resident::font_catalog`] after the kept catalog was found stale
+    /// (#2504): made anew.
+    pub(crate) fn font_catalog_again(&mut self) -> Arc<FontCatalog> {
+        self.fonts.stale();
+        self.font_catalog()
     }
 
     /// A lookup by name found the font file at `path` ([`Fonts::watch`]).

@@ -204,6 +204,11 @@ impl Fonts for KeptFonts {
     fn watched(&self) -> Vec<PathBuf> {
         self.watched.keys().cloned().collect()
     }
+
+    fn stale(&mut self) {
+        // (the next check walks again: a new walk, a new catalog)
+        self.walked = None;
+    }
 }
 
 /// The engine thread's scheduling: as the pdfTeX host's engine thread
