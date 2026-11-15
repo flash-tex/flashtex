@@ -34,6 +34,14 @@
 # the other instance's CI jobs share the machine (and push the load up, which
 # T7 then reports as non-reference rather than measuring under load).
 #
+# The runner switch. T7 measures only on the reference class, so the job runs
+# only while the repository variable FLASHTEX_HEAVY_MAC is 1: set it when a
+# reference Mac with the `flashtex-heavy` label is registered, clear it when
+# that runner leaves. mac-m1max-a-2 left in October; every nightly run since
+# queued for a runner that did not exist and was cancelled
+# (40484255500 ... 41301586374). With the switch off, `no-reference-runner`
+# says so in a warning and the run summary instead, so nothing waits.
+#
 # Fork safety: workflow_dispatch and schedule only (a dispatch needs write
 # access), `contents: read`, no secrets, a checkout without persisted
 # credentials.
@@ -70,9 +78,21 @@ permissions:
   contents: read
 
 jobs:
+  no-reference-runner:
+    name: T7 reference (not measured, no reference Mac)
+    if: vars.FLASHTEX_SELFHOSTED_MAC != '1' || vars.FLASHTEX_HEAVY_MAC != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: say why nothing was measured
+        run: |
+          msg="T7 NOT MEASURED: no reference Mac (FLASHTEX_HEAVY_MAC='${{ vars.FLASHTEX_HEAVY_MAC }}', FLASHTEX_SELFHOSTED_MAC='${{ vars.FLASHTEX_SELFHOSTED_MAC }}'); register a flashtex-heavy reference runner and set FLASHTEX_HEAVY_MAC=1"
+          echo "::warning::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
   t7:
     name: T7 reference (M1 Max)
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1' && vars.FLASHTEX_HEAVY_MAC == '1' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
     concurrency:
       group: flashtex-mac-heavy
