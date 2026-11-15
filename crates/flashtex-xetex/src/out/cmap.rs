@@ -158,7 +158,7 @@ impl CMap {
                 return None;
             }
             e.flag |= MAP_LOOKUP_CONTINUE;
-            cur = e.next.get_or_insert_with(Table::new);
+            cur = &mut **e.next.get_or_insert_with(Table::new);
         }
         Some(cur)
     }

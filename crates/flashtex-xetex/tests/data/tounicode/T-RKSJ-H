@@ -1,0 +1,31 @@
+%!PS-Adobe-3.0 Resource-CMap
+%%Title: (T-RKSJ-H) a test CMap for FlashTeX
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo 3 dict dup begin
+  /Registry (Adobe) def
+  /Ordering (Japan1) def
+  /Supplement 6 def
+end def
+/CMapName /T-RKSJ-H def
+/CMapType 1 def
+/WMode 0 def
+2 begincodespacerange
+<00> <7F>
+<8000> <FFFF>
+endcodespacerange
+1 begincidrange
+<20> <7e> 1
+endcidrange
+2 begincidrange
+<c3a9> <c3a9> 500
+<e288> <e288> 600
+endcidrange
+1 begincidchar
+<915c> 700
+endcidchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
