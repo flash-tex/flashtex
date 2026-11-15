@@ -184,32 +184,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # TEMP (lane MAIN-RED, removed before this branch is ready): why qpdf cannot open the
-      # oracle PDF on ubuntu-26.04 (run 43723688890: "open ~/.cache/flashtex-parity/...: Permission denied")
-      - name: TEMP diag, qpdf on this image
-        run: |
-          set +e -x
-          head -4 /etc/os-release
-          command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
-          qpdf --version | head -1; command -v qpdf; readlink -f "$(command -v qpdf)"
-          ls -la /etc/apparmor.d | grep -i -E "pdf" ; dpkg -L qpdf | grep -i -E "apparmor|snap"
-          for f in /etc/apparmor.d/*qpdf*; do echo "== $f"; cat "$f"; done
-          sudo aa-status 2>/dev/null | grep -i -n -E "qpdf|profiles are loaded|enforce mode"
-          umask; stat -c '%a %U %n' ~ ~/.cache "$RUNNER_TEMP" /tmp
-          mkdir -p ~/.cache/diag/sub /tmp/diag "$RUNNER_TEMP/diag" ~/diag-plain ~/.diag-hidden
-          qpdf --empty /tmp/diag/a.pdf; ls -la /tmp/diag
-          for d in ~/.cache/diag/sub "$RUNNER_TEMP/diag" ~/diag-plain ~/.diag-hidden; do cp /tmp/diag/a.pdf "$d/a.pdf"; done
-          for d in /tmp/diag ~/.cache/diag/sub "$RUNNER_TEMP/diag" ~/diag-plain ~/.diag-hidden; do
-            qpdf --qdf "$d/a.pdf" "$RUNNER_TEMP/diag/out.pdf" && echo "DIAG READ OK $d" || echo "DIAG READ FAIL $d"
-            qpdf --qdf "$RUNNER_TEMP/diag/a.pdf" "$d/out.pdf" && echo "DIAG WRITE OK $d" || echo "DIAG WRITE FAIL $d"
-            qpdf --qdf "$d/a.pdf" - > /dev/null && echo "DIAG READ-TO-STDOUT OK $d" || echo "DIAG READ-TO-STDOUT FAIL $d"
-          done
-          ln ~/.cache/diag/sub/a.pdf "$RUNNER_TEMP/diag/linked.pdf" && qpdf --qdf "$RUNNER_TEMP/diag/linked.pdf" "$RUNNER_TEMP/diag/out2.pdf" && echo "DIAG HARDLINK OK"
-          ln -s ~/.cache/diag/sub/a.pdf "$RUNNER_TEMP/diag/sym.pdf" && qpdf --qdf "$RUNNER_TEMP/diag/sym.pdf" "$RUNNER_TEMP/diag/out3.pdf" && echo "DIAG SYMLINK OK" || echo "DIAG SYMLINK FAIL"
-          python3 -c 'import os,sys; print("DIAG python reads", len(open(os.path.expanduser("~/.cache/diag/sub/a.pdf"),"rb").read()))'
-          sudo dmesg | grep -i apparmor | tail -20
-          sudo journalctl -k --no-pager 2>/dev/null | grep -i 'apparmor="DENIED"' | tail -20
-          exit 0
       # the pick's own rules, against a fake gh, before they are trusted (seconds, no network)
       - name: the T4 pick's self-test
         run: scripts/tests/p5-pick-t4.test.sh
