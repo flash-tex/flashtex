@@ -305,6 +305,9 @@ impl Globals {
     pub fn tex_printf(&mut self, s: &[u8]) {
         let s = printf_cut(s).to_vec();
         self.print_bytes(&s);
+        // `xfflush(stdout)`: what the C parts print reaches the terminal
+        // before anything a library writes to stderr next (xpdf's errors).
+        crate::system::break_out(&mut self.term_out);
     }
 
     /// `fb_offset` (utils.c).
