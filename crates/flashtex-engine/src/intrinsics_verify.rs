@@ -598,7 +598,7 @@ fn pop_used_up(g: &mut Globals) {
 
 /// The guard passed in a verifying run: checkpoint, then let the macro expand.
 pub(crate) fn begin(g: &mut Globals, slot: usize) {
-    let ck = match g.checkpoint() {
+    let ck = match g.checkpoint_nested() {
         Ok(id) => id,
         Err(e) => {
             STATS.with(|s| {
@@ -681,6 +681,11 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
     }
     let ck = p.ck;
     g.drop_checkpoint(ck);
+    if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some()
+        && g.arena.checkpoint_ids().contains(&ck)
+    {
+        eprintln!("verify: checkpoint {ck} kept after its check");
+    }
     let name = g.cs_name_string(g.intr_slot_cs(slot));
     if !diffs.is_empty() {
         eprintln!(
