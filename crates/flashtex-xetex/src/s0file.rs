@@ -59,8 +59,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // (v2: the key's stat signatures hold the change time, `StatSig::ctime_ns`;
-// v3: the pages a base holds are references to it)
-const MAGIC: &[u8] = b"flashtex xetex S0 v3";
+// v3: the pages a base holds are references to it; v4: the font files
+// lookups by name were answered with, `Meta::font_files`)
+const MAGIC: &[u8] = b"flashtex xetex S0 v4";
 
 /// A base file (see the module documentation).
 const BASE_MAGIC: &[u8] = b"flashtex xetex S0 base v1";
@@ -79,6 +80,8 @@ pub struct Meta {
     pub point: Vec<u8>,
     pub key: Key,
     pub font_dirs: Option<[u64; 2]>,
+    /// `ckpt::S0::font_files`.
+    pub font_files: Vec<String>,
     pub dl_on: bool,
     pub rec: Record,
     /// The output files the run had opened by S₀, in order.
@@ -92,6 +95,7 @@ impl Meta {
         self.point.enc(w);
         self.key.enc(w);
         self.font_dirs.enc(w);
+        self.font_files.enc(w);
         self.dl_on.enc(w);
         self.rec.enc(w);
         self.opens.enc(w);
@@ -103,6 +107,7 @@ impl Meta {
             point: Codec::dec(r)?,
             key: Codec::dec(r)?,
             font_dirs: Codec::dec(r)?,
+            font_files: Codec::dec(r)?,
             dl_on: Codec::dec(r)?,
             rec: Codec::dec(r)?,
             opens: Codec::dec(r)?,

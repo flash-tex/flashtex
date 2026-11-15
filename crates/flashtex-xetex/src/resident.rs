@@ -79,8 +79,24 @@ pub trait Fonts: Send {
     /// The catalog for a lookup by name.
     fn catalog(&mut self) -> Arc<FontCatalog>;
     /// The state of what a catalog made now is made from (the font
-    /// directories): the same value, the same catalog.
+    /// directories, and the font files [`Fonts::watch`] was given): the
+    /// same value, the same catalog.
     fn dirs(&mut self) -> [u64; 2];
+    /// A lookup by name was answered with the font file at `path`: a
+    /// change to it (rewritten in place, #2296) is a change to what
+    /// lookups find, from now on.
+    fn watch(&mut self, _path: &Path) {}
+    /// The files [`Fonts::watch`] was given.
+    fn watched(&self) -> Vec<PathBuf> {
+        vec![]
+    }
+    /// [`Fonts::dirs`] with only `files` of the watched files: the state
+    /// S0's lookups by name depend on (the files watched when it was
+    /// taken, [`S0::font_files`]), which a file found later in the body
+    /// leaves as it was.
+    fn dirs_of(&mut self, _files: &[PathBuf]) -> [u64; 2] {
+        self.dirs()
+    }
 }
 
 /// The catalog made at every lookup, from the font directories as they are.
@@ -175,6 +191,38 @@ impl Resident {
     /// The font directories' state now (`Fonts::dirs`).
     pub(crate) fn font_dirs(&mut self) -> [u64; 2] {
         self.fonts.dirs()
+    }
+
+    /// A lookup by name found the font file at `path` ([`Fonts::watch`]).
+    /// When nothing changed since this run's catalog was made, the state
+    /// recorded for it ([`Resident::catalog_dirs`]) becomes the one with
+    /// the file watched: else the next run would find the state changed
+    /// and not restore S0 or a page for nothing.
+    pub(crate) fn font_found(&mut self, path: &Path) {
+        let before = self.fonts.dirs();
+        self.fonts.watch(path);
+        if self.catalog_dirs == Some(before) {
+            self.catalog_dirs = Some(self.fonts.dirs());
+        }
+    }
+
+    /// What S0 taken now keeps of the fonts ([`S0::font_dirs`],
+    /// [`S0::font_files`]): the font files watched now, and the state of
+    /// the directories and of those files; but the state this run's
+    /// catalog was made from when something changed since (the catalog's
+    /// lookups were made from that).
+    pub(crate) fn s0_fonts(&mut self) -> ([u64; 2], Vec<String>) {
+        let files = self.fonts.watched();
+        let now = self.fonts.dirs();
+        let d = match self.catalog_dirs {
+            Some(c) if c != now => c,
+            _ => self.fonts.dirs_of(&files),
+        };
+        let files = files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        (d, files)
     }
 }
 
@@ -653,8 +701,7 @@ impl Engine {
     ) -> Result<String, String> {
         let t = std::time::Instant::now();
         let pinned = flashtex_engine::host::pin_clock_from_env();
-        let mut fonts = self.fonts.take();
-        let dirs_now = fonts.as_mut().map(|f| f.dirs());
+        let fonts = std::cell::RefCell::new(self.fonts.take());
         let mut found = None;
         let r = crate::s0file::open(
             &path.to_string_lossy(),
@@ -677,7 +724,17 @@ impl Engine {
                 m.key.check(m.key.clock, line)?;
                 m.key.check_arm()?;
                 if let Some(d) = m.font_dirs {
-                    match dirs_now {
+                    // (the font files S0's lookups by name were answered
+                    // with are watched from now on: one rewritten while
+                    // the document was closed changes the state, #2296)
+                    let files: Vec<PathBuf> = m.font_files.iter().map(PathBuf::from).collect();
+                    let now = fonts.borrow_mut().as_mut().map(|f| {
+                        for p in &files {
+                            f.watch(p);
+                        }
+                        f.dirs_of(&files)
+                    });
+                    match now {
                         Some(now) if now == d => {}
                         Some(_) => return Err("the font directories changed".into()),
                         None => return Err("the font directories are not watched".into()),
@@ -686,12 +743,12 @@ impl Engine {
                 found = Some((k, f));
                 Ok(())
             },
-            &mut || match fonts.as_mut() {
+            &mut || match fonts.borrow_mut().as_mut() {
                 Some(f) => f.catalog(),
                 None => Arc::new(FontCatalog::system_cached(None)),
             },
         );
-        self.fonts = fonts;
+        self.fonts = fonts.into_inner();
         let o = r?;
         let (mapped_pages, base_pages) = (o.mapped_pages, o.base_pages);
         if let Some(b) = &o.base {
@@ -710,6 +767,7 @@ impl Engine {
             rec: m.rec,
             key: m.key,
             font_dirs: m.font_dirs,
+            font_files: m.font_files,
             reads: (0, 0, 0),
             opens: self.opens.len(),
             dl_on: m.dl_on,
@@ -788,6 +846,7 @@ impl Engine {
             point: k.enc(&f),
             key: s0.key.clone(),
             font_dirs: s0.font_dirs,
+            font_files: s0.font_files.clone(),
             dl_on: s0.dl_on,
             rec: s0.rec.clone(),
             opens: self.opens[..s0.opens.min(self.opens.len())].to_vec(),
@@ -1000,7 +1059,7 @@ impl Engine {
             }
             Ok(()) => match s0.font_dirs {
                 None => None,
-                Some(d) => match self.fonts.as_mut().map(|f| f.dirs()) {
+                Some(d) => match self.fonts.as_mut().map(|f| f.dirs_of(&s0.font_paths())) {
                     Some(now) if now == d => None,
                     Some(_) => Some("the font directories changed".to_string()),
                     None => Some("the font directories are not watched".to_string()),
@@ -1753,6 +1812,7 @@ impl Engine {
                         rec: t.rec,
                         key: k,
                         font_dirs: t.font_dirs,
+                        font_files: t.font_files,
                         reads,
                         opens: t.opens,
                         dl_on,

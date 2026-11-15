@@ -82,6 +82,16 @@ type Dirs = Vec<(PathBuf, Option<super::spare::Ident>)>;
 /// checked (`spare::font_dirs_unchanged`: a status call a directory, no
 /// listing): the walk itself took 4-12 ms on macOS, at every keystroke of a
 /// document that names a font.
+///
+/// A font file rewritten in place (copied over) changes no directory, so
+/// the font files lookups by name were answered with are checked as well
+/// (#2296, the Commander's ruling: those files only, not every font file;
+/// about 0.5 us a file on macOS): one that changed (its size, times,
+/// inode or device; the status-change time is set by every write) is a
+/// new walk and a new catalog, and its identity is part of [`Fonts::dirs`],
+/// so S0 and the page checkpoints whose lookups by name were made before
+/// the change are not restored. A file stays watched after a lookup that
+/// no longer finds it: written back, it is found again.
 #[derive(Default)]
 struct KeptFonts {
     /// The last walk of the directories.
@@ -91,8 +101,13 @@ struct KeptFonts {
     /// `dirs()` of `walked`, made once a walk: hashing the walk's text took
     /// about 0.3 ms a keystroke on T7's `full-120` (lane UNICODE).
     hash: Option<[u64; 2]>,
+    /// The last `dirs_of` of some of the watched files, kept as `hash`.
+    hash_of: Option<(Vec<PathBuf>, [u64; 2])>,
     /// The catalog made from them, and the walk it was made after.
     kept: Option<(u64, Arc<FontCatalog>)>,
+    /// The font files lookups by name were answered with ([`Fonts::watch`]),
+    /// each with its identity at the last check.
+    watched: std::collections::BTreeMap<PathBuf, Option<super::spare::Ident>>,
 }
 
 impl KeptFonts {
@@ -101,13 +116,44 @@ impl KeptFonts {
         let same = self
             .walked
             .as_ref()
-            .is_some_and(|w| super::spare::font_dirs_unchanged(w));
+            .is_some_and(|w| super::spare::font_dirs_unchanged(w))
+            && self
+                .watched
+                .iter()
+                .all(|(p, id)| super::spare::ident(p) == *id);
         if !same {
             self.walked = Some(super::spare::font_dirs());
+            for (p, id) in self.watched.iter_mut() {
+                *id = super::spare::ident(p);
+            }
             self.walk += 1;
             self.hash = None;
+            self.hash_of = None;
         }
         self.walked.as_ref().expect("walked above")
+    }
+
+    /// The hash of the walk's text and of `files`' identities (all the
+    /// watched files' for `None`).
+    fn state(&mut self, files: Option<&[PathBuf]>) -> [u64; 2] {
+        let mut d = format!("{:?}", self.now());
+        let of: std::collections::BTreeMap<&PathBuf, Option<super::spare::Ident>> = match files {
+            None => self.watched.iter().map(|(p, id)| (p, *id)).collect(),
+            Some(f) => f
+                .iter()
+                .map(|p| {
+                    let id = match self.watched.get(p) {
+                        Some(id) => *id,
+                        None => super::spare::ident(p),
+                    };
+                    (p, id)
+                })
+                .collect(),
+        };
+        if !of.is_empty() {
+            d.push_str(&format!("{of:?}"));
+        }
+        flashtex_engine::persist::hash128(d.as_bytes())
     }
 }
 
@@ -129,10 +175,34 @@ impl Fonts for KeptFonts {
         if let Some(h) = self.hash {
             return h;
         }
-        let d = format!("{:?}", self.walked.as_ref().expect("walked by now()"));
-        let h = flashtex_engine::persist::hash128(d.as_bytes());
+        let h = self.state(None);
         self.hash = Some(h);
         h
+    }
+
+    fn dirs_of(&mut self, files: &[PathBuf]) -> [u64; 2] {
+        self.now();
+        if let Some((f, h)) = &self.hash_of {
+            if f[..] == *files {
+                return *h;
+            }
+        }
+        let h = self.state(Some(files));
+        self.hash_of = Some((files.to_vec(), h));
+        h
+    }
+
+    fn watch(&mut self, path: &std::path::Path) {
+        if !self.watched.contains_key(path) {
+            self.watched
+                .insert(path.to_path_buf(), super::spare::ident(path));
+            self.hash = None;
+            self.hash_of = None;
+        }
+    }
+
+    fn watched(&self) -> Vec<PathBuf> {
+        self.watched.keys().cloned().collect()
     }
 }
 
