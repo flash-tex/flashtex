@@ -5121,6 +5121,56 @@ mod tests {
         let _ = at_q;
     }
 
+    /// The flags a nested drop leaves (REVIEW-A on #2181): a restore
+    /// prepared before a check and used after it, and a plain checkpoint
+    /// (a seal) after it, each against a twin whose checks take plain
+    /// checkpoints. Both spaces restore exactly, to every checkpoint.
+    #[test]
+    fn a_nested_drop_leaves_the_flags_a_plain_one_does() {
+        let (mut a, mut arr) = space(100_000);
+        let (mut b, mut brr) = space(100_000);
+        let check = |a: &mut Arena, arr: &mut Arr<u64>, nested: bool, k: u64| {
+            let c = if nested {
+                a.checkpoint_nested()
+            } else {
+                a.checkpoint()
+            };
+            let at_c = arr.to_vec();
+            scribble(arr, 300 + k, 700);
+            a.restore_discard(c).unwrap();
+            assert!(arr[..] == at_c[..], "check {k}");
+            scribble(arr, 400 + k, 300);
+            a.drop_newest();
+        };
+        for (s, v, nested) in [(&mut a, &mut arr, true), (&mut b, &mut brr, false)] {
+            scribble(v, 3, 20_000);
+            let p = s.checkpoint();
+            let at_p = v.to_vec();
+            scribble(v, 4, 2000);
+            // a restore to p worked out ahead, then checks, then the restore
+            assert!(s.prepare_restore(p, &mut || false));
+            for k in 0..3 {
+                check(s, v, nested, k);
+                scribble(v, 20 + k, 500);
+            }
+            let br = s.restore_branch(p).unwrap();
+            assert!(v[..] == at_p[..], "nested {nested}: the prepared restore");
+            s.reattach(br).unwrap();
+            // a seal right after a check
+            check(s, v, nested, 10);
+            let q = s.checkpoint();
+            let at_q = v.to_vec();
+            scribble(v, 30, 2000);
+            check(s, v, nested, 11);
+            scribble(v, 31, 2000);
+            s.restore_discard(q).unwrap();
+            assert!(v[..] == at_q[..], "nested {nested}: the seal after a check");
+            s.restore_discard(p).unwrap();
+            assert!(v[..] == at_p[..], "nested {nested}: back to p");
+        }
+        assert!(arr[..] == brr[..]);
+    }
+
     #[test]
     fn views_and_branch_diffs_see_old_states() {
         let (mut a, mut arr) = space(200_000);
