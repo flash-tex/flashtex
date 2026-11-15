@@ -7,6 +7,7 @@
 // with the change file crates/flashtex-xetex/changes/filenames.ch
 // with the change file crates/flashtex-xetex/changes/virtex.ch
 // with the change file crates/flashtex-xetex/changes/web2c-hooks.ch
+// with the change file crates/flashtex-xetex/changes/pool.ch
 // with the change file third_party/pdftex/web2c/tracingstacklevels.ch
 // with the change file third_party/pdftex/web2c/partoken-102.ch
 // with the change file third_party/pdftex/web2c/partoken.ch

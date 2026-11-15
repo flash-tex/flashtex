@@ -1352,7 +1352,7 @@ pub const or_code: i32 = 4i32;
 // §555
 pub const format_default_length: i32 = 20i32;
 // §555
-pub const format_extension: i32 = 66168i32;
+pub const format_extension: i32 = 66175i32;
 // §579
 pub const ext_tag: i32 = 3i32;
 // §579
@@ -1570,7 +1570,7 @@ pub const sub_cmd: i32 = 1i32;
 // §804
 pub const sup_cmd: i32 = 0i32;
 // §812
-pub const math_spacing: i32 = 66313i32;
+pub const math_spacing: i32 = 66320i32;
 // §818
 pub const align_stack_node_size: i32 = 6i32;
 // §828

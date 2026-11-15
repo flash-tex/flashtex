@@ -17,6 +17,7 @@
 --change crates/flashtex-xetex/changes/filenames.ch
 --change crates/flashtex-xetex/changes/virtex.ch
 --change crates/flashtex-xetex/changes/web2c-hooks.ch
+--change crates/flashtex-xetex/changes/pool.ch
 # TeX Live's own feature change files, public domain, unmodified, in the
 # order of xetexdir/am/xetex.am (the same files pdfTeX uses).
 --change third_party/pdftex/web2c/tracingstacklevels.ch
