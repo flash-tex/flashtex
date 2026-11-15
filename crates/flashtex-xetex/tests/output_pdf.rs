@@ -121,7 +121,10 @@ fn pdf_mode_writes_the_pdf_from_the_display_list() {
     let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
     let dests = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
     let list = dests.get("Names").and_then(Obj::as_array).unwrap();
-    assert_eq!(list[0], Obj::String(b"here".to_vec()));
+    // no `dvipdfmx:config C 0x0010` (hyperref's): xdvipdfmx renames the
+    // outline's destination `here` to `0` (measured with TeX Live 2026;
+    // out::doc::Goto)
+    assert_eq!(list[0], Obj::String(b"0".to_vec()));
     let outlines = pdf.resolve(cat.get("Outlines").unwrap()).as_dict().unwrap();
     let first = pdf
         .resolve(outlines.get("First").unwrap())

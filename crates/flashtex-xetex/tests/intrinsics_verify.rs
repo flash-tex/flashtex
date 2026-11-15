@@ -484,3 +484,72 @@ fn a_value_longer_than_a_million_tokens_is_compared_to_its_end() {
     assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
     assert_eq!(count(&s, "semantic.differing.eqtb"), 1, "{s}");
 }
+
+/// A call that reads a token from below its body's input level reads past
+/// itself (here `scan_int` looks for the end of `1` and finds the caller's
+/// `\relax`, which it backs up): a replay would not, so the call is not
+/// replayable (the XeTeX analogue of pdfTeX's #2198/#2199). Before this
+/// rule the call was kept and every check of it differed in `input`. The
+/// same body with its own `\relax` reads nothing past it and is checked.
+#[test]
+fn a_call_that_reads_past_its_body_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\count255=1}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\relax\n\
+         \\pdfstringdefPreHook\\relax\n\\pdfstringdefPreHook\\relax\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.ReadPast"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\count255=1\\relax}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\relax\n\
+         \\pdfstringdefPreHook\\relax\n\\pdfstringdefPreHook\\relax\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.ReadPast"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 2, "{s}");
+}
+
+/// Reading `\prevgraf` copies `cur_list` to `nest[nest_ptr]`, which is
+/// dead (the top of the stack is `cur_list`): between the calls the
+/// paragraph grows, so the real path's copy differs from the one a replay
+/// leaves there. Only `nest` below `nest_ptr` is compared, and the checks
+/// find nothing.
+#[test]
+fn the_dead_top_of_the_nest_is_not_compared() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\ifnum\\prevgraf<0 \\fi\\relax}\n\
+         \\begin{document}x\\relax\\pdfstringdefPreHook y\\relax\\pdfstringdefPreHook\n\
+         z\\relax\\pdfstringdefPreHook\\par\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.differing.nest"), 0, "{s}");
+}
+
+/// `\limits` changes the noad at the list's tail in place
+/// (`math_limit_switch`: `subtype(tail)`): no definition, no group, the
+/// same `tail`. A replay would leave the second and third `\sum` with
+/// their scripts at the side; the check compares the `mem` words either
+/// path wrote outside the cells it allocated or freed, and finds it
+/// (REVIEW-B on #2140).
+#[test]
+fn an_in_place_change_of_the_list_is_a_semantic_difference() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\limits}\n\
+         \\begin{document}\\relax\n$\\sum\\pdfstringdefPreHook_1^2 \\sum\\pdfstringdefPreHook_1^2 \
+         \\sum\\pdfstringdefPreHook_1^2$\n\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing.mem"), 2, "{s}");
+}

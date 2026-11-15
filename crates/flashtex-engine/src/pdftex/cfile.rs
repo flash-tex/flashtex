@@ -1,6 +1,7 @@
 //! A read-only C `FILE *`, for the ports of the image readers
-//! (`writejpg.c`, `writejbig2.c`, `writepng.c`'s `copy_png`), which read
-//! their files with `getc`, `fread`, `fseek`, `ftell` and `feof`, and whose
+//! (`writejpg.c`, `writejbig2.c`, and the header test of `writeimg.c`),
+//! which read their files with `getc`, `fread`, `fseek`, `ftell` and
+//! `feof`, and whose
 //! behaviour at and beyond the end of a file (malformed images) depends on
 //! exactly how those behave:
 //!
@@ -11,7 +12,11 @@
 //!   read.
 //!
 //! The file is read into memory when it is opened; image files are read
-//! whole by pdfTeX anyway.
+//! whole by pdfTeX anyway. A JPEG's bytes are therefore those of the file
+//! at `\pdfximage`, which is what pdfTeX writes for a file renamed over or
+//! removed since (it reads through the open `FILE`). A file rewritten in
+//! place while open has no defined pdfTeX output: that depends on the C
+//! library's buffering (tests/pdf_image_replaced.rs).
 
 /// `SEEK_SET`, `SEEK_CUR`, `SEEK_END`.
 #[derive(Clone, Copy, PartialEq, Eq)]
