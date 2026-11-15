@@ -188,11 +188,6 @@ impl Resident {
         c
     }
 
-    /// The font directories' state now (`Fonts::dirs`).
-    pub(crate) fn font_dirs(&mut self) -> [u64; 2] {
-        self.fonts.dirs()
-    }
-
     /// A lookup by name found the font file at `path` ([`Fonts::watch`]).
     /// When nothing changed since this run's catalog was made, the state
     /// recorded for it ([`Resident::catalog_dirs`]) becomes the one with
