@@ -508,6 +508,9 @@ How a draw call is recorded and replayed:
     - `\copy` or `\unhcopy` of a register the call wrote whose box is or holds the hole, and
       `\unhbox` of the hole itself (`\setbox2\box9\unhbox2`);
     - `\lastbox` taking the hole back off a list;
+    - the hole freed (`flush_node_list`, as when a register set to it or to a box around it is set
+      again): a box made later can take its address, and the end would take it for the hole
+      (lane DRAFTS-BM2);
     - a hole the normal path left with other dimensions or another shift than the key's
       (`\raise`, `\lower`, `\moveleft` and `\moveright` set its shift in `box_end`, tex.web
       §1076);

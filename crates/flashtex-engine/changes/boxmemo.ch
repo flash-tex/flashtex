@@ -48,6 +48,14 @@
   flush_list(p);
 @z
 
+@x pdftex.web l.4541 - a box a recording frees may be one of its holes
+    hlist_node,vlist_node,unset_node: begin flush_node_list(list_ptr(p));
+@y
+    hlist_node,vlist_node,unset_node: begin
+      if bm_rec_on then flashtex_bm_free_box(p);
+      flush_node_list(list_ptr(p));
+@z
+
 @x pdftex.web l.6585 (after changes/readset.ch) - a name looked up is a read, found or not
 found: if rs_on then flashtex_id_read(j,l,p);
 @y
@@ -523,6 +531,7 @@ function flashtex_bm_enabled:boolean; external;
 procedure flashtex_bm_loaded; external;
 procedure flashtex_bm_new_cs(@!p:pointer); external;
 procedure flashtex_bm_freed(@!p:pointer); external;
+procedure flashtex_bm_free_box(@!p:pointer); external;
 procedure flashtex_bm_call(@!n:integer;@!s:integer;@!w:pointer); external;
 procedure flashtex_bm_group(@!c:group_code); external;
 procedure flashtex_bm_unsave; external;

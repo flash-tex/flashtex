@@ -3365,6 +3365,21 @@ impl Globals {
         self.bm_with_rec(|r| r.pending_box = Some((n, p)));
     }
 
+    /// `flush_node_list` frees box `p` during a recording. A hole freed
+    /// leaves its address to the next node of its size: a box the call then
+    /// makes there would be taken for the hole at the end, and a replay
+    /// would splice the register's box in its place (lane DRAFTS-BM2).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_free_box(&mut self, p: i32) {
+        let hole = self
+            .bm_with_rec(|r| r.holes.iter().any(|h| h.1 == p))
+            .unwrap_or(false);
+        if hole {
+            self.bm_abort("HoleFreed");
+        }
+    }
+
     /// The box register a recording just fetched is used: `k` 1 for a
     /// dimension (`\wd` & co.), 2 for a test (`\ifvoid`, `\ifhbox`), 3 for a
     /// move (`\box`, which voids the register), 4 for a move of its list
