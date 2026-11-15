@@ -164,6 +164,7 @@ final class BridgeSession {
     }
 
     private func handle(_ event: BridgeClient.Event) {
+        print("MultiWindowDiag4: session \(ObjectIdentifier(self).hashValue) store \(storeDirectory.path) event \(event) at \(MonotonicClock.nowNs() / 1_000_000) ms")
         switch event {
         case .stderr(let s): note("bridge: " + s.trimmingCharacters(in: .whitespacesAndNewlines))
         case .protocolViolation(let m): status = "protocol violation: \(m)"; note(status)

@@ -28,6 +28,8 @@ extension ShellModel {
     /// without any provider and conversion reports `provider_disabled`.
     @discardableResult
     func attachDiscoveredBridge() -> Bool {
+        print("MultiWindowDiag4: attachDiscoveredBridge model=\(ObjectIdentifier(self).hashValue) at \(MonotonicClock.nowNs() / 1_000_000) ms")
+        for f in Thread.callStackSymbols.prefix(30) { print("MultiWindowDiag4:     \(f)") }
         guard let url = BridgeClient.locateBridge() else {
             bridgeStatus = "no built flashtex-bridge found (build crates/bridge or set FLASHTEX_BRIDGE)"
             return false

@@ -209,7 +209,7 @@ final class ProjectWindowsHostedTests: XCTestCase {
         print("MultiWindowDiag: quiet after \(quietRounds) rounds (quiet=\(quiet)); key window \(String(describing: NSApp.keyWindow)); tv window key \(tv.window?.isKeyWindow ?? false) main \(tv.window?.isMainWindow ?? false); first responder is tv \(tv.window?.firstResponder === tv); policy \(NSApp.activationPolicy().rawValue) active \(NSApp.isActive)")
         do {
             for (n, m) in [("w1", a), ("w2", others[0]), ("w3", others[1])] {
-                print("MultiWindowDiag3: \(n) now bridge=\(m.bridge != nil) status=\(m.bridgeStatus) captureInboxVisible=\(m.captureInboxVisible) captureNote=\(m.captureNote ?? "-")")
+                print("MultiWindowDiag3: \(n) id=\(ObjectIdentifier(m).hashValue) session=\(m.bridge.map { ObjectIdentifier($0).hashValue } ?? 0) now bridge=\(m.bridge != nil) status=\(m.bridgeStatus) captureInboxVisible=\(m.captureInboxVisible) captureNote=\(m.captureNote ?? "-")")
             }
             for v in early.values { print("MultiWindowDiag3: VALUE \(v)") }
             var seen = Set<String>()
