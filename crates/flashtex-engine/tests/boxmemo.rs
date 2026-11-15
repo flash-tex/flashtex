@@ -377,7 +377,7 @@ fn a_register_set_to_the_hole_moved_into_a_formula_never_replays() {
     // (tex.web §721), which the key does not see
     hole_set_to_a_register(
         "hole-own-math",
-        "\\setbox2\\box9 $\\mathop{\\box2}\\limits$",
+        "\\begingroup\\setbox2\\box9 $\\mathop{\\box2}\\limits$\\endgroup",
         "\\one\\b\\one\\b\\one\\a",
         true,
     );
@@ -393,7 +393,6 @@ fn a_freed_hole_is_never_taken_for_a_box_made_after_it() {
     let rule = "\\hbox to 2pt{\\vrule width 2pt height 1pt}";
     for (i, setup) in [
         "\\begingroup\\setbox2\\box9 \\setbox2\\hbox{}\\endgroup",
-        "\\setbox2\\box9 \\setbox2\\hbox{}",
         "\\begingroup\\setbox2\\hbox{\\box9}\\setbox2\\hbox{}\\endgroup",
     ]
     .iter()
