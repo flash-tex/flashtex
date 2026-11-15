@@ -17,6 +17,7 @@ tools/parity/pdftext.py, which the scoreboard already uses.
 """
 
 import collections
+import contextlib
 import filecmp
 import glob
 import gzip
@@ -26,6 +27,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import zlib
 
@@ -284,6 +286,43 @@ def ships_conversion(src):
     return any(GENERATED.search(name) for _, _, files in os.walk(src) for name in files)
 
 
+@contextlib.contextmanager
+def qpdf_readable(pdf, beside=None):
+    """A path of `pdf` that qpdf may open: a hard link to it (a copy where a link cannot be
+    made) named `*.pdf`, beside the file `beside` that qpdf is about to write, else in a new
+    temporary directory; removed afterwards.
+
+    qpdf is not free to open what this process can. Ubuntu 26.04 confines /usr/bin/qpdf with
+    an AppArmor profile (/etc/apparmor.d/qpdf, enforced): under $HOME only `[^.]**.pdf`
+    (.json, .qdf, .in, .out), and `/tmp/**.pdf`. The oracle's PDFs are in the cache, by
+    default ~/.cache/flashtex-parity, so on that image every P-T2 read "oracle PDF: qpdf exit
+    2: open ...: Permission denied" (p5-scoreboard 43723688890, the day ubuntu-latest became
+    26.04: P-T2 0 of 4090, with P-T1 and L0-L3 at 100 %). A hard link under a path the
+    profile allows is opened (measured on that image, run 43746070730); a symbolic link is
+    not, the profile sees where it points."""
+    made = None
+    if beside is not None:
+        link = beside + ".in.pdf"
+    else:
+        made = tempfile.mkdtemp(prefix="flashtex-qpdf-")
+        link = os.path.join(made, "in.pdf")
+    try:
+        if os.path.lexists(link):
+            os.remove(link)
+        try:
+            os.link(pdf, link)
+        except OSError:  # another file system, or one without hard links
+            shutil.copyfile(pdf, link)
+        yield link
+    finally:
+        try:
+            os.remove(link)
+        except OSError:
+            pass
+        if made:
+            shutil.rmtree(made, ignore_errors=True)
+
+
 def embeds_type3(pdf):
     """Whether `pdf` has a Type3 font, as pdfTeX embeds every PK font (True
     when it can't be told: no qpdf, or qpdf fails). `--object-streams=disable`
@@ -292,8 +331,9 @@ def embeds_type3(pdf):
     if not q or not os.path.isfile(pdf):
         return True
     try:
-        p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", pdf, "-"],
-                           capture_output=True, timeout=300)
+        with qpdf_readable(pdf) as src:
+            p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", src, "-"],
+                               capture_output=True, timeout=300)
     except (OSError, subprocess.SubprocessError):
         return True
     return p.returncode not in (0, 3) or re.search(rb"/Subtype\s*/Type3\b", p.stdout) is not None
@@ -789,8 +829,9 @@ def normalise_pdf(pdf, out):
         import resource
         resource.setrlimit(resource.RLIMIT_FSIZE, (cap + 1, cap + 1))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300,
-                       preexec_fn=limit if cap > 0 else None)
+    with qpdf_readable(pdf, beside=out) as src:  # `pdf` may be where qpdf is not let in (the cache)
+        p = subprocess.run([q] + QPDF_ARGS + [src, out], capture_output=True, timeout=300,
+                           preexec_fn=limit if cap > 0 else None)
     size = os.path.getsize(out) if os.path.isfile(out) else 0
     if cap > 0 and (p.returncode == -25 or size > cap):  # -25: SIGXFSZ
         try:
