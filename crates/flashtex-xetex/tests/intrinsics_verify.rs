@@ -450,13 +450,14 @@ fn writes_outside_eqtb_that_keep_the_tail_are_not_replayable() {
         ),
         (
             "\\spacefactor=2000\\relax",
-            "\\setbox2\\hbox{x\\pdfstringdefPreHook x\\pdfstringdefPreHook x\\pdfstringdefPreHook}",
+            "\\setbox2\\hbox{x\\relax\\pdfstringdefPreHook x\\relax\\pdfstringdefPreHook \
+             x\\relax\\pdfstringdefPreHook}",
             "Aux",
         ),
         (
             "\\prevgraf=5\\relax",
-            "\\setbox2\\vbox{x\\pdfstringdefPreHook x\\pdfstringdefPreHook \
-             x\\pdfstringdefPreHook\\par}",
+            "\\setbox2\\vbox{x\\relax\\pdfstringdefPreHook x\\relax\\pdfstringdefPreHook \
+             x\\relax\\pdfstringdefPreHook\\par}",
             "PrevGraf",
         ),
         (
@@ -478,7 +479,8 @@ fn writes_outside_eqtb_that_keep_the_tail_are_not_replayable() {
         ),
         (
             "\\over\\relax",
-            "$\\pdfstringdefPreHook x$ $\\pdfstringdefPreHook x$ $\\pdfstringdefPreHook x$",
+            "$\\relax\\pdfstringdefPreHook x$ $\\relax\\pdfstringdefPreHook x$ \
+             $\\relax\\pdfstringdefPreHook x$",
             "MathTail",
         ),
         ("\\deadcycles=0\\relax", THRICE, "PageState"),
@@ -493,6 +495,8 @@ fn writes_outside_eqtb_that_keep_the_tail_are_not_replayable() {
         ("\\hyphenation{intr-hook}", THRICE, "Hyphenation"),
         ("\\edef\\IntrR{\\uniformdeviate 10}", THRICE, "Random"),
     ];
+    // (every case runs, and a failure lists each wrong one)
+    let mut wrong = vec![];
     for &(hook, body, reason) in cases {
         let Some(s) = verify_matches_off(&format!(
             "\\documentclass{{article}}\\def\\pdfstringdefPreHook{{{hook}}}\n\
@@ -500,9 +504,16 @@ fn writes_outside_eqtb_that_keep_the_tail_are_not_replayable() {
         )) else {
             return;
         };
-        let key = format!("not_replayable.{reason}");
-        assert_eq!(count(&s, &key), 3, "{hook}: {s}");
-        assert_eq!(count(&s, "recordings_kept"), 0, "{hook}: {s}");
-        assert_eq!(count(&s, "semantic.checked"), 0, "{hook}: {s}");
+        let got = [
+            format!("not_replayable.{reason}"),
+            "recordings_kept".into(),
+            "semantic.checked".into(),
+            "semantic.differing".into(),
+        ]
+        .map(|k| (count(&s, &k), k));
+        if got.iter().map(|g| g.0).ne([3, 0, 0, 0]) {
+            wrong.push(format!("{hook}: {got:?}\n{s}"));
+        }
     }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
