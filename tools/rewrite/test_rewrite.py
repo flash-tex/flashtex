@@ -128,10 +128,6 @@ class JobText(unittest.TestCase):
         self.assertIn("\\pdfmapline{=cmr10 <<cmr10.pfb}", text)
         self.assertIn("\\font\\x=cmr10", text)
 
-    # Known bug, #2054: job_text("full") `continue`s past already-whole (<<)
-    # entries, skipping their \font/\shipout line as well as the map rewrite.
-    # Remove the decorator in the fix.
-    @unittest.expectedFailure
     def test_full_still_typesets_already_whole_fonts(self):
         text = type1_sweep.job_text([("cmr10", "cmr10 <<cmr10.pfb", "<<cmr10.pfb")], "full")
         self.assertIn("\\font\\x=cmr10", text)
