@@ -361,12 +361,6 @@ struct Context {
     /// `\prevdepth`) at the call: a draw call's first spaces and lines
     /// depend on it.
     aux: u64,
-    /// In the main vertical list, whether contributions wait for the page
-    /// builder: a `\par` there builds the page (tex.web §1091), which
-    /// moves them and changes nothing when there are none. A call recorded
-    /// with none replayed as nothing over waiting ones, and `\pagetotal`
-    /// after it was the normal path's of before them (lane AUDIT-MATH).
-    contrib: bool,
 }
 
 /// How K2 keeps the value at one `eqtb` location.
@@ -455,7 +449,6 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
         ctx.hyph_version,
         ctx.aux as i32,
         (ctx.aux >> 32) as i32,
-        ctx.contrib as i32,
         k1.len() as i32,
         k2.len() as i32,
         k4.len() as i32,
@@ -495,6 +488,13 @@ struct Entry {
     voids: Vec<i32>,
     /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
     line: Option<i32>,
+    /// When the call built the page in the main vertical list (a `\par`
+    /// there, tex.web §1091): whether contributions waited at the call. With
+    /// none it did nothing, and with some it moved them (a refusal), so the
+    /// entry holds only in the same case (lane AUDIT-MATH: a replay over
+    /// waiting ones left them off the page, and `\pagetotal` after it was
+    /// the normal path's of before them).
+    contrib: Option<bool>,
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
@@ -596,6 +596,10 @@ struct Rec {
     /// after that, they hold what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
+    /// A `\par` in the main vertical list at the call's own level, and
+    /// whether contributions waited at the call (`Entry::contrib`).
+    built_page: bool,
+    contrib_waits: bool,
     /// The box registers that hold a box the call put there (or made void
     /// by moving its box out): read, they are the call's own, not inputs.
     boxes: HashSet<i32>,
@@ -2071,8 +2075,6 @@ impl Globals {
             font_version: self.bm_font_version,
             hyph_version: self.bm_hyph_version,
             aux: self.cur_list.aux_field.0,
-            contrib: self.cur_list.mode_field == k::vmode
-                && self.cur_list.tail_field != self.cur_list.head_field,
         }
     }
 
@@ -2510,6 +2512,9 @@ impl Globals {
         // the state: an offer that hits builds no key.
         let hash = key_hash(&k1, &ctx, &[], &[]);
         let k4_now = self.bm_k4();
+        // contributions wait in the main vertical list (`Entry::built_page`)
+        let contrib_waits = self.cur_list.mode_field == k::vmode
+            && self.cur_list.tail_field != self.cur_list.head_field;
         // (the most recent variant whose whole key holds; whether one held
         // up to K3 or K7 but not them)
         ST.with(|s| {
@@ -2542,6 +2547,7 @@ impl Globals {
                     || e.ctx != ctx
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
+                    || !e.contrib.is_none_or(|w| w == contrib_waits)
                 {
                     continue;
                 }
@@ -2719,6 +2725,9 @@ impl Globals {
             kr: vec![],
             gwritten: HashSet::new(),
             line_read: false,
+            built_page: false,
+            contrib_waits: self.cur_list.mode_field == k::vmode
+                && self.cur_list.tail_field != self.cur_list.head_field,
             boxes: HashSet::new(),
             box_stack: vec![],
             gboxes: vec![],
@@ -2834,6 +2843,7 @@ impl Globals {
                     trailer: None,
                     voids: rec.voids,
                     line: rec.line_read.then_some(self.line),
+                    contrib: rec.built_page.then_some(rec.contrib_waits),
                     fast: vec![],
                     new_cs: vec![],
                     last_link: None,
@@ -3526,6 +3536,9 @@ impl Globals {
             }
         }
         let outer = self.bm_with_rec(|r| r.start.nest_ptr).unwrap_or(i32::MAX);
+        if c == k::par_end && self.cur_list.mode_field == k::vmode && self.nest_ptr == outer {
+            self.bm_with_rec(|r| r.built_page = true);
+        }
         let ok = if c == k::extension {
             [
                 k::open_node,
@@ -3935,6 +3948,7 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
+                contrib: rec.built_page.then_some(rec.contrib_waits),
                 fast: compress_groups(&rec.ops),
                 new_cs: rec
                     .ops
