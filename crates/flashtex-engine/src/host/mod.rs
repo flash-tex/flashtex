@@ -35,6 +35,7 @@ pub mod diag;
 pub mod export_dir;
 pub mod external;
 mod resident;
+pub mod s0cache;
 pub mod s0write;
 pub mod s1;
 pub mod server;
