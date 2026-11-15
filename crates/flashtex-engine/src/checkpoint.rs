@@ -2115,10 +2115,17 @@ impl Globals {
     /// verification); never one a page, a restart point or a pending
     /// branch still holds.
     pub fn drop_checkpoint(&mut self, id: CheckpointId) {
-        let pending = self.layer_ref().is_some_and(|l| l.pending.is_some());
-        if pending || self.arena.checkpoint_ids().last() != Some(&id) {
-            // (a pending branch may start at the newest: `retain_checkpoints`
-            // keeps it)
+        // A pending branch starts at the restore target, which is also the
+        // newest checkpoint until the restarted run takes another: that one
+        // stays (`retain_checkpoints` keeps the newest). A checkpoint taken
+        // after the restore is no part of the branch (the old run's future),
+        // and drops as with no branch (REVIEW-A on #2161: every check of a
+        // restarted run kept its checkpoint before).
+        let base = self
+            .layer_ref()
+            .and_then(|l| l.pending.as_ref())
+            .and_then(|p| p.branch.ids().first().copied());
+        if base == Some(id) || self.arena.checkpoint_ids().last() != Some(&id) {
             self.retain_checkpoints(&|k| k != id);
             return;
         }

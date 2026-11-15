@@ -379,7 +379,12 @@ fn intrinsics_verify_in_the_host() {
             let fs = files(w);
             let fs: Vec<(&str, &str)> = fs.iter().map(|(n, t)| (*n, t.as_str())).collect();
             if fault.is_empty() {
-                compile_and_check(&e, &mut h, &dir, &fs, &format!("compile {k}"));
+                let r = compile_and_check(&e, &mut h, &dir, &fs, &format!("compile {k}"));
+                if k == 2 {
+                    // a restart: its checks run with the old run's future
+                    // detached (a pending branch)
+                    assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+                }
             } else {
                 for (name, text) in &fs {
                     std::fs::write(dir.join(name), text).unwrap();
@@ -403,6 +408,18 @@ fn intrinsics_verify_in_the_host() {
             .collect();
         let checks = counts.len();
         let differing = counts.iter().filter(|&&n| n > 0).count();
+        // every check drops its checkpoint, in the restarted run too
+        // (REVIEW-A on #2161)
+        let kept: Vec<&str> = err
+            .lines()
+            .filter(|l| l.ends_with("kept after its check"))
+            .collect();
+        assert!(
+            kept.is_empty(),
+            "{fault}: {} kept: {:?}",
+            kept.len(),
+            &kept[..kept.len().min(3)]
+        );
         assert_eq!(
             differing,
             err.lines()
