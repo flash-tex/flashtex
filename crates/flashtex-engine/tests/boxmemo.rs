@@ -176,6 +176,72 @@ fn the_key_falls_back() {
 }
 
 #[test]
+fn a_replay_keeps_the_normal_paths_capacity_errors() {
+    // (lane AUDIT-GROUPS, #2265) a replay pushes none of TeX's stacks, and
+    // the key holds no stack position: a call recorded with room to spare
+    // was replayed where its normal path stops with `TeX capacity
+    // exceeded` -- here six groups 250 levels deep (grouping levels=255),
+    // and four macro levels 9993 deep (input stack size=10000). On main the
+    // replay went on (`[survived 250]`). The parameter and save stacks
+    // follow
+    let s = check(
+        "capacity-levels",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\
+         \\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 \\endgroup\\endgroup\\endgroup\\endgroup\\endgroup\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\nest{\\begingroup\\ifnum\\currentgrouplevel<250 \\expandafter\\nest\\fi}\n\
+         \\nest\\measure\\message{[survived \\the\\currentgrouplevel]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    // (the offer 250 levels deep is a miss of its own kind)
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+    let s = check(
+        "capacity-input",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\ia{\\ib\\relax}\\def\\ib{\\ic\\relax}\\def\\ic{\\id\\relax}\\def\\id{\\ie\\relax}\n\
+         \\def\\ie{\\if\\relax\\relax\\global\\dimen1=2pt\\fi\\relax}\n\
+         \\def\\measure{\\begingroup\\ia\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\r{\\ifnum\\count1<9993 \\advance\\count1 1 \\expandafter\\r\\else\\count1=0 \\expandafter\\measure\\fi\\relax}\n\
+         \\r\\message{[survived]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+    // the parameter stack (parameter stack size=20000): `\ia`'s nine
+    // arguments, under 2222 calls of `\r` that each hold nine
+    let s = check(
+        "capacity-param",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\ia#1#2#3#4#5#6#7#8#9{\\global\\dimen1=2pt\\relax}\n\
+         \\def\\measure{\\begingroup\\ia123456789\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\r#1#2#3#4#5#6#7#8#9{\\ifnum\\count1<2221 \\advance\\count1 1 \\expandafter\\rr\\else\\count1=0 \\expandafter\\measure\\fi\\relax}\n\
+         \\def\\rr{\\r123456789}\n\
+         \\rr\\message{[survived]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+    // the save stack (save size=200000): the call saves 510 registers in
+    // its group, 195 groups deep that each saved as many (1024 words a
+    // group, which leaves 313). Each group sets them to 1 and back to 0:
+    // e-TeX saves nothing for a value assigned again, and the registers
+    // must be what they were where the call was recorded (its key)
+    let s = check(
+        "capacity-save",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\setall{\\ifnum\\count255<255 \\count\\count255=1 \\dimen\\count255=1sp \\advance\\count255 1 \\expandafter\\setall\\fi}\n\
+         \\def\\zeroall{\\ifnum\\count255<255 \\count\\count255=0 \\dimen\\count255=0sp \\advance\\count255 1 \\expandafter\\zeroall\\fi}\n\
+         \\def\\measure{\\begingroup\\count255=0 \\setall\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen255=\\wd0 \\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\nest{\\begingroup\\count255=0 \\setall\\count255=0 \\zeroall\\count255=0 \\ifnum\\currentgrouplevel<195 \\expandafter\\nest\\fi}\n\
+         \\nest\\measure\\message{[survived \\the\\currentgrouplevel]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+}
+
+#[test]
 fn outside_the_model_never_replays() {
     // output, the contents of a box register it did not make (`\\copy`),
     // and the main vertical list: recorded calls are abandoned, so nothing
@@ -221,6 +287,76 @@ fn draw_calls_replay_with_their_hole() {
          \\one{3pt}\\one{3pt}\\one{3pt}\\one{4pt}\\one{4pt}\\one{3pt}\\end\n",
     );
     assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn an_italic_correction_of_the_tail_before_the_call_never_replays() {
+    // (lane AUDIT-GROUPS, #2267) `\\/` reads its list's tail (tex.web
+    // §1113): as a draw call's first node, the tail from before the call,
+    // which no key holds. On main the kern of the recording's `f` was
+    // replayed after an `x` and after a box. After the call's own `f` it
+    // reads only the call's node, and replays
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "italcorr",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\f=cmr10 \\f\n\
+         \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure{1pt}}\\showbox1 }\n\
+         \\def\\measure#1{\\/\\kern#1\\relax}\n\
+         \\one{f}\\one{f}\\one{x}\\one{\\hbox{}}\n\
+         \\def\\measure#1{f\\/\\kern#1\\relax}\n\
+         \\one{f}\\one{x}\\one{\\hbox{}}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_space_adjusted_by_the_tail_before_the_call_never_replays() {
+    // (REVIEW-D on #2283) under `\pdfadjustinterwordglue` a space reads
+    // its list's tail too: `adjust_interword_glue` widens the glue by the
+    // `\knbscode` of the character there, or of the one before an auto
+    // kern there, which it finds through `save_tail`.
+    // 1. The call's first node is a space: on main the glue after the
+    //    recording's `y` was replayed after an `x`.
+    // 2. After the call's own `x` the space reads only the call's node,
+    //    and replays.
+    // 3. The call ends in `x` and its auto kern (`\pdfappendkern`): the
+    //    space after the call reads `save_tail`, which a replay left null.
+    // 4. The call sets a character in a box of its own, which makes
+    //    `save_tail` null; the space after it then leaves the auto kern
+    //    from before the call alone. On main a replay left `save_tail` at
+    //    the `x`, and the glue was widened.
+    // (The first `\hbox{y y}` makes the font's glue, `font_glue`: a call
+    // that makes it is abandoned for that, `Fonts`.)
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "interword-glue",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\f=cmr10 \\f \\pdfadjustinterwordglue=1 \\knbscode\\f`x=500\n\
+         \\setbox1\\hbox{y y}\n\
+         \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure{1pt} y}\\showbox1 }\n\
+         \\def\\measure#1{ \\kern#1\\relax}\n\
+         \\one{y}\\one{y}\\one{x}\n\
+         \\def\\measure#1{x \\kern#1\\relax}\n\
+         \\one{y}\\one{y}\\one{x}\n\
+         \\pdfappendkern=1 \\knaccode\\f`x=100\n\
+         \\def\\measure#1{\\kern#1 x\\relax}\n\
+         \\one{}\\one{}\\one{}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{y\\kern#1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\one{x}\\one{x}\\one{x}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    // (cases 2 and 4 replay)
+    assert!(stat(&s, "hits") >= 4, "{s}");
 }
 
 #[test]
@@ -378,6 +514,35 @@ fn lastskip_glue_and_local_groups() {
 }
 
 #[test]
+fn changes_a_call_makes_to_its_list_in_place() {
+    // (lane AUDIT-GROUPS, #2266) commands that change the call's list
+    // without appending to it: `\\over` on an empty math list sets
+    // `incompleat_noad` (tex.web §1181); `\\limits` sets the tail op
+    // noad's subtype (§1159); `^` fills the tail noad's script, with a
+    // group's list at its `}` (§1176, §1186); a letter `\\nullfont` lacks
+    // sets `space_factor` (§1034), in a box and in a paragraph. On main a
+    // replay left them all as they were: the math calls are refused now,
+    // and the space factor is replayed
+    let s = check(
+        "in-place",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 \\endgroup#1}\n\
+         \\def\\m#1{\\setbox1\\hbox{$#1\\showlists$}}\n\
+         \\m{\\measure\\over}\\m{\\measure\\over}\\m{\\measure\\over}\n\
+         \\m{\\mathop{x}\\measure\\limits}\\m{\\mathop{x}\\measure\\limits}\\m{\\mathop{x}\\measure\\limits}\n\
+         \\m{x\\measure{^y}}\\m{x\\measure{^y}}\\m{x\\measure{^y}}\n\
+         \\m{x\\measure{^{yy}}}\\m{x\\measure{^{yy}}}\\m{x\\measure{^{yy}}}\n\
+         \\def\\h{\\setbox1\\hbox{\\spacefactor=1234 \\measure A\\message{[\\the\\spacefactor]}}}\n\
+         \\h\\h\\h\n\
+         \\def\\p{\\setbox1\\vbox{\\noindent\\spacefactor=1234 \\measure A\\message{[\\the\\spacefactor]}}}\n\
+         \\p\\p\\p\\end\n",
+    );
+    // (the space factor's calls replay, in the box and in the paragraph)
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
+#[test]
 fn font_parameters_are_part_of_the_key() {
     // a call that reads a font parameter: a \fontdimen assignment makes the
     // fonts' next version, so the call after it is another key; versions
@@ -489,6 +654,24 @@ fn boxes_at_the_calls_level_not_its_own_never_replay() {
          \\def\\one{\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
          \\one\\one\\one\n\
          \\def\\measure#1{\\setbox8\\hbox{\\kern#1}\\box8 }\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn a_call_that_ends_its_paragraph_never_replays() {
+    // (lane AUDIT-GROUPS, #2268) `\\par\\noindent` in a call made in an
+    // empty paragraph: `end_graf` pops the paragraph and frees its head,
+    // which the next paragraph's `push_nest` takes back from `get_avail`,
+    // so the end check found the same list; the `\\parskip` glue went to
+    // the enclosing `\\vbox`. On main a replay dropped it
+    let s = check(
+        "repar",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\parskip=3pt\n\
+         \\def\\measure{\\par\\noindent}\n\
+         \\def\\one{\\setbox1\\vbox{\\hrule\\noindent\\measure\\vrule width 1pt\\par}\\showbox1 }\n\
          \\one\\one\\one\\end\n",
     );
     assert_eq!(stat(&s, "hits"), 0, "{s}");
@@ -647,6 +830,27 @@ fn calls_in_math_groups_compare_their_save_stack() {
          \\one\\one\\one\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_replay_keeps_the_buffers_and_the_pools_overflows() {
+    // (lane AUDIT-OVERFLOW, #2308) a replay puts neither the call's
+    // `\csname` name in the buffer nor its `\meaning` in the pool: a call
+    // recorded with room to spare was replayed where its normal path stops
+    // with `TeX capacity exceeded` (on main: `[survived]`, exit 0)
+    let body = "\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 ";
+    for (i, (want, src)) in common::capacity_cases("measure", body, 20_000, 6183)
+        .into_iter()
+        .enumerate()
+    {
+        let tag = format!("capacity-cap{i}");
+        let d = scratch(&tag);
+        std::fs::write(d.join("t.tex"), &src).unwrap();
+        let off = run(&d, "off", "measure");
+        assert!(off.log.contains(want), "{tag}: {}", off.log);
+        let s = check(&tag, &src);
+        assert!(stat(&s, "hits") >= 2, "{tag}: {s}");
+    }
 }
 
 #[test]
