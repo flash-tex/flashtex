@@ -686,6 +686,14 @@ and the document is a **harness error**: unmeasured, never a pass or a fail.
 Its tier reads partial, so the gate stays red. This is a harness limit, to be
 lifted by a normaliser that leaves image data compressed.
 
+**An oracle PDF that cannot be read.** When qpdf (or the parser) fails on the
+oracle's own PDF, P-T2 was not measured: the document is a **harness error**
+(`PT2OracleUnreadable`), unmeasured, and its tier reads partial. It is not the
+engine failing P-T2. It used to be counted as that: on the hosted board of
+2026-11-13 to 11-15 qpdf was refused every oracle PDF, 4110 documents "failed",
+the arXiv and T4 rows read "below bar", and the three tiers without a bar read
+"equal" to v1's 0 %. A PDF of the candidate's that cannot be read still fails.
+
 **Issues and the gate.** `--issues apply` opens or updates one issue per red
 tier, on complete runs only: a row behind v1, below a target (arXiv L1, T2's
 unexpected failures) or below the owner's bar (`ISSUE_VERDICTS`). It carries
