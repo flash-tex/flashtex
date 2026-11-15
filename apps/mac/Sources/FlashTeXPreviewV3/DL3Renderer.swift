@@ -99,8 +99,14 @@ public final class DL3RenderFont: @unchecked Sendable {
         default: return .failure(DL3Error("\(label): format \(font.format ?? "?") has no program to draw"))
         }
         var program = font.program
+        // A slanted or extended Type 1 font: pdfTeX writes `font_matrix` into
+        // the embedded program's /FontMatrix (writet1.c t1_modify_fm), and Core
+        // Graphics rasterises the glyphs of that program otherwise than the
+        // plain program under the same matrix applied outside (pv-fonts p1:
+        // 5 and 10 px apart at 2x and 4x, Δ1). So the program gets the matrix,
+        // as in the PDF, and no font transform is applied on top.
         var inProgram = false // the font matrix is the program's own /FontMatrix
-        if DL3Renderer.u1Variant.contains("slant-program"), font.format == "type1", let fm = font.fontMatrix, fm.count == 6,
+        if !DL3Renderer.u1Variant.contains("slant-off"), font.format == "type1", let fm = font.fontMatrix, fm.count == 6,
            let patched = Type1Encoding.withFontMatrix(program, fm) {
             program = patched
             inProgram = true
@@ -218,9 +224,9 @@ public final class DL3RenderFont: @unchecked Sendable {
 /// Built-in `/Encoding` of a Type 1 program (`dup N /name put`), for a FONT
 /// that sent no `encoding` (the engine always sends one today).
 enum Type1Encoding {
-    /// TEMPORARY (U1 experiment): the program with its `/FontMatrix` array
-    /// replaced by `fm`, as writet1.c's t1_modify_fm writes SlantFont and
-    /// ExtendFont (a .pfb's first segment length follows).
+    /// The program with its `/FontMatrix` array replaced by `fm`, as
+    /// writet1.c's t1_modify_fm writes SlantFont and ExtendFont (a .pfb's
+    /// first segment length follows); nil when it has none to replace.
     static func withFontMatrix(_ program: [UInt8], _ fm: [Double]) -> [UInt8]? {
         let key = Array("/FontMatrix".utf8)
         guard program.count > key.count, let at = (0 ... program.count - key.count).first(where: { Array(program[$0 ..< $0 + key.count]) == key }),
@@ -965,7 +971,7 @@ public enum DL3Renderer {
                     // apart that way at 1–4.25 px/pt, ~1,500 edge pixels apart
                     // antialiased at the pane's 2.86 px/pt; lane BEAMER-V3).
                     // A rotated image keeps its antialiased edges, as there.
-                    if Self.axisAligned(ctx.ctm) { ctx.setShouldAntialias(false) }
+                    if Self.axisAligned(ctx.ctm) && !(cgImage.bitsPerComponent == 1 && Self.u1Variant.contains("bpc1-aa")) { ctx.setShouldAntialias(false) }
                     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
                 case .pdf(let pdfPage, let box, let matrix):
                     // pdfTeX includes a PDF page as a Form XObject: its space
@@ -976,7 +982,7 @@ public enum DL3Renderer {
                     // the box, then the page's content stream as it is
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
-                    ctx.clip(to: box)
+                    if !Self.u1Variant.contains("layer-clip-inside") { ctx.clip(to: box) }
                     // A form with a /Group (LaTeX's pdftex.def gives every
                     // included page `/Group <</S/Transparency/K false/I
                     // false>>`) Core Graphics paints through a transparency
@@ -987,6 +993,7 @@ public enum DL3Renderer {
                     } else {
                         if Self.u1Variant.contains("pdf-layer-rect") { ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil) }
                         else { ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
+                        if Self.u1Variant.contains("layer-clip-inside") || Self.u1Variant.contains("layer-clip-twice") { ctx.clip(to: box) }
                         DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                         ctx.endTransparencyLayer()
                     }

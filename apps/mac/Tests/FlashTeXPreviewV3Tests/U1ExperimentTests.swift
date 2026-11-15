@@ -46,19 +46,20 @@ extension PreviewParityTests {
         guard let root = ProcessInfo.processInfo.environment["FLASHTEX_DL3_FIXTURES"] else { throw XCTSkip("no fixtures") }
         defer { DL3Renderer.u1Variant = [] }
         let dir = URL(fileURLWithPath: root)
-        let cases: [(String, [Int])] = [("preview-probes__pv-pdf-inclusion", Array(0 ..< 9)),
-                                        ("preview-probes__pv-images", [4, 10, 15]),
-                                        ("preview-probes__pv-fonts", [0])]
-        let variants: [Set<String>] = [[], ["pdf-nolayer"], ["pdf-layer-rect"], ["png-depth-off"], ["png-alpha16-off"],
-                                       ["iq-none"], ["iq-low"], ["iq-medium"], ["iq-high"], ["png-depth-off", "iq-none"], ["slant-program"]]
-        for (name, pages) in cases {
+        let cases: [(String, [Int], [Set<String>])] = [
+            ("preview-probes__pv-pdf-inclusion", Array(0 ..< 9),
+             [[], ["pdf-nolayer"], ["layer-clip-inside"], ["layer-clip-inside", "pdf-layer-rect"], ["layer-clip-twice"]]),
+            ("preview-probes__pv-images", [4, 10, 15], [[], ["bpc1-aa"], ["bpc1-aa", "png-depth-off"]]),
+            ("preview-probes__pv-fonts", [0], [[], ["slant-off"]]),
+        ]
+        for (name, pages, variants) in cases {
             let fx = dir.appendingPathComponent(name)
             guard let bytes = try? Data(contentsOf: fx.appendingPathComponent("display.dl3")),
                   let pdf = CGPDFDocument(fx.appendingPathComponent("oracle.pdf") as CFURL) else {
                 print("U1EXP \(name): no input"); continue
             }
             for variant in variants {
-                for interpolate in name.hasSuffix("pv-images") ? [false, true] : [false] {
+                for interpolate in [false] {
                     DL3Renderer.u1Variant = variant
                     guard let doc = try? DL3Document(frames: Array(bytes), cache: DL3ResourceCache()) else { print("U1EXP \(name): no doc"); continue }
                     let tag = variant.sorted().joined(separator: "+") + (interpolate ? "+interp" : "")
@@ -108,6 +109,23 @@ extension PreviewParityTests {
                 }
             }
         }
+        // PdfTeXXObjectParityTests' hand-written cases under the variants.
+        func line(_ d: [(scale: Double, pixels: Int, maxDelta: Int)]) -> String {
+            d.map { "\($0.scale)x px=\($0.pixels) maxD=\($0.maxDelta)" }.joined(separator: " ")
+        }
+        let groupVariants: [Set<String>] = [[], ["pdf-nolayer"], ["layer-clip-inside"], ["layer-clip-inside", "pdf-layer-rect"], ["layer-clip-twice"]]
+        for v in groupVariants {
+            DL3Renderer.u1Variant = v
+            let tag = v.sorted().joined(separator: "+")
+            print("U1EXP synthetic group p1 [\(tag)] \(line((try? PdfTeXXObjectParityTests.groupedPageDiffs()) ?? []))")
+            print("U1EXP synthetic group p5 [\(tag)] \(line((try? PdfTeXXObjectParityTests.groupedCroppedPageDiffs()) ?? []))")
+        }
+        let bitVariants: [Set<String>] = [[], ["bpc1-aa"], ["png-depth-off"], ["bpc1-aa", "png-depth-off"]]
+        for v in bitVariants {
+            DL3Renderer.u1Variant = v
+            print("U1EXP synthetic gray1 [\(v.sorted().joined(separator: "+"))] \(line((try? PdfTeXXObjectParityTests.oneBitGreyDiffs()) ?? []))")
+        }
+        DL3Renderer.u1Variant = []
         // ImageIO's own reading of the probe PNGs.
         for f in ["gray1.png", "rgba16.png", "gray-alpha.png", "pal4.png", "rgb16.png"] {
             let url = dir.appendingPathComponent("preview-probes__pv-images/src/\(f)")
