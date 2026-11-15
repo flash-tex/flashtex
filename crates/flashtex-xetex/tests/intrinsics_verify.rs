@@ -494,6 +494,24 @@ fn writes_outside_eqtb_that_keep_the_tail_are_not_replayable() {
         ("\\hyphenchar\\font=`-\\relax", THRICE, "FontInfo"),
         ("\\hyphenation{intr-hook}", THRICE, "Hyphenation"),
         ("\\edef\\IntrR{\\uniformdeviate 10}", THRICE, "Random"),
+        // (each set first, so that its name's string exists before the
+        // calls; each call's write undone after it)
+        (
+            "\\XeTeXdefaultencoding \"bytes\"\\relax",
+            "\\XeTeXdefaultencoding \"bytes\"\\relax \\XeTeXdefaultencoding \"utf8\"\\relax \
+             \\pdfstringdefPreHook\\XeTeXdefaultencoding \"utf8\"\\relax \
+             \\pdfstringdefPreHook\\XeTeXdefaultencoding \"utf8\"\\relax \
+             \\pdfstringdefPreHook\\XeTeXdefaultencoding \"utf8\"\\relax",
+            "DirectWrite",
+        ),
+        (
+            "\\XeTeXlinebreaklocale \"zh\"\\relax",
+            "\\XeTeXlinebreaklocale \"zh\"\\relax \\XeTeXlinebreaklocale \"ja\"\\relax \
+             \\pdfstringdefPreHook\\XeTeXlinebreaklocale \"ja\"\\relax \
+             \\pdfstringdefPreHook\\XeTeXlinebreaklocale \"ja\"\\relax \
+             \\pdfstringdefPreHook\\XeTeXlinebreaklocale \"ja\"\\relax",
+            "DirectWrite",
+        ),
     ];
     // (every case runs, and a failure lists each wrong one)
     let mut wrong = vec![];

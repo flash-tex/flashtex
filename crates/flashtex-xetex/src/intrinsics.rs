@@ -19,7 +19,9 @@
 //! write outside `eqtb` that the list's tail does not show (`\prevdepth`,
 //! `\spacefactor`, `\prevgraf`, the page builder's values, the interaction
 //! mode, font parameters, hyphenation tables, a math list's tail noad, the
-//! random generator; #2452) (`not_replayable.*` otherwise).
+//! random generator; #2452), and no `\XeTeXdefaultencoding` or
+//! `\XeTeXlinebreaklocale`, which assign `eqtb` directly
+//! (`not_replayable.*` otherwise).
 //!
 //! An eligible call with a kept recording from the previous guarded call is
 //! *checked* (`crate::intrinsics_verify`): checkpoint C, replay the previous
@@ -333,8 +335,9 @@ impl Globals {
             // call opens comes back at its end and its effects are recorded
             17 if p > level_one && p <= call_level => Err("AfterGroup"),
             17 => return,
-            // a write outside `eqtb` that leaves the list's tail alone
-            // (#2452): a replay of the definitions would not make it
+            // a write outside `eqtb`, or to `eqtb` outside `eq_define` and
+            // kin, that leaves the list's tail alone (#2452): a replay of
+            // the definitions would not make it
             19 => Err(match p {
                 1 => "Aux",
                 2 => "PrevGraf",
@@ -343,7 +346,8 @@ impl Globals {
                 5 => "FontInfo",
                 6 => "Hyphenation",
                 7 => "MathTail",
-                _ => "Random",
+                8 => "Random",
+                _ => "DirectWrite",
             }),
             _ => match k & 7 {
                 1 if [glue_ref, shape_ref, box_ref].contains(&t) => Err("GlueShapeOrBox"),

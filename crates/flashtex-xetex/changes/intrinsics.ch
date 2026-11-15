@@ -16,7 +16,8 @@
 % |new_interaction|, 5 a font's |font_info|, |hyphen_char|, |skew_char| or
 % character protrusion, 6 the hyphenation tables, 7 a math list's tail noad
 % or |incompleat_noad| (|sub_sup|, |math_limit_switch|, |math_fraction|), 8
-% the random generator and the timer; #2452), and
+% the random generator and the timer, 9 \.{\\XeTeXdefaultencoding} and
+% \.{\\XeTeXlinebreaklocale}, which assign |eqtb| directly; #2452), and
 % |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 %
@@ -355,6 +356,26 @@ begin case subtype(p) of
     @!old_setting:0..max_selector;
 begin if intr_verify_on then flashtex_intr_op(7,0,0,0);
 case subtype(p) of
+@z
+
+@x xetex.web - \.{\\XeTeXdefaultencoding} writes |eqtb| outside |eq_word_define|: not replayable (kind 19)
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@y
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin if intr_verify_on then flashtex_intr_op(19,9,0,0);
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@z
+
+@x xetex.web - \.{\\XeTeXlinebreaklocale} writes |eqtb| outside |eq_word_define|: not replayable (kind 19)
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin
+  scan_file_name; {scan a filename-like arg for the locale name}
+@y
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin if intr_verify_on then flashtex_intr_op(19,9,0,0);
+  scan_file_name; {scan a filename-like arg for the locale name}
 @z
 
 @x xetex.web - a sparse-array definition ends a recording's replayability
