@@ -126,7 +126,11 @@ extension ShellModel {
     /// timer that outlives the window) keeps it again. Before, the draft
     /// stayed on disk; once this instance had quit it read as a crash's
     /// leftover and the closed text came back in the next untitled window.
-    func discardUntitledDraftOnClose() {
+    func discardUntitledDraftOnClose() { discardUntitledDraft() }
+
+    /// The untitled text is discarded on purpose (a closed window, quit's
+    /// Don't Save): the draft goes and no later autosave pass keeps it again.
+    func discardUntitledDraft() {
         objc_setAssociatedObject(self, &Self.draftClosedKey, true, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         dropUntitledDraft()
     }

@@ -30,16 +30,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Each window with unsaved edits asks in turn (`ask`: the alert in the
     /// app), brought forward so the question names what you see; Cancel in
     /// any keeps the app open. True when every window agreed to quit.
+    ///
+    /// Don't Save holds that window's autosave at once: its timer would
+    /// otherwise fire while a later window's question is up (the main queue
+    /// is served in the modal panel's run-loop mode) and write the file, or
+    /// the untitled draft the next launch then recovers (S-REVIEW on #2442).
+    /// What Don't Save discards is discarded only once every window agreed:
+    /// Cancel in a later window leaves the earlier ones open, so they keep
+    /// their drafts and their autosave.
     @MainActor static func confirmQuit(_ models: [ShellModel], ask: (ShellModel) -> QuitAnswer) -> Bool {
+        var discarded: [ShellModel] = []
         for model in models {
             switch ask(model) {
             case .goOn: continue
             case .discard:
-                // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
-                model.preserveDirtyBuffers(reason: "quit without saving")
-                model.dropUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
-            case .cancel: return false
+                model.holdAutosaveForQuit()
+                discarded.append(model)
+            case .cancel:
+                for m in discarded { m.releaseAutosaveHold() }
+                return false
             }
+        }
+        for model in discarded {
+            // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
+            model.preserveDirtyBuffers(reason: "quit without saving")
+            model.discardUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
         }
         return true
     }

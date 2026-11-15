@@ -435,6 +435,8 @@ final class ShellModel {
         }
     }
     @ObservationIgnored private var autosaveWork: DispatchWorkItem?
+    /// Quit's Don't Save answered for this window (`holdAutosaveForQuit`).
+    @ObservationIgnored private var autosaveHeldForQuit = false
     /// Asynchronous (helper-routed) saves per document path — autosave and
     /// Command-S alike — that have not answered yet (`enqueueSave`).
     @ObservationIgnored private var savesInFlight: [String: (id: Int, task: Task<Void, Never>)] = [:]
@@ -833,6 +835,7 @@ final class ShellModel {
     func scheduleAutosave() {
         autosaveWork?.cancel()
         autosaveWork = nil
+        guard !autosaveHeldForQuit else { return } // Don't Save answered (AppDelegate.confirmQuit)
         // A buffer with no file keeps a crash draft instead, whatever the
         // setting (UntitledDrafts.swift); never a Save panel.
         guard documentURL == nil || EditorPreferences.shared.autosave else { return }
@@ -897,6 +900,24 @@ final class ShellModel {
         guard let pending = autosaveWork else { return }
         pending.cancel()
         performAutosave()
+    }
+
+    /// Quit's Don't Save for this window (`AppDelegate.confirmQuit`): no
+    /// pending or later autosave pass writes anything for it while the other
+    /// windows are asked. `releaseAutosaveHold()` undoes it when a later
+    /// window cancels the quit.
+    func holdAutosaveForQuit() {
+        autosaveHeldForQuit = true
+        autosaveWork?.cancel()
+        autosaveWork = nil
+    }
+
+    /// The quit was cancelled: the window stays open, and its unsaved edits
+    /// are autosaved (or kept as a draft) again.
+    func releaseAutosaveHold() {
+        guard autosaveHeldForQuit else { return }
+        autosaveHeldForQuit = false
+        if project.anyDirty { scheduleAutosave() }
     }
 
     // MARK: navigation (preview -> source)
