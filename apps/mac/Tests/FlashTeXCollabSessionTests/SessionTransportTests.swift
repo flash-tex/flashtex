@@ -164,6 +164,86 @@ final class SessionTransportTests: XCTestCase {
         a.leave(); b.leave(); h.hub.stop()
     }
 
+    /// #2059 finding 1: the hub drops a guest's file-map operations (P1),
+    /// so a guest's `shareFile` would make a file only its own copy holds.
+    /// It is refused and changes nothing; so is a share the caps refuse.
+    func testAGuestCannotShareAFileAndARefusedShareChangesNothing() throws {
+        let guest = CollabSession(role: .guest, replica: 7, name: "G", colourIndex: 1)
+        let before = guest.project.digest
+        XCTAssertThrowsError(try guest.shareFile(path: "mine.tex", text: "hi")) {
+            XCTAssertEqual($0 as? CollabSession.ShareError, .notHub)
+        }
+        XCTAssertEqual(guest.project.digest, before)
+        XCTAssertTrue(guest.textFiles.isEmpty)
+        XCTAssertEqual(guest.project.files.stateVector[7], 0)
+
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 4, localFileHeadroom: 0, localTextHeadroom: 0)
+        defer { CollabSession.capsOverride = nil }
+        let hub = CollabSession(role: .hub, replica: 8, name: "H", colourIndex: 0)
+        XCTAssertThrowsError(try hub.shareFile(path: "big.tex", text: "too long")) {
+            XCTAssertEqual($0 as? CollabError, .projectFull)
+        }
+        XCTAssertTrue(hub.textFiles.isEmpty, "no file without its text")
+        XCTAssertEqual(hub.project.files.count, 0)
+        XCTAssertNoThrow(try hub.shareFile(path: "ok.tex", text: "fits"))
+        XCTAssertEqual(hub.textFiles.map(\.path), ["ok.tex"])
+    }
+
+    /// #2059 finding 4: the hub relayed a guest's text operation even when
+    /// it refused it, so every other guest integrated (and split its runs
+    /// for) what it would refuse too. Now the hub relays none of it and
+    /// ends the sender's part, which holds what the hub does not.
+    func testHubRelaysNoneOfARefusedOperationAndEndsItsSender() throws {
+        let h = try Harness(text: "abcdef")
+        try h.start(self)
+        let a = h.guest(name: "A"), b = h.guest(name: "B")
+        let asession = try XCTUnwrap(join(a)), bsession = try XCTUnwrap(join(b))
+        waitUntil(5, "sync") { asession.text(of: h.file) == "abcdef" && bsession.text(of: h.file) == "abcdef" }
+        var bRefused: [CollabProject.ReceiveError] = []
+        bsession.onRejected = { bRefused += $0 }
+        let doc = try XCTUnwrap(h.hubSession.project.text(h.file))
+        let hubRuns = doc.runCount
+        let ids = (0..<6).map { CollabID(replica: h.hubSession.replica, counter: UInt64($0)) }
+        // A's own ids, origins out of order ('e' left of 'b'): malformed.
+        let bad = TextOp.insert(id: CollabID(replica: asession.replica, counter: 0), originLeft: ids[4],
+                                originRight: ids[1], content: "x")
+        a.connection!.send(.update(seq: 1, sections: [.text(h.file, [bad])]))
+        waitUntil(10, "sender's part ends") { if case .ended = a.state { return true } else { return false } }
+        XCTAssertEqual(a.state, .ended(CollabSession.refusedMessage))
+        XCTAssertEqual(doc.runCount, hubRuns, "the refusal split nothing")
+        XCTAssertEqual(h.hubSession.text(of: h.file), "abcdef")
+        // A later edit from the hub reaches B, so anything relayed before it has too.
+        try XCTUnwrap(h.hubSession.binding(for: h.file)).localReplace(0..<0, with: "!")
+        waitUntil(5, "B follows") { bsession.text(of: h.file) == "!abcdef" }
+        XCTAssertEqual(bRefused, [], "nothing refused was relayed")
+        XCTAssertEqual(bsession.project.text(h.file)?.stateVector[asession.replica], 0)
+        XCTAssertEqual(b.state, .joined)
+        a.leave(); b.leave(); h.hub.stop()
+    }
+
+    /// #2059 finding 6: a replica holding another version of an id keeps
+    /// whichever arrived first (§2.4), with the same state vector as its
+    /// peers. A guest that is sent the other version now ends its part
+    /// instead of going on with different text.
+    func testAGuestHoldingAnotherVersionOfAnIDEndsInsteadOfDiverging() throws {
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        let g = h.guest()
+        let s = try XCTUnwrap(join(g))
+        waitUntil(5, "sync") { s.text(of: h.file) == "abc" }
+        let hub = h.hubSession.replica
+        let next = try XCTUnwrap(h.hubSession.project.text(h.file)).stateVector[hub]
+        // A faulty replica gave the guest its own version of the hub's next id.
+        let forged = TextOp.insert(id: CollabID(replica: hub, counter: next), originLeft: nil, originRight: nil, content: "X")
+        XCTAssertEqual(s.project.receive([.text(h.file, [forged])]), [])
+        XCTAssertEqual(s.text(of: h.file), "abcX")
+        try XCTUnwrap(h.hubSession.binding(for: h.file)).localReplace(0..<0, with: "Y")
+        waitUntil(10, "the guest's part ends") { if case .ended = g.state { return true } else { return false } }
+        XCTAssertEqual(g.state, .ended(CollabSession.refusedMessage))
+        XCTAssertEqual(h.hubSession.text(of: h.file), "Yabc")
+        h.hub.stop()
+    }
+
     func testIdentityIsSelfSignedP256AndFingerprintRoundTrips() throws {
         let id = try CollabIdentity()
         XCTAssertEqual(id.fingerprint.count, 32)
