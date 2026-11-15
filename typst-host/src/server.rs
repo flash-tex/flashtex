@@ -49,6 +49,7 @@ use crate::convert::{self, ClientCaps, Tables};
 use crate::packages::{self, LockMode, PackageEvent, PackageOptions, Packages};
 use crate::pdfpos;
 use crate::seeded;
+use crate::stages::{self, Stage};
 use crate::watchdog::{self, Watchdog};
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
 use crate::TYPST_VERSION;
@@ -72,6 +73,9 @@ pub struct Host {
     watchdog: Option<Watchdog>,
     /// `comemo::evict` age after each compile (`--evict`, default 3).
     evict: usize,
+    /// The last compile's work after its DONE (the lock's check, eviction),
+    /// in ms: reported with the next compile, which it may have delayed.
+    tail: std::cell::Cell<(f64, f64)>,
     /// Draw classes without a pixel gate row as complete (`--draw-ungated`;
     /// DESIGN.md §15.5).
     ungated: bool,
@@ -117,6 +121,9 @@ struct Finish {
     check: Check,
     /// The project lock's notes from the last check (spec §11.8).
     lock_notes: Vec<crate::world::LockNote>,
+    /// ms before the compile's pages: waiting in the queue, applying the
+    /// request's edits, Typst's compile itself.
+    pre: [f64; 3],
 }
 
 /// Typst's per-page hash: what decides that a page changed. Hashing every
@@ -155,7 +162,8 @@ fn same_pages(a: &SourceResult<PagedDocument>, b: &SourceResult<PagedDocument>) 
 }
 
 enum Msg {
-    Frame(u8, Vec<u8>),
+    /// A frame, and when the reader thread had it.
+    Frame(u8, Vec<u8>, Instant),
     Closed,
     /// A package fetch's progress (spec §11.8), from its thread.
     Package(PackageEvent),
@@ -177,6 +185,9 @@ struct Job<'f> {
     /// Which of those pages the client holds INCOMPLETE.
     incomplete: Vec<bool>,
     compiled: bool,
+    /// The compile whose pages the client shows, and its document: what
+    /// RESOLVE and LOCATE answer from (spec §11.6).
+    shown: Option<(i64, PagedDocument)>,
 }
 
 /// A parsed `COMPILE`.
@@ -238,6 +249,7 @@ impl Host {
             mismatches: Default::default(),
             watchdog: None,
             evict: 3,
+            tail: Default::default(),
             ungated: false,
         }
     }
@@ -332,7 +344,7 @@ impl Host {
             loop {
                 match read_frame(&mut r) {
                     Ok(Some((k, b))) => {
-                        if tx.send(Msg::Frame(k, b)).is_err() {
+                        if tx.send(Msg::Frame(k, b, Instant::now())).is_err() {
                             return;
                         }
                     }
@@ -349,7 +361,7 @@ impl Host {
 
         // HELLO (spec §6.2).
         let (minor, accept, accept_packages) = match rx.recv() {
-            Ok(Msg::Frame(kind::C_HELLO, body)) => {
+            Ok(Msg::Frame(kind::C_HELLO, body, _)) => {
                 let j = std::str::from_utf8(&body)
                     .ok()
                     .and_then(|t| Json::parse(t).ok());
@@ -467,7 +479,9 @@ impl Host {
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             self.verify_idle(c, &mut job, minor, accept)?;
                             c.flush()?;
+                            let te = Instant::now();
                             comemo::evict(self.evict);
+                            self.tail.set((0.0, ms(te)));
                             continue;
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
@@ -475,15 +489,15 @@ impl Host {
                 },
             };
             match msg {
-                Msg::Closed | Msg::Frame(kind::BYE, _) => return c.flush(),
-                Msg::Frame(kind::COMPILE, body) => {
+                Msg::Closed | Msg::Frame(kind::BYE, ..) => return c.flush(),
+                Msg::Frame(kind::COMPILE, body, received) => {
                     // Collect what else has arrived: a later COMPILE supersedes this one.
                     while let Ok(m) = rx.try_recv() {
                         pending.push_back(m);
                     }
                     let superseded = pending
                         .iter()
-                        .any(|m| matches!(m, Msg::Frame(kind::COMPILE, _)));
+                        .any(|m| matches!(m, Msg::Frame(kind::COMPILE, ..)));
                     let req = match parse_request(&body) {
                         Ok(r) => r,
                         Err((id, e)) => {
@@ -492,7 +506,8 @@ impl Host {
                             continue;
                         }
                     };
-                    self.compile(c, &mut job, req, minor, accept, superseded)?;
+                    let queued_ms = ms(received);
+                    self.compile(c, &mut job, req, minor, accept, superseded, queued_ms)?;
                     c.flush()?;
                 }
                 Msg::Package(ev) => {
@@ -501,6 +516,12 @@ impl Host {
                         c.flush()?;
                     }
                 }
+                // On-demand source mapping (spec §11.6), from the pages the
+                // client shows; between compiles, never during one.
+                Msg::Frame(k @ (kind::RESOLVE | kind::LOCATE), body, _) => {
+                    self.answer_mapping(c, job.as_ref(), k, &body)?;
+                    c.flush()?;
+                }
                 // CANCEL: nothing is running between messages; C_HELLO again
                 // and unknown kinds are ignored (spec §7).
                 Msg::Frame(..) => {}
@@ -508,6 +529,7 @@ impl Host {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compile<'f>(
         &'f self,
         c: &mut Conn,
@@ -516,8 +538,10 @@ impl Host {
         minor: u32,
         accept: convert::Accept,
         superseded: bool,
+        queued_ms: f64,
     ) -> io::Result<()> {
         let t0 = Instant::now();
+        stages::reset();
         let id = req.id;
         // The job: a new root or main file starts over.
         let same = job
@@ -539,15 +563,18 @@ impl Host {
                         hashes: vec![],
                         incomplete: vec![],
                         compiled: false,
+                        shown: None,
                     })
                 }
                 Err(e) => return c.json(kind::ERROR, &err_json(Some(id), "request", &e)),
             }
         }
         let j = job.as_mut().unwrap();
+        let ta = Instant::now();
         if let Err(e) = apply_files(j.world.root(), &req) {
             return c.json(kind::ERROR, &err_json(Some(id), "request", &e));
         }
+        let apply_ms = ms(ta);
         let keep = req.incremental && j.compiled;
         if !keep {
             j.tables = Tables::new();
@@ -556,7 +583,10 @@ impl Host {
         }
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => watchdog::temp_dir(std::process::id()),
+            None => match watchdog::temp_dir() {
+                Ok(d) => d,
+                Err(e) => return c.json(kind::ERROR, &err_json(Some(id), "internal", &e)),
+            },
         };
         let mode = if req.export { "export" } else { "resident" };
         c.json(
@@ -593,6 +623,7 @@ impl Host {
         let cold = !j.compiled;
         // The watchdog watches the compile itself, nothing after it.
         let watched = self.watch(id, cold);
+        let tc = Instant::now();
         // The seeded loop for an incremental preview compile (DESIGN.md
         // §15.3); an export always uses the standard compile.
         let seed = if self.seeded && req.incremental && !req.export {
@@ -602,6 +633,7 @@ impl Host {
         };
         let mut compiled = seeded::compile(&j.world, seed);
         let compile_ms = ms(t0);
+        let typst_ms = ms(tc);
         let mut check = Check::default();
         if !compiled.standard && self.verify == Verify::Every {
             // Checked on every compile (`--verify every`): the standard
@@ -639,12 +671,81 @@ impl Host {
                 cause: None,
                 check,
                 lock_notes,
+                pre: [queued_ms, apply_ms, typst_ms],
             },
             output,
             warnings,
             minor,
             accept,
         )
+    }
+
+    /// Answer a RESOLVE or LOCATE (spec §11.6) from the document whose
+    /// pages the client shows: `stale` when the client names another
+    /// compile, a request error when the JSON is not one.
+    fn answer_mapping(
+        &self,
+        c: &mut Conn,
+        job: Option<&Job>,
+        k: u8,
+        body: &[u8],
+    ) -> io::Result<()> {
+        let j = match std::str::from_utf8(body)
+            .ok()
+            .and_then(|s| Json::parse(s).ok())
+        {
+            Some(j) => j,
+            None => {
+                let m = "RESOLVE/LOCATE: not a JSON object";
+                return c.json(kind::ERROR, &err_json(None, "request", m));
+            }
+        };
+        let int = |key: &str| match j.get(key) {
+            Some(Json::Int(v)) => Some(*v),
+            _ => None,
+        };
+        let Some(qid) = int("id") else {
+            return c.json(
+                kind::ERROR,
+                &err_json(None, "request", "RESOLVE/LOCATE without an id"),
+            );
+        };
+        let reply = if k == kind::RESOLVE {
+            kind::RESOLVED
+        } else {
+            kind::LOCATED
+        };
+        let mut out = vec![("id".to_string(), Json::Int(qid))];
+        let shown = job.and_then(|j| j.shown.as_ref().map(|s| (j, s)));
+        match shown {
+            Some((jb, (cid, doc))) if int("compile") == Some(*cid) => {
+                if k == kind::RESOLVE {
+                    let (Some(page), Some(x), Some(y)) = (int("page"), int("x"), int("y")) else {
+                        let m = "RESOLVE needs compile, page, x and y";
+                        return c.json(kind::ERROR, &err_json(Some(qid), "request", m));
+                    };
+                    let page = usize::try_from(page).unwrap_or(usize::MAX);
+                    out.extend(crate::resolve::resolve(&jb.world, doc, page, x, y));
+                } else {
+                    let (Some(file), Some(byte)) = (j.str_field("file"), int("byte")) else {
+                        let m = "LOCATE needs compile, file and byte";
+                        return c.json(kind::ERROR, &err_json(Some(qid), "request", m));
+                    };
+                    let byte = usize::try_from(byte).unwrap_or(usize::MAX);
+                    let pos = crate::resolve::locate(&jb.world, doc, file, byte);
+                    out.push((
+                        "positions".into(),
+                        Json::Arr(
+                            pos.iter()
+                                .map(|p| Json::Arr(p.iter().map(|v| Json::Int(*v)).collect()))
+                                .collect(),
+                        ),
+                    ));
+                }
+            }
+            _ => out.push(("stale".into(), Json::Bool(true))),
+        }
+        c.json(reply, &Json::Obj(out))
     }
 
     /// The idle re-check of the seeded loop (DESIGN.md §15.3): the standard
@@ -670,6 +771,7 @@ impl Host {
         // one: it gets the cold budget; only the compile is watched.
         let watched = self.watch(req.id, true);
         let t0 = Instant::now();
+        stages::reset();
         let std = seeded::standard(&j.world);
         let verify_ms = ms(t0);
         drop(watched);
@@ -722,6 +824,7 @@ impl Host {
                 cause: Some("verify"),
                 check,
                 lock_notes: vec![],
+                pre: [0.0, 0.0, verify_ms],
             },
             output,
             warnings,
@@ -752,11 +855,16 @@ impl Host {
             cause,
             check,
             lock_notes,
+            pre,
         } = f;
+        // The first page's stages (ms): positions, conversion, writing.
+        let mut first_stages: Option<[f64; 6]> = None;
         let id = req.id;
+        // A compile without its directory never got here (it was refused
+        // with an ERROR); a missing one is reported where DONE.pdf goes.
         let output_dir = match &req.output_dir {
-            Some(d) => d.clone(),
-            None => watchdog::temp_dir(std::process::id()),
+            Some(d) => Ok(d.clone()),
+            None => watchdog::temp_dir(),
         };
         let mut positions_ms = 0.0;
         let mut hash_ms = 0.0;
@@ -820,6 +928,7 @@ impl Host {
                 };
                 for (n, &i) in to_send.iter().enumerate() {
                     let tp = Instant::now();
+                    let pos_before = positions_ms;
                     if draws && n == 0 {
                         derive(&to_send[..1], &mut derived);
                     } else if draws && n == 1 {
@@ -833,6 +942,8 @@ impl Host {
                         Some(Err(e)) => convert::Positions::Failed(e),
                         None => convert::Positions::Frame,
                     };
+                    let t_convert = Instant::now();
+                    let span_before = stages::get(Stage::Span);
                     let out = match convert::page(
                         &j.world,
                         doc,
@@ -853,6 +964,9 @@ impl Host {
                             break;
                         }
                     };
+                    let convert_ms = ms(t_convert);
+                    let span_ms = stages::get(Stage::Span) - span_before;
+                    let t_write = Instant::now();
                     for f in &out.fonts {
                         c.send(kind::FONT, f)?;
                     }
@@ -869,6 +983,14 @@ impl Host {
                     if first.is_none() {
                         c.flush()?;
                         first = Some(ms(t0));
+                        first_stages = Some([
+                            positions_ms - pos_before,
+                            stages::get(Stage::Export),
+                            stages::get(Stage::PdfRead),
+                            convert_ms - span_ms,
+                            span_ms,
+                            ms(t_write),
+                        ]);
                     }
                     typeset += 1;
                 }
@@ -876,6 +998,7 @@ impl Host {
                 j.hashes = hashes;
                 j.incomplete = incomplete;
                 j.compiled = true;
+                j.shown = (!failed).then(|| (id, doc.clone()));
                 // Image ids no held page uses are rebound later (spec §5).
                 j.tables.release_images(count);
                 if failed {
@@ -943,15 +1066,26 @@ impl Host {
                 let pdf = match exported {
                     None => None,
                     Some(Ok(bytes)) => {
-                        let path = output_dir.join(format!("{}.pdf", req.jobname));
-                        match std::fs::create_dir_all(&output_dir)
+                        let dir = output_dir.clone().map_err(io::Error::other);
+                        let path = dir
+                            .as_ref()
+                            .map(|d| d.join(format!("{}.pdf", req.jobname)))
+                            .unwrap_or_default();
+                        match dir
+                            .and_then(|d| std::fs::create_dir_all(&d))
                             .and_then(|_| std::fs::write(&path, bytes))
                         {
                             Ok(()) => Some(path),
                             Err(e) => {
                                 ndiag += 1;
                                 errors += 1;
-                                let m = format!("could not write {}: {e}", path.display());
+                                // No path when the output directory itself
+                                // is missing: name the file instead.
+                                let m = if path.as_os_str().is_empty() {
+                                    format!("could not write {}.pdf: {e}", req.jobname)
+                                } else {
+                                    format!("could not write {}: {e}", path.display())
+                                };
                                 c.json(kind::DIAGNOSTIC, &simple_diag(id, "error", &m))?;
                                 None
                             }
@@ -1030,6 +1164,30 @@ impl Host {
         if let Some(v) = check.verify_ms {
             done.push(("verify_ms".into(), Json::Num(v)));
         }
+        // Where the time to the first page went (spec §11.9), in ms: what
+        // the last compile did after its DONE, how long this request waited
+        // behind it, then each stage of this compile up to the first page.
+        let r3 = |v: f64| Json::Num((v * 1e3).round() / 1e3);
+        let (prev_lock, prev_evict) = self.tail.get();
+        let mut st = vec![
+            ("prev_lock_ms".to_string(), r3(prev_lock)),
+            ("prev_evict_ms".into(), r3(prev_evict)),
+            ("queued_ms".into(), r3(pre[0])),
+            ("apply_ms".into(), r3(pre[1])),
+            ("typst_ms".into(), r3(pre[2])),
+            ("hash_ms".into(), r3(hash_ms)),
+        ];
+        if let Some([pos, export, pdf_read, convert, span, write]) = first_stages {
+            st.extend([
+                ("first_positions_ms".to_string(), r3(pos)),
+                ("first_export_ms".into(), r3(export)),
+                ("first_pdf_read_ms".into(), r3(pdf_read)),
+                ("first_convert_ms".into(), r3(convert)),
+                ("first_span_ms".into(), r3(span)),
+                ("first_write_ms".into(), r3(write)),
+            ]);
+        }
+        done.push(("stages".into(), Json::Obj(st)));
         if let Some(cause) = cause {
             done.push(("cause".into(), Json::Str(cause.into())));
         }
@@ -1041,10 +1199,14 @@ impl Host {
         // After DONE, never before the edited page: record the document's
         // fonts in the project's lock and check them (hashing font files);
         // what it finds goes with the next compile.
+        let tl = Instant::now();
         j.world.after_compile(output.as_ref().ok());
+        let lock_ms = ms(tl);
         // Mandatory eviction once the pages are out (DESIGN.md §15.2):
         // without it memory grows ~70 MB per keystroke at 300 pages.
+        let te = Instant::now();
         comemo::evict(self.evict);
+        self.tail.set((lock_ms, ms(te)));
         Ok(())
     }
 }
@@ -1072,6 +1234,7 @@ fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
             "color-spaces",
             "line-state",
             "image-data",
+            flashtex_display_list::RESOLVE_CAPABILITY,
             convert::PROGRAM_REFS,
         ]);
     }
