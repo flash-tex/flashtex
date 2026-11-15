@@ -168,6 +168,27 @@ class Outline(str):
     path = None
 
 
+def _drop_empty_contours(ops):
+    """The recorded operations without empty contours: a `moveTo` that the
+    next operation ends (`closePath`, `endPath`, another `moveTo`, or the
+    end), which draws nothing. fontTools ends one differently in the two
+    programs a TFM font is embedded as: a Type 1 charstring's last
+    `rmoveto` before `endchar` gives `moveTo, endPath`, the same glyph
+    converted to Type 2 (xdvipdfmx's Type1C) `moveTo, closePath` (#2481,
+    rsfs10's `S`)."""
+    out = []
+    i = 0
+    while i < len(ops):
+        op = ops[i][0]
+        nxt = ops[i + 1][0] if i + 1 < len(ops) else None
+        if op == "moveTo" and nxt in (None, "moveTo", "closePath", "endPath"):
+            i += 2 if nxt in ("closePath", "endPath") else 1
+            continue
+        out.append(ops[i])
+        i += 1
+    return out
+
+
 def _outline_digest(draw):
     from fontTools.pens.recordingPen import RecordingPen
     pen = RecordingPen()
@@ -177,7 +198,7 @@ def _outline_digest(draw):
         return "error:" + type(e).__name__
     parts = []
     path = []
-    for op, args in pen.value:
+    for op, args in _drop_empty_contours(pen.value):
         parts.append(op + ":" + ",".join("%.2f,%.2f" % tuple(p) if isinstance(p, tuple)
                                          else str(p) for p in args))
         path.append((op, tuple(float(v) for p in args if isinstance(p, tuple) for v in p)))
