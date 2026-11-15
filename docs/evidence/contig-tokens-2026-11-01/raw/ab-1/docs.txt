@@ -1,0 +1,15 @@
+/home/kubar/.cache/flashtex-agents/contig/ib/docs/infdesc-x2:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07497v1:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07840v2:main-AIHP1679.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.06980v1:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07014v3:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07124v3:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07301v2:colm2024_conference.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07044v1:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.08157v1:ecai-main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.09225v1:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07198v2:main.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07372v2:Manuscript.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07084v3:xxx-exactGHZ-W-ult.tex
+/home/kubar/.cache/flashtex-agents/contig/corpus/src/arxiv/2501.07623v3:PAPER.tex
+/home/kubar/.cache/flashtex-agents/contig/ib/docs/infdesc-x2-ts2:ts2.tex
