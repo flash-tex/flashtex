@@ -691,6 +691,16 @@ fn main() {
         c.set_viewport(page).expect("send VIEWPORT");
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
+    // (measure branch only) `--glance-viewport PAGE:MS`: the client shows
+    // another page for MS ms first, then types at the watched page without
+    // a VIEWPORT back (REVIEW-E's MAJOR on #2248)
+    if let Some((gp, ms)) = arg("--glance-viewport").and_then(|v| {
+        let (p, m) = v.split_once(':')?;
+        Some((p.parse::<u32>().ok()?, m.parse::<u64>().ok()?))
+    }) {
+        c.set_viewport(gp).expect("send VIEWPORT");
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
     for k in 0..keys {
         if overlap {
             id += 1;
