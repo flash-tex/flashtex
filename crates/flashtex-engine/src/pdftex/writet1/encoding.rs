@@ -183,7 +183,7 @@ impl EncLines<'_> {
                 let len = line.len();
                 let c = append_char(c, &mut line);
                 if line.len() > len && len + 1 > ENC_BUF_SIZE {
-                    return Err(Fail(check_buf_msg("writet1.c", 223)));
+                    return Err(Fail(check_buf_msg("writet1.c", 223).into_bytes()));
                 }
                 if c == b'\n' {
                     break;
@@ -191,7 +191,7 @@ impl EncLines<'_> {
             }
             // append_eol's check_buf: room for its LF and NUL
             if line.len() + 2 > ENC_BUF_SIZE {
-                return Err(Fail(check_buf_msg("writet1.c", 225)));
+                return Err(Fail(check_buf_msg("writet1.c", 225).into_bytes()));
             }
             append_eol(&mut line);
             if line.len() >= 2 && line[0] != b'%' {
