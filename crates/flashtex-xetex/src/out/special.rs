@@ -541,7 +541,7 @@ impl<M: Metrics> Builder<'_, M> {
                 }
                 self.doc.tracking = Some(Tracking {
                     dict: d,
-                    depth: self.stack.len(),
+                    depth: self.depth(),
                     rect: None,
                     name,
                     broken: false,
