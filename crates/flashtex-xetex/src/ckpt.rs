@@ -172,7 +172,8 @@ pub struct S0 {
     /// The font directories' state (`resident::Fonts::dirs`) when S₀ was
     /// taken, if the run looked a font up by name before it: a font added,
     /// removed or renamed changes what a name finds. With the state of
-    /// `font_files` (`resident::Fonts::dirs_of`).
+    /// `font_files` (`resident::Fonts::dirs_of`). A 128-bit hash of that
+    /// state stands for it, here and in the persisted S0 file.
     pub font_dirs: Option<[u64; 2]>,
     /// The font files lookups by name had been answered with when S0 was
     /// taken (`resident::Fonts::watch`): one rewritten in place changes

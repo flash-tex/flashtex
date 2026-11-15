@@ -90,6 +90,10 @@ pub trait Fonts: Send {
     fn watched(&self) -> Vec<PathBuf> {
         vec![]
     }
+    /// Whether [`Fonts::watch`] was given `path`.
+    fn is_watched(&self, _path: &Path) -> bool {
+        false
+    }
     /// [`Fonts::dirs`] with only `files` of the watched files: the state
     /// S0's lookups by name depend on (the files watched when it was
     /// taken, [`S0::font_files`]), which a file found later in the body
@@ -194,6 +198,10 @@ impl Resident {
     /// the file watched: else the next run would find the state changed
     /// and not restore S0 or a page for nothing.
     pub(crate) fn font_found(&mut self, path: &Path) {
+        // (a file already watched changes nothing: no check)
+        if self.fonts.is_watched(path) {
+            return;
+        }
         let before = self.fonts.dirs();
         self.fonts.watch(path);
         if self.catalog_dirs == Some(before) {
