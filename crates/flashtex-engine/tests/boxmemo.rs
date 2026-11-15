@@ -250,7 +250,9 @@ fn holes_changed_or_read_past_their_key_never_replay() {
     // (lane AUDIT-MATH) a replay splices in the register's box of the
     // moment as it is, so the call may neither change the hole (`\\raise`:
     // `box_end` shifts it) nor read its contents: `\\copy` of a box the call
-    // made around it, or of the hole itself taken back with `\\lastbox`
+    // made around it, or of the hole itself taken back with `\\lastbox`;
+    // `\\copy` or `\\unhbox` of a register the call set to the hole itself
+    // (lane DRAFTS-BM2)
     let s = check(
         "hole-changed",
         &[
@@ -261,6 +263,8 @@ fn holes_changed_or_read_past_their_key_never_replay() {
              \\def\\measure{\\raise2pt\\box9\\relax}\\one\\a\\one\\a\\one\\a\n\
              \\def\\measure{\\begingroup\\setbox2\\hbox{\\box9}\\copy2\\box2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
              \\def\\measure{\\begingroup\\box9\\setbox3\\lastbox\\copy3\\box3\\endgroup}\\one\\a\\one\\a\\one\\b\n\
+             \\def\\measure{\\begingroup\\setbox2\\box9\\copy2\\box2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
+             \\def\\measure{\\begingroup\\setbox2\\box9\\unhbox2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
              \\end\n",
         ]
         .concat(),
@@ -287,7 +291,8 @@ fn holes_changed_or_read_past_their_key_never_replay() {
 fn holes_in_a_formula_never_replay() {
     // (lane AUDIT-MATH) a box moved into a formula is a noad's `sub_box`:
     // `make_scripts` widens and shifts it (tex.web §756), and `clean_box`
-    // frees the kern of a box that is a character and a kern (§721)
+    // frees the kern of a box that is a character and a kern (§721); also
+    // when the box comes from a register the call set to the hole
     let Some((files, fonts)) = math_fonts() else {
         common::no_texlive();
         return;
@@ -300,7 +305,8 @@ fn holes_in_a_formula_never_replay() {
             HOLE_PRELUDE,
             "\\def\\a{\\setbox9\\hbox{\\r f\\kern1pt}}\\def\\b{\\setbox9\\hbox{\\kern1pt\\r f}}\n\
              \\def\\measure{$x^{\\box9}$}\\one\\a\\one\\a\\one\\a\n\
-             \\def\\measure{$\\mathop{\\box9}\\limits$}\\one\\b\\one\\b\\one\\a\\end\n",
+             \\def\\measure{$\\mathop{\\box9}\\limits$}\\one\\b\\one\\b\\one\\a\n\
+             \\def\\measure{\\setbox2\\box9 $x^{\\box2}$}\\one\\a\\one\\a\\one\\a\\end\n",
         ]
         .concat(),
         &files,

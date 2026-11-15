@@ -505,7 +505,8 @@ How a draw call is recorded and replayed:
     they read its contents.
   - So does anything else that reads the hole's contents or changes it, since a replay splices the
     register's box in as it is (lane AUDIT-MATH):
-    - `\copy` or `\unhcopy` of a box the call made that holds the hole;
+    - `\copy` or `\unhcopy` of a register the call wrote whose box is or holds the hole, and
+      `\unhbox` of the hole itself (`\setbox2\box9\unhbox2`);
     - `\lastbox` taking the hole back off a list;
     - a hole the normal path left with other dimensions or another shift than the key's
       (`\raise`, `\lower`, `\moveleft` and `\moveright` set its shift in `box_end`, tex.web
