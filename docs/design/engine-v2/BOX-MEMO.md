@@ -36,7 +36,7 @@ A guard holds on main only once its PR merges. "No PR" means none was open then.
 | **Error count and history.** An error was seen only through what it leaves behind. | [#2234](https://github.com/flash-tex/flashtex/issues/2234), [#2294](https://github.com/flash-tex/flashtex/issues/2294) | An error answered at the terminal before the log opens, with `history` already `error_message_issued`, changes no output counter and no `history`. `end_graf` (§1096) sets `error_count:=0`, so the `(error_count, history)` end check holds after an error. | `error` (§82) abandons a D9 recording with `Why::Error` (`flashtex_intr_abort(5)`, [#2239](https://github.com/flash-tex/flashtex/pull/2239)). #2294: no PR | `tests/intrinsics.rs` `an_error_answered_at_the_terminal_is_not_pure` |
 | **Key truncation.** A value too long to keep collapsed to a marker or was cut at a bound. | [#2194](https://github.com/flash-tex/flashtex/issues/2194), [#2258](https://github.com/flash-tex/flashtex/issues/2258) | Lists over `MAX_LIST` (65,536 tokens) and K2 shapes over 65,536 words were all kept as `-2`, so any two compared equal (K1, KR, K2). The XeTeX walks stopped at 1,000,000 tokens. | Over-long values are a `Long` miss or abandon the recording; never a key ([#2195](https://github.com/flash-tex/flashtex/pull/2195)). XeTeX walks go to the list's end, bounded by `mem.len()` only to stop a cycle ([#2278](https://github.com/flash-tex/flashtex/pull/2278)) | `tests/boxmemo.rs` `long_token_lists_are_never_keys`, `long_shapes_are_never_keys`; xetex `tests/intrinsics_verify.rs` `a_value_longer_than_a_million_tokens_is_compared_to_its_end` |
 | **Identity by number or address.** A number or address names a thing only within one timeline or while it is held. | [#2219](https://github.com/flash-tex/flashtex/issues/2219), [#2227](https://github.com/flash-tex/flashtex/issues/2227) | A restore removes fonts made after its checkpoint, and the re-run may make another font at the same number; `bm_font_version` moved only when a loaded font changed. A sparse register's node freed by `delete_sa_ref` is reused for another register at the same address. | Every font creation calls `flashtex_bm_font_new(f)`, which changes the fonts' version ([#2272](https://github.com/flash-tex/flashtex/pull/2272)). A sparse-register watch record that stops holding is `WANT_NEVER` ([#2237](https://github.com/flash-tex/flashtex/pull/2237)) | `tests/incremental.rs` `a_call_measuring_a_font_loaded_at_another_fonts_number`; `tests/intrinsics.rs` `a_sparse_register_let_go_of_is_not_taken_back` |
-| **Stack-limit skips.** A replay does not run the normal path's overflow tests. | [#2265](https://github.com/flash-tex/flashtex/issues/2265) | Near a capacity limit (grouping levels, input stack) pdfTeX stops with `TeX capacity exceeded`; the replay went on. | The entry keeps how far the call takes the group level, `save_ptr`, `input_ptr`, `param_ptr` and `nest_ptr`; an offer replays only where every overflow test would hold ([#2281](https://github.com/flash-tex/flashtex/pull/2281)) | `tests/boxmemo.rs` `a_replay_keeps_the_normal_paths_capacity_errors` |
+| **Capacity-limit skips.** A replay does not run the normal path's overflow tests. | [#2265](https://github.com/flash-tex/flashtex/issues/2265), [#2308](https://github.com/flash-tex/flashtex/issues/2308) | Near a capacity limit (grouping levels, input stack; the buffer, the pool, the string table; D9's stacks too) pdfTeX stops with `TeX capacity exceeded`; the replay went on. | The entry keeps how far the call takes the group level, `save_ptr`, `input_ptr`, `param_ptr` and `nest_ptr`; an offer replays only where every overflow test would hold ([#2281](https://github.com/flash-tex/flashtex/pull/2281)). A recording puts markers in the dead memory above `first`, `pool_ptr` and `str_ptr`; the first one left bounds what the call wrote, and an offer needs that much room (`src/capacity.rs`); D9 keeps the stacks' bounds too ([#2318](https://github.com/flash-tex/flashtex/pull/2318)) | `tests/boxmemo.rs` `a_replay_keeps_the_normal_paths_capacity_errors`, `a_replay_keeps_the_buffers_and_the_pools_overflows`; `tests/intrinsics.rs` `a_replay_keeps_the_normal_paths_capacity_errors` |
 | **Span key gaps** (§17, default off). The span key held less than the replay writes back. | [#2185](https://github.com/flash-tex/flashtex/issues/2185), [#2201](https://github.com/flash-tex/flashtex/issues/2201), [#2202](https://github.com/flash-tex/flashtex/issues/2202) | `force_eof` (`\endinput`) was not in the key. A one-line span wrote the recorded line, including text before `\begin`, back to the buffer. A recording that reached its file's end under `\everyeof` did not record the end or set `eof_seen` on replay. | `force_eof` keyed ([#1997](https://github.com/flash-tex/flashtex/pull/1997) at `d9fc04dd6`). `SpanEnd::buf` kept only when the span read a line ([#2206](https://github.com/flash-tex/flashtex/pull/2206)). A changed `eof_seen` abandons the span, `SpanEof` ([#2207](https://github.com/flash-tex/flashtex/pull/2207)) | `tests/boxmemo.rs` `spans_after_an_endinput_on_their_line_are_not_replayed`, `spans_on_one_line_keep_the_text_before_them`, `spans_that_reach_the_files_end_are_not_replayed` |
 | **Verifier false negative** (a wrong replay passes). | [#2203](https://github.com/flash-tex/flashtex/issues/2203), [#2225](https://github.com/flash-tex/flashtex/issues/2225), [#2258](https://github.com/flash-tex/flashtex/issues/2258) | XeTeX's `flashtex_intr_switch` ran the check before looking at the call's own `rec.bad`. When both paths left an `eqtb` list at the same node (both `get_avail` from the same checkpointed free list), only its reference count was compared. | A check whose real path is not replayable is a `not_replayable` difference ([#2205](https://github.com/flash-tex/flashtex/pull/2205)). A list at the same node is compared by its tokens and count; the test-only fault `FLASHTEX_INTRINSICS_FAULT=token` proves the verifier catches a wrong replay ([#2235](https://github.com/flash-tex/flashtex/pull/2235)). #2258: see key truncation | xetex `tests/intrinsics_verify.rs` `a_check_whose_real_path_is_not_replayable_is_no_pass`; `tests/intrinsics.rs` `verify_compares_a_list_at_the_same_node_by_its_tokens` |
 | **Verifier false positive** (a correct replay fails). | [#2210](https://github.com/flash-tex/flashtex/issues/2210), [#2264](https://github.com/flash-tex/flashtex/issues/2264) | A body whose last tokens only expand is used up inside `big_switch`'s `get_x_token`, which ran the next command before the check's state N was taken (§15 is the pdfTeX side). `post_line_break`, `box_end` and displays leave `link(adjust_head)` dangling; `iso.rs` walked it. | XeTeX compares at the body's end ([#2212](https://github.com/flash-tex/flashtex/pull/2212)). The adjust heads' links are dead while both `adjust_tail` and `pre_adjust_tail` are null, as `temp_head`'s are (`scratch_heads_dead`, [#2289](https://github.com/flash-tex/flashtex/pull/2289)) | xetex `tests/intrinsics_verify.rs` `a_body_ending_in_an_expansion_is_compared_at_its_end`; `tests/boxmemo.rs` `material_left_at_the_adjust_heads_is_dead` |
@@ -188,6 +188,21 @@ reads state only through:
 
 What it builds in `mem` is reachable only from those. Anything else it could read is refused in §4.1.
 
+**Room in the buffer, the pool and the string table** (lane AUDIT-OVERFLOW, #2308). A replay does
+not run the call, so it puts no `\csname` name in the buffer above `first`, and nothing in the pool
+or the string table for a moment (`\the`, `\meaning`, `\pdfstrcmp`). The key holds no position in
+them. A call recorded with room to spare would therefore replay where its normal path stops with
+`TeX capacity exceeded`.
+
+The call writes each of these arrays from its pointer up, with no gap. At its start, a recording
+puts a marker (a value TeX never stores there) 0, 1, 2, 4, ... places above each pointer, in dead
+memory. The first marker still there at the end bounds how far up the call went (`src/capacity.rs`).
+An offer replays only where each overflow test would pass with that bound on top of the pointers as
+they are now, with 64 characters to spare in the pool (a `str_room` may ask for more than is then
+written) and three strings in the string table (`end_name` asks for three whatever it makes). A
+recording that wrote an array's last place, or came within that slack of the pool's or the string
+table's top, is abandoned. D9 does the same, and also keeps #2265's bounds on the stacks.
+
 ## 4. Recording
 
 A recording is the normal expansion, observed. It starts at the hook when no valid entry's key holds,
@@ -268,21 +283,6 @@ A recording ends at `big_switch` once every input level from the body's on is us
 - `align_state`, `nest_ptr`, the mode, `tail`, `scanner_status` and `after_token`;
 - the string, hash and font counters;
 - the output counters and the page-builder state of §4.1.
-
-**Room in the buffer, the pool and the string table** (lane AUDIT-OVERFLOW, #2308). A replay does
-not run the call, so it puts no `\csname` name in the buffer above `first`, and nothing in the pool
-or the string table for a moment (`\the`, `\meaning`, `\pdfstrcmp`). The key holds no position in
-them. A call recorded with room to spare would therefore replay where its normal path stops with
-`TeX capacity exceeded`.
-
-The call writes each of these arrays from its pointer up, with no gap. At its start, a recording
-puts a marker (a value TeX never stores there) 0, 1, 2, 4, ... places above each pointer, in dead
-memory. The first marker still there at the end bounds how far up the call went (`src/capacity.rs`).
-An offer replays only where each overflow test would pass with that bound on top of the pointers as
-they are now, with 64 characters to spare in the pool (a `str_room` may ask for more than is then
-written) and three strings in the string table (`end_name` asks for three whatever it makes). A
-recording that wrote an array's last place, or came within that slack of the pool's or the string
-table's top, is abandoned. D9 does the same, and also keeps #2265's bounds on the stacks.
 
 ### 4.3 The effects: an operation log, as D9 keeps one
 
