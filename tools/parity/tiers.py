@@ -296,10 +296,10 @@ def qpdf_readable(pdf, beside=None):
     an AppArmor profile (/etc/apparmor.d/qpdf, enforced): under $HOME only `[^.]**.pdf`
     (.json, .qdf, .in, .out), and `/tmp/**.pdf`. The oracle's PDFs are in the cache, by
     default ~/.cache/flashtex-parity, so on that image every P-T2 read "oracle PDF: qpdf exit
-    2: open ...: Permission denied" (p5-scoreboard 43723688890, the day ubuntu-latest became
-    26.04: P-T2 0 of 4090, with P-T1 and L0-L3 at 100 %). A hard link under a path the
-    profile allows is opened (measured on that image, run 43746070730); a symbolic link is
-    not, the profile sees where it points."""
+    2: open ...: Permission denied" (the hosted board since ubuntu-latest became 26.04 on
+    2026-11-13; p5-scoreboard 43723688890: P-T2 0 of 4110 documents, with P-T1 at 100 % and
+    L0-L3 at 99.9 to 100 %). A hard link under a path the profile allows is opened (measured
+    on that image, run 43746070730); a symbolic link is not, the profile sees where it points."""
     made = None
     if beside is not None:
         link = beside + ".in.pdf"

@@ -692,7 +692,8 @@ AppArmor profile (`/etc/apparmor.d/qpdf`): under `$HOME` it may open only
 directory, and `/tmp/**.pdf`. The oracle cache is `~/.cache/flashtex-parity` by
 default, and on the hosted board every P-T2 read "oracle PDF: qpdf exit 2:
 open ...: Permission denied" from the day `ubuntu-latest` became 26.04
-(p5-scoreboard 43723688890: P-T2 0 %, P-T1 and L0-L3 100 %). `tiers.py` now
+(2026-11-13; p5-scoreboard 43723688890: P-T2 0 of 4110, P-T1 100 %, L0-L3
+99.9 to 100 %). `tiers.py` now
 hands qpdf a hard link to its input, named `*.pdf`, beside the file it writes
 (`qpdf_readable`), so the cache may be anywhere. The work directory is where
 qpdf writes: on such a host it must not be under a hidden directory of `$HOME`
