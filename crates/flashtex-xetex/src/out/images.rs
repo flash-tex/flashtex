@@ -231,6 +231,11 @@ impl Images {
 /// modification time put back (`cp -p`, an archive unpacked over it) has a
 /// new status-change time, which no user call can set (#2444, the #2296
 /// ruling); one renamed over it (an editor's atomic save) has a new inode.
+///
+/// Not exact: two writes of the same size within one tick of the
+/// status-change time's clock (coarse on Linux), with a load between them,
+/// give the same key. The read journal treats such a racy signature as
+/// proving nothing (`StatSig::racy`); this key has no such rule.
 fn image_key(path: &str, page: i32, pagebox: i32) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(b"display-list-v3 image\0");
