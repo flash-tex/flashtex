@@ -143,6 +143,9 @@ final class PdfTeXXObjectParityTests: XCTestCase {
         try groupDiffs(media: "-20 -10 80 80", crop: "0 0 75 60", rotate: 90, bbox: [0, 0, 75, 60], matrix: "0 -1 1 0 0 75")
     }
 
+    /// Without the layer: 0, 4 and 4 px apart at 1x, 2x and 4x; with the
+    /// box clipped before the layer, the cropped page: 56, 107 and 204 px
+    /// (run 43750699156, U1 experiment).
     func testAnIncludedPageWithATransparencyGroup() throws {
         for d in try Self.groupedPageDiffs() {
             XCTAssertEqual(d.pixels, 0, "page 1 at \(d.scale)x: \(d.pixels) px differ (max Δ \(d.maxDelta))")
@@ -163,7 +166,14 @@ final class PdfTeXXObjectParityTests: XCTestCase {
 
     /// pv-images p5: a 1-bit grey PNG, which pdfTeX copies as a
     /// `/BitsPerComponent 1` `/DeviceGray` image.
-    static func oneBitGreyDiffs() throws -> [(scale: Double, pixels: Int, maxDelta: Int)] {
+    static func oneBitGreyImage() throws -> DL3RenderImage {
+        let url = probe("gray1.png")
+        let info: DL3JSON = .object(["id": .int(1), "key": .string("gray1"), "type": .string("png"), "file": .string(url.path),
+                                     "width": .int(16), "height": .int(16)])
+        return try DL3RenderImage.load(info).get()
+    }
+
+    static func oneBitGreyDiffs(_ placements: [[CGAffineTransform]]) throws -> [(scale: Double, pixels: Int, maxDelta: Int)] {
         let url = probe("gray1.png")
         let src = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
         let decoded = try XCTUnwrap(CGImageSourceCreateImageAtIndex(src, 0, nil))
@@ -176,17 +186,38 @@ final class PdfTeXXObjectParityTests: XCTestCase {
         var bits = [UInt8](repeating: 0, count: row * h)
         for y in 0 ..< h { for x in 0 ..< w where grey[y * w + x] > 127 { bits[y * row + x / 8] |= UInt8(0x80 >> (x % 8)) } }
         let image = "/Type /XObject /Subtype /Image /Width \(w) /Height \(h) /ColorSpace /DeviceGray /BitsPerComponent 1"
-        let reference = pdf(content: ops(imagePlacements), xobject: (image, Data(bits)))
-        let info: DL3JSON = .object(["id": .int(1), "key": .string("gray1"), "type": .string("png"), "file": .string(url.path),
-                                     "width": .int(Int64(w)), "height": .int(Int64(h))])
-        let mine = try DL3RenderImage.load(info).get()
-        return diffs(prepared(mine, imagePlacements), reference)
+        let reference = pdf(content: ops(placements), xobject: (image, Data(bits)))
+        let mine = try oneBitGreyImage()
+        if case .raster(let c) = mine.payload { XCTAssertEqual(c.bitsPerComponent, 1, "drawn at the bit depth pdfTeX copies") }
+        return diffs(prepared(mine, placements), reference)
     }
 
+    /// The 4cm and 1.1cm copies (7.1 and 1.95 bp per sample): drawn as the
+    /// PDF draws them, edges antialiased (with hard edges: up to 1,703 px
+    /// apart, Δ 252; run 43750699156).
     func testAOneBitGreyImage() throws {
-        for d in try Self.oneBitGreyDiffs() {
+        for d in try Self.oneBitGreyDiffs(Array(Self.imagePlacements.prefix(2))) {
             XCTAssertEqual(d.pixels, 0, "gray1.png at \(d.scale)x: \(d.pixels) px differ (max Δ \(d.maxDelta))")
         }
+    }
+
+    /// The 0.35cm copy (0.62 bp per sample) is drawn minified at 1x, where
+    /// Core Graphics' PDF path differs (117 px): the page falls back to the
+    /// PDF; the larger copies do not make it.
+    func testAOneBitImageDrawnSmallFallsBack() throws {
+        let image = try Self.oneBitGreyImage()
+        let m = Self.imagePlacements.map { let t = Self.ctm($0); return DL3Matrix(a: t.a, b: t.b, c: t.c, d: t.d, e: t.tx, f: t.ty) }
+        XCTAssertFalse(DL3Renderer.oneBitDrawnTooSmall(image, m[0]))
+        XCTAssertFalse(DL3Renderer.oneBitDrawnTooSmall(image, m[1]))
+        XCTAssertTrue(DL3Renderer.oneBitDrawnTooSmall(image, m[2]))
+        var bindings = DL3Bindings()
+        bindings.images[1] = .success(image)
+        var page = DL3Page(kind: .page, index: 0)
+        page.matrices = [m[1]]
+        page.items = [.image(id: 1, matrix: 1)]
+        XCTAssertFalse(bindings.prepare(page).needsPDFFallback)
+        page.matrices = [m[2]]
+        XCTAssertTrue(bindings.prepare(page).needsPDFFallback)
     }
 
     /// pv-images p11: a 16-bit RGBA PNG's SMask holds only the alpha's high

@@ -106,7 +106,7 @@ public final class DL3RenderFont: @unchecked Sendable {
         // 5 and 10 px apart at 2x and 4x, Δ1). So the program gets the matrix,
         // as in the PDF, and no font transform is applied on top.
         var inProgram = false // the font matrix is the program's own /FontMatrix
-        if !DL3Renderer.u1Variant.contains("slant-off"), font.format == "type1", let fm = font.fontMatrix, fm.count == 6,
+        if font.format == "type1", let fm = font.fontMatrix, fm.count == 6,
            let patched = Type1Encoding.withFontMatrix(program, fm) {
             program = patched
             inProgram = true
@@ -441,7 +441,7 @@ func pngSamplesAsPDFTeXWrites(_ img: CGImage, _ header: (depth: Int, colorType: 
           let space = img.colorSpace, let base = CFDataGetBytePtr(data) else { return img }
     let w = img.width, h = img.height, rowBytes = img.bytesPerRow, count = CFDataGetLength(data)
     if header.colorType == 0, [1, 2, 4].contains(header.depth), img.bitsPerComponent == 8, img.bitsPerPixel == 8,
-       space.model == .monochrome, !DL3Renderer.u1Variant.contains("png-depth-off"), count >= rowBytes * (h - 1) + w {
+       space.model == .monochrome, count >= rowBytes * (h - 1) + w {
         let d = header.depth, top = (1 << d) - 1, packed = (w * d + 7) / 8
         var out = [UInt8](repeating: 0, count: packed * h)
         for y in 0 ..< h {
@@ -460,7 +460,7 @@ func pngSamplesAsPDFTeXWrites(_ img: CGImage, _ header: (depth: Int, colorType: 
         return packedImage
     }
     if header.depth == 16, header.colorType == 4 || header.colorType == 6, img.bitsPerComponent == 16,
-       img.alphaInfo == .last || img.alphaInfo == .first, !DL3Renderer.u1Variant.contains("png-alpha16-off") {
+       img.alphaInfo == .last || img.alphaInfo == .first {
         let n = img.bitsPerPixel / 16
         guard n >= 2, count >= rowBytes * (h - 1) + w * n * 2 else { return img }
         let little = img.bitmapInfo.intersection(.byteOrderMask) == .byteOrder16Little
@@ -701,7 +701,10 @@ public struct DL3Bindings: Sendable {
                 case .failure(let e)?: problems.append(e.message)
                 case nil: problems.append("font id \(f) was never sent")
                 }
-            case .image(let id, _):
+            case .image(let id, let m):
+                if case .success(let ri)? = images[id], DL3Renderer.oneBitDrawnTooSmall(ri, page.matrix(m)) {
+                    problems.append("image id \(id): a 1-bit image drawn under 1.24 bp per sample")
+                }
                 guard seenImages.insert(id).inserted else { continue }
                 switch images[id] {
                 case .success(let ri)?: usedImages[id] = ri
@@ -788,9 +791,23 @@ public enum DL3Renderer {
         return comps.withUnsafeBufferPointer { CGColor(colorSpace: space, components: $0.baseAddress!)! }
     }
 
-    /// TEMPORARY (lane PREVIEW-PARITY, U1): variants the CI experiment
-    /// test switches on; empty in the product. Removed before merge.
-    nonisolated(unsafe) static var u1Variant: Set<String> = []
+    /// Whether `image` is a 1-bit raster that `m` (the unit square onto the
+    /// page) draws smaller than measured exact at 1x: under 1.24 bp per
+    /// sample along either side. Core Graphics' PDF path draws such an
+    /// image minified otherwise than drawing its samples here: pv-images
+    /// p5's 0.35cm copy of a 16-sample image (0.62 bp per sample) was
+    /// 117 px apart at 1x and 0 px at 2x (1.24 px per sample); the 1.1cm
+    /// and 4cm copies (1.95 and 7.1 bp per sample) are 0 px at 1x, 2x and
+    /// 4x (run 43750699156). Such a page falls back to the PDF (DESIGN
+    /// §6.2), at every scale, as the check does not know the scale. In a
+    /// FORM the form's own placement is not known here; its matrix alone
+    /// is checked.
+    static func oneBitDrawnTooSmall(_ image: DL3RenderImage, _ m: DL3Matrix) -> Bool {
+        guard case .raster(let c) = image.payload, c.bitsPerComponent == 1, c.width > 0, c.height > 0 else { return false }
+        let across = (m.a * m.a + m.b * m.b).squareRoot() / Double(c.width)
+        let down = (m.c * m.c + m.d * m.d).squareRoot() / Double(c.height)
+        return min(across, down) < 1.24
+    }
 
     static func affine(_ m: DL3Matrix) -> CGAffineTransform { CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: m.e, ty: m.f) }
 
@@ -960,10 +977,6 @@ public enum DL3Renderer {
                 switch img.payload {
                 case .raster(let cgImage):
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
-                    if Self.u1Variant.contains("iq-none") { ctx.interpolationQuality = .none }
-                    if Self.u1Variant.contains("iq-low") { ctx.interpolationQuality = .low }
-                    if Self.u1Variant.contains("iq-medium") { ctx.interpolationQuality = .medium }
-                    if Self.u1Variant.contains("iq-high") { ctx.interpolationQuality = .high }
                     // Core Graphics draws a PDF's image XObject whose device
                     // transform is axis-aligned (0/90/180/270°) without edge
                     // antialiasing: an edge pixel the image only partly covers
@@ -975,20 +988,10 @@ public enum DL3Renderer {
                     // for 1-bit grey PNG, which the loader keeps at 1 bit):
                     // Core Graphics antialiases its edges also when upright
                     // (pv-images p5 and p16: up to 1,703 px apart, Δ 252,
-                    // with hard edges; run 43750699156).
-                    let oneBit = cgImage.bitsPerComponent == 1 && !Self.u1Variant.contains("bpc1-noaa")
-                    if Self.axisAligned(ctx.ctm) && !oneBit { ctx.setShouldAntialias(false) }
-                    if oneBit && Self.u1Variant.contains("bpc1-mask"), let provider = cgImage.dataProvider,
-                       let mask = CGImage(maskWidth: cgImage.width, height: cgImage.height, bitsPerComponent: 1, bitsPerPixel: 1,
-                                          bytesPerRow: cgImage.bytesPerRow, provider: provider, decode: nil, shouldInterpolate: false) {
-                        // EXPERIMENT: white, then black through the samples as a stencil (0 paints).
-                        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
-                        ctx.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
-                        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
-                        ctx.draw(mask, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-                    } else {
-                        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-                    }
+                    // with hard edges; run 43750699156). One drawn below a
+                    // sample per point is not drawn here (`prepare`).
+                    if Self.axisAligned(ctx.ctm) && cgImage.bitsPerComponent != 1 { ctx.setShouldAntialias(false) }
+                    ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
                 case .pdf(let pdfPage, let box, let matrix):
                     // pdfTeX includes a PDF page as a Form XObject: its space
                     // is the page's own coordinates (bp), its /BBox the
@@ -998,12 +1001,7 @@ public enum DL3Renderer {
                     // the box, then the page's content stream as it is
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
-                    if Self.u1Variant.contains("group-clip-first") {
-                        ctx.clip(to: box)
-                        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-                        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
-                        ctx.endTransparencyLayer()
-                    } else if !img.group || Self.u1Variant.contains("group-off") {
+                    if !img.group {
                         ctx.clip(to: box)
                         DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                     } else {
