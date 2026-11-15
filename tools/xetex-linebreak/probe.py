@@ -11,7 +11,8 @@ spaces, so the whole word reaches ICU's line breaker as one text; the
 offsets are where \\showbox shows \\XeTeXlinebreakpenalty between its pieces.
 The breaks depend on ICU, not on the font (a missing glyph changes nothing).
 The words: one per locale and script, then 240 random ones (seed 20261012),
-then Thai that is not made of whole dictionary words (thai_words).
+then Thai that is not made of whole dictionary words (thai_words), then
+Lao, Khmer and Myanmar likewise (sea_words).
 """
 import argparse
 import os
@@ -106,6 +107,43 @@ def thai_words():
     return out
 
 
+# Lao, Khmer and Myanmar likewise: pieces of real text cut at random places
+# or with a character dropped, doubled or inserted, and random strings of
+# the script's LineBreak=SA letters and marks (seed 20261116), for ICU's Lao,
+# Khmer and Burmese engines (dictbe.cpp).
+SEA_TEXT = {
+    "lo": "ພາສາລາວເປັນພາສາທາງການຂອງສາທາລະນະລັດປະຊາທິປະໄຕປະຊາຊົນລາວແລະເປັນພາສາແມ່ຂອງຄົນລາວ",
+    "km": "ភាសាខ្មែរគឺជាភាសាផ្លូវការនៃព្រះរាជាណាចក្រកម្ពុជាហើយជាភាសាកំណើតរបស់ប្រជាជនខ្មែរ",
+    "my": "မြန်မာဘာသာစကားသည်ပြည်ထောင်စုသမ္မတမြန်မာနိုင်ငံတော်၏ရုံးသုံးဘာသာစကားဖြစ်သည်",
+}
+SEA_POOL = {
+    "lo": [chr(c) for c in list(range(0x0E81, 0x0EAF)) + list(range(0x0EB0, 0x0EBD))
+           + list(range(0x0EC0, 0x0EC5)) + [0x0EC6] + list(range(0x0EC8, 0x0ECF))
+           + [0x0EDC, 0x0EDD]],
+    "km": [chr(c) for c in list(range(0x1780, 0x17D4)) + [0x17D7, 0x17DC, 0x17DD]],
+    "my": [chr(c) for c in list(range(0x1000, 0x1040)) + list(range(0x1050, 0x1090))],
+}
+
+
+def sea_words():
+    rng = random.Random(20261116)
+    out = []
+    for loc in ("lo", "km", "my"):
+        text, pool = SEA_TEXT[loc], SEA_POOL[loc]
+        for k in range(40):
+            if k % 2:
+                w = "".join(rng.choice(pool) for _ in range(rng.randint(4, 14)))
+            else:
+                i = rng.randrange(len(text) - 4)
+                w = text[i:i + rng.randint(4, 24)]
+                j = rng.randrange(len(w))
+                op = rng.randrange(4)
+                w = (w if op == 3 else w[:j] + w[j + 1:] if op == 0 else w[:j] + w[j] + w[j:]
+                     if op == 1 else w[:j] + rng.choice(pool) + w[j:])
+            out.append((loc, w))
+    return out
+
+
 def tex_escape(s):
     return "".join("\\char\"%X " % ord(c) if c in "{}\\#%$&^_~<>[]" else c for c in s)
 
@@ -141,7 +179,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--xetex", default="xetex")
     a = ap.parse_args()
-    cases = FIXED + random_words() + thai_words()
+    cases = FIXED + random_words() + thai_words() + sea_words()
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, "p.tex"), "w", encoding="utf-8").write(tex_source(cases))
         subprocess.run([a.xetex, "-ini", "-etex", "-no-pdf", "-interaction=nonstopmode", "p.tex"],
@@ -156,7 +194,8 @@ def main():
     print("# as one native word in a paragraph; the offsets (UTF-16) at which its")
     print("# \\showbox puts \\XeTeXlinebreakpenalty, and the end. Written by")
     print("# tools/xetex-linebreak/probe.py: one word per locale and script, 240")
-    print("# random ones, then Thai that is not whole dictionary words.")
+    print("# random ones, then Thai, Lao, Khmer and Myanmar that is not whole")
+    print("# dictionary words.")
     print("# LOCALE<TAB>TEXT (\\uXXXX escapes)<TAB>OFFSETS")
     for i, (loc, s) in enumerate(cases):
         p = pieces.get(i, [])

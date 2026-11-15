@@ -1,31 +1,35 @@
-//! ICU's Thai dictionary break engine, for `\XeTeXlinebreaklocale`: a port
-//! of ICU 78.2's `ThaiBreakEngine::divideUpDictionaryRange` and its
-//! `PossibleWord` helper (dictbe.cpp), of `BytesDictionaryMatcher::matches`
-//! and `transform` (dictionarydata.cpp), and of the parts of `BytesTrie`
-//! that `matches` uses (bytestrie.cpp, unicode/bytestrie.h). The sources
-//! of record are vendored unmodified in third_party/icu/icu-src; the
-//! dictionary is ICU's own `brkitr/thaidict.dict` from TeX Live 2026's
-//! `icudt78l.dat` (third_party/icu/brkitr), the data xetex links. ICU is
-//! under the Unicode licence (third_party/icu/LICENSE), which permits this
-//! port; this file keeps ICU's structure and names so that it can be
-//! checked against them.
+//! ICU's dictionary break engines for Thai, Lao, Myanmar and Khmer, for
+//! `\XeTeXlinebreaklocale`: a port of ICU 78.2's `divideUpDictionaryRange`
+//! of `ThaiBreakEngine`, `LaoBreakEngine`, `BurmeseBreakEngine` and
+//! `KhmerBreakEngine` and their `PossibleWord` helper (dictbe.cpp), of
+//! `BytesDictionaryMatcher::matches` and `transform` (dictionarydata.cpp),
+//! and of the parts of `BytesTrie` that `matches` uses (bytestrie.cpp,
+//! unicode/bytestrie.h). The sources of record are vendored unmodified in
+//! third_party/icu/icu-src; the dictionaries are ICU's own
+//! `brkitr/*dict.dict` from TeX Live 2026's `icudt78l.dat`
+//! (third_party/icu/brkitr), the data xetex links. ICU is under the Unicode
+//! licence (third_party/icu/LICENSE), which permits this port; this file
+//! keeps ICU's structure and names so that it can be checked against them.
 //!
-//! The engine is not a plain dictionary segmentation. It looks up to three
+//! An engine is not a plain dictionary segmentation. It looks up to three
 //! words ahead to choose among the dictionary words that start at a
 //! position; text that is no dictionary word is joined to a short word
 //! before it, or skipped up to the next place where a word may begin and a
-//! dictionary word does; it never stops before a combining mark; and
-//! PAIYANNOI (U+0E2F) and MAIYAMOK (U+0E46) join the word before them.
+//! dictionary word does; it never stops before a combining mark; and, in
+//! Thai, PAIYANNOI (U+0E2F) and MAIYAMOK (U+0E46) join the word before them.
 //!
 //! `text` is the whole UTF-16 text ICU's `UText` holds, indexed in code
 //! units as `utext_getNativeIndex` counts them: the dictionary match may
 //! read up to the end of the range, the suffix rules a character past it.
 
-use super::{current32, next32, SENTINEL};
+use super::{current32, next32, SaScript, SENTINEL};
 
-/// `brkitr/thaidict.dict`: a `Dict` data file (udata header, then the
-/// `DictionaryData` indexes and a `BytesTrie`).
+/// `brkitr/thaidict.dict` and the others: `Dict` data files (udata header,
+/// then the `DictionaryData` indexes and a `BytesTrie`).
 static THAI_DICT: &[u8] = include_bytes!("../../../../third_party/icu/brkitr/thaidict.dict");
+static LAO_DICT: &[u8] = include_bytes!("../../../../third_party/icu/brkitr/laodict.dict");
+static BURMESE_DICT: &[u8] = include_bytes!("../../../../third_party/icu/brkitr/burmesedict.dict");
+static KHMER_DICT: &[u8] = include_bytes!("../../../../third_party/icu/brkitr/khmerdict.dict");
 
 // --- UText over UTF-16 -----------------------------------------------------
 
@@ -410,10 +414,20 @@ impl Dictionary {
         }
     }
 
-    /// `ThaiBreakEngine`'s dictionary, `brkitr/thaidict.dict`.
-    pub(super) fn thai() -> &'static Dictionary {
-        static D: std::sync::OnceLock<Dictionary> = std::sync::OnceLock::new();
-        D.get_or_init(|| Dictionary::open(THAI_DICT))
+    /// The engine's dictionary: `brkitr/thaidict.dict`, `laodict.dict`,
+    /// `burmesedict.dict` or `khmerdict.dict` (`loadDictionaryMatcherFor`
+    /// of the script).
+    pub(super) fn of(engine: SaScript) -> &'static Dictionary {
+        use std::sync::OnceLock;
+        static D: [OnceLock<Dictionary>; 4] = [const { OnceLock::new() }; 4];
+        let (k, data) = match engine {
+            SaScript::Thai => (0, THAI_DICT),
+            SaScript::Lao => (1, LAO_DICT),
+            SaScript::Myanmar => (2, BURMESE_DICT),
+            SaScript::Khmer => (3, KHMER_DICT),
+            SaScript::Other => unreachable!("no dictionary engine"),
+        };
+        D[k].get_or_init(|| Dictionary::open(data))
     }
 
     fn transform(&self, c: i32) -> i32 {
@@ -582,74 +596,112 @@ impl PossibleWord {
     }
 }
 
-// --- ThaiBreakEngine ---------------------------------------------------------
+// --- The Thai, Lao, Burmese and Khmer engines -------------------------------
+
+// Each engine has its own copy of these in dictbe.cpp (THAI_LOOKAHEAD,
+// LAO_LOOKAHEAD, BURMESE_..., KHMER_...); all four have the same values.
 
 /// How many words in a row are "good enough"?
-const THAI_LOOKAHEAD: u32 = 3;
+const LOOKAHEAD: u32 = 3;
 /// Will not combine a non-word with a preceding dictionary word longer than this.
-const THAI_ROOT_COMBINE_THRESHOLD: i32 = 3;
+const ROOT_COMBINE_THRESHOLD: i32 = 3;
 /// Will not combine a non-word that shares at least this much prefix with a
 /// dictionary word, with a preceding word.
-const THAI_PREFIX_COMBINE_THRESHOLD: i32 = 3;
-/// Elision character.
-const THAI_PAIYANNOI: i32 = 0x0E2F;
-/// Repeat character.
-const THAI_MAIYAMOK: i32 = 0x0E46;
+const PREFIX_COMBINE_THRESHOLD: i32 = 3;
 /// Minimum word size.
-const THAI_MIN_WORD: usize = 2;
+const MIN_WORD: usize = 2;
 /// Minimum number of characters for two words.
-const THAI_MIN_WORD_SPAN: usize = THAI_MIN_WORD * 2;
+const MIN_WORD_SPAN: usize = MIN_WORD * 2;
+/// Elision character (Thai only).
+const THAI_PAIYANNOI: i32 = 0x0E2F;
+/// Repeat character (Thai only).
+const THAI_MAIYAMOK: i32 = 0x0E46;
 
-/// `[[:Thai:]&[:LineBreak=SA:]]`, the engine's set (Unicode 17, as
-/// linebreak_sa.rs lists it).
-fn thai_word_set(c: i32) -> bool {
-    matches!(c, 0x0E01..=0x0E3A | 0x0E40..=0x0E4E)
+/// The engine's set, `[[:Thai:]&[:LineBreak=SA:]]` or its Lao, Myanmar or
+/// Khmer counterpart (linebreak_sa.rs, Unicode 17).
+fn word_set(engine: SaScript, c: i32) -> bool {
+    super::sa_script(c) == Some(engine)
 }
 
-/// `fMarkSet`: `[[:Thai:]&[:LineBreak=SA:]&[:M:]]` and U+0020.
-fn thai_mark_set(c: i32) -> bool {
-    matches!(c, 0x0E31 | 0x0E34..=0x0E3A | 0x0E47..=0x0E4E | 0x0020)
+/// `fMarkSet`: `[[:Thai:]&[:LineBreak=SA:]&[:M:]]` (or its counterpart)
+/// and U+0020.
+fn mark_set(engine: SaScript, c: i32) -> bool {
+    if c == 0x0020 {
+        return true;
+    }
+    let Ok(u) = u32::try_from(c) else {
+        return false;
+    };
+    let k = super::sa::SA_MARKS.partition_point(|&(_, last)| last < u);
+    super::sa::SA_MARKS
+        .get(k)
+        .is_some_and(|&(first, _)| first <= u)
+        && word_set(engine, c)
 }
 
-/// `fEndWordSet`: the engine's set without MAI HAN-AKAT and SARA E through
-/// SARA AI MAIMALAI.
-fn thai_end_word_set(c: i32) -> bool {
-    thai_word_set(c) && c != 0x0E31 && !(0x0E40..=0x0E44).contains(&c)
+/// `fEndWordSet`, as each engine's constructor makes it.
+fn end_word_set(engine: SaScript, c: i32) -> bool {
+    word_set(engine, c)
+        && match engine {
+            // MAI HAN-AKAT; SARA E through SARA AI MAIMALAI
+            SaScript::Thai => c != 0x0E31 && !(0x0E40..=0x0E44).contains(&c),
+            // prefix vowels
+            SaScript::Lao => !(0x0EC0..=0x0EC4).contains(&c),
+            // KHMER SIGN COENG that combines some following characters
+            SaScript::Khmer => c != 0x17D2,
+            _ => true,
+        }
 }
 
-/// `fBeginWordSet`: KO KAI through HO NOKHUK, SARA E through SARA AI MAIMALAI.
-fn thai_begin_word_set(c: i32) -> bool {
-    matches!(c, 0x0E01..=0x0E2E | 0x0E40..=0x0E44)
+/// `fBeginWordSet`, as each engine's constructor makes it.
+fn begin_word_set(engine: SaScript, c: i32) -> bool {
+    match engine {
+        // KO KAI through HO NOKHUK; SARA E through SARA AI MAIMALAI
+        SaScript::Thai => matches!(c, 0x0E01..=0x0E2E | 0x0E40..=0x0E44),
+        // basic consonants (with holes), digraph consonants, prefix vowels
+        SaScript::Lao => matches!(c, 0x0E81..=0x0EAE | 0x0EDC..=0x0EDD | 0x0EC0..=0x0EC4),
+        // basic consonants and independent vowels
+        SaScript::Myanmar => matches!(c, 0x1000..=0x102A),
+        SaScript::Khmer => matches!(c, 0x1780..=0x17B3),
+        SaScript::Other => false,
+    }
 }
 
-/// `fSuffixSet`: PAIYANNOI and MAIYAMOK.
+/// `fSuffixSet` (Thai only): PAIYANNOI and MAIYAMOK.
 fn thai_suffix_set(c: i32) -> bool {
     c == THAI_PAIYANNOI || c == THAI_MAIYAMOK
 }
 
-/// `ThaiBreakEngine::divideUpDictionaryRange(text, rangeStart, rangeEnd,
-/// foundBreaks)`: pushes the word ends it finds in `[rangeStart, rangeEnd)`
-/// to `found_breaks` and returns how many words it found.
-pub(super) fn thai_divide_up_dictionary_range(
+/// `divideUpDictionaryRange(text, rangeStart, rangeEnd, foundBreaks)` of
+/// `ThaiBreakEngine`, `LaoBreakEngine`, `BurmeseBreakEngine` or
+/// `KhmerBreakEngine`: pushes the word ends it finds in
+/// `[rangeStart, rangeEnd)` to `found_breaks` and returns how many words it
+/// found. The four differ only in their dictionary and sets, in how the
+/// minimum span is counted (code points for Thai, code units for the
+/// others) and in Thai's suffix rules.
+pub(super) fn divide_up_dictionary_range(
+    engine: SaScript,
     text: &[u16],
     range_start: usize,
     range_end: usize,
     found_breaks: &mut Vec<usize>,
 ) -> u32 {
-    let dict = Dictionary::thai();
+    let dict = Dictionary::of(engine);
     let mut text = UText { s: text, pos: 0 };
-    text.set_index(range_start);
-    text.move_index32(THAI_MIN_WORD_SPAN);
-    if text.index() >= range_end {
+    if engine == SaScript::Thai {
+        text.set_index(range_start);
+        text.move_index32(MIN_WORD_SPAN);
+        if text.index() >= range_end {
+            return 0; // Not enough characters for two words
+        }
+    } else if range_end - range_start < MIN_WORD_SPAN {
         return 0; // Not enough characters for two words
     }
     text.set_index(range_start);
 
     let mut words_found: u32 = 0;
-    let mut words = [PossibleWord::new(); THAI_LOOKAHEAD as usize];
-    let w = |words_found: u32, k: u32| ((words_found + k) % THAI_LOOKAHEAD) as usize;
-
-    text.set_index(range_start);
+    let mut words = [PossibleWord::new(); LOOKAHEAD as usize];
+    let w = |words_found: u32, k: u32| ((words_found + k) % LOOKAHEAD) as usize;
 
     loop {
         let current = text.index();
@@ -717,13 +769,13 @@ pub(super) fn thai_divide_up_dictionary_range(
 
         // `uc` (0 in ICU) is set before every read.
         let mut uc: i32;
-        if text.index() < range_end && cp_word_length < THAI_ROOT_COMBINE_THRESHOLD {
+        if text.index() < range_end && cp_word_length < ROOT_COMBINE_THRESHOLD {
             // if it is a dictionary word, do nothing. If it isn't, then if there is
             // no preceding word, or the non-word shares less than the minimum threshold
             // of characters with a dictionary word, then scan to resynchronize
             if words[w(words_found, 0)].candidates(&mut text, dict, range_end) <= 0
                 && (cu_word_length == 0
-                    || words[w(words_found, 0)].longest_prefix() < THAI_PREFIX_COMBINE_THRESHOLD)
+                    || words[w(words_found, 0)].longest_prefix() < PREFIX_COMBINE_THRESHOLD)
             {
                 // Look for a plausible word boundary
                 let mut remaining = range_end as i64 - (current + cu_word_length) as i64;
@@ -738,7 +790,7 @@ pub(super) fn thai_divide_up_dictionary_range(
                         break;
                     }
                     uc = text.current32();
-                    if thai_end_word_set(pc) && thai_begin_word_set(uc) {
+                    if end_word_set(engine, pc) && begin_word_set(engine, uc) {
                         // Maybe. See if it's in the dictionary.
                         let num_candidates =
                             words[w(words_found, 1)].candidates(&mut text, dict, range_end);
@@ -765,7 +817,7 @@ pub(super) fn thai_divide_up_dictionary_range(
         // Never stop before a combining mark.
         loop {
             let curr_pos = text.index();
-            if !(curr_pos < range_end && thai_mark_set(text.current32())) {
+            if !(curr_pos < range_end && mark_set(engine, text.current32())) {
                 break;
             }
             text.next32();
@@ -776,7 +828,7 @@ pub(super) fn thai_divide_up_dictionary_range(
         // We do this in code rather than using a rule so that the heuristic
         // resynch continues to function. For example, one of the suffix characters
         // could be a typo in the middle of a word.
-        if text.index() < range_end && cu_word_length > 0 {
+        if engine == SaScript::Thai && text.index() < range_end && cu_word_length > 0 {
             if words[w(words_found, 0)].candidates(&mut text, dict, range_end) <= 0 && {
                 uc = text.current32();
                 thai_suffix_set(uc)
@@ -840,8 +892,14 @@ mod tests {
         let s = u(s);
         let mut t = UText { s: &s, pos: 0 };
         let (mut cu, mut cp, mut prefix) = ([0; 20], [0; 20], 0);
-        let n =
-            Dictionary::thai().matches(&mut t, s.len() as i32, 20, &mut cu, &mut cp, &mut prefix);
+        let n = Dictionary::of(SaScript::Thai).matches(
+            &mut t,
+            s.len() as i32,
+            20,
+            &mut cu,
+            &mut cp,
+            &mut prefix,
+        );
         (cp[..n as usize].to_vec(), prefix)
     }
 
@@ -859,10 +917,16 @@ mod tests {
     }
 
     #[test]
-    fn thai_sets_follow_icu() {
-        assert!(thai_mark_set(0x0E31) && thai_mark_set(0x20) && !thai_mark_set(0x0E32));
-        assert!(!thai_mark_set(0x0E33) && thai_mark_set(0x0E4E) && !thai_mark_set(0x0E4F));
-        assert!(!thai_end_word_set(0x0E40) && thai_end_word_set(0x0E45));
-        assert!(thai_begin_word_set(0x0E2E) && !thai_begin_word_set(0x0E2F));
+    fn sets_follow_icu() {
+        use SaScript::*;
+        let m = |e, c| mark_set(e, c);
+        assert!(m(Thai, 0x0E31) && m(Thai, 0x20) && !m(Thai, 0x0E32) && !m(Thai, 0x0E33));
+        assert!(m(Thai, 0x0E4E) && !m(Thai, 0x0E4F) && !m(Lao, 0x0E31) && m(Lao, 0x0EB1));
+        assert!(m(Khmer, 0x17D2) && m(Myanmar, 0x102B) && m(Lao, 0x20) && !m(Khmer, 0x1780));
+        assert!(!end_word_set(Thai, 0x0E40) && end_word_set(Thai, 0x0E45));
+        assert!(!end_word_set(Lao, 0x0EC0) && !end_word_set(Khmer, 0x17D2));
+        assert!(end_word_set(Myanmar, 0x103A) && !end_word_set(Myanmar, 0x0E01));
+        assert!(begin_word_set(Thai, 0x0E2E) && !begin_word_set(Thai, 0x0E2F));
+        assert!(begin_word_set(Lao, 0x0EDD) && !begin_word_set(Khmer, 0x17B4));
     }
 }

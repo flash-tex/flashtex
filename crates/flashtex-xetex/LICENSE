@@ -73,10 +73,11 @@ crate.
 src/native/ubidi/ ports the part of ICU's bidirectional algorithm that
 XeTeX uses (ubidi.cpp, ubidiln.cpp, ubidi_props.cpp and the generated
 ubidi_props_data.h of ICU 78.2, the ICU TeX Live 2026 builds xetex with;
-third_party/icu). src/native/dictbe.rs ports ICU 78.2's Thai dictionary
-break engine (dictbe.cpp, dictionarydata.cpp, bytestrie.cpp) and embeds
-ICU's Thai dictionary data (brkitr/thaidict.dict). ICU's code and data are
-under the following licences, whose notices are
+third_party/icu). src/native/dictbe.rs ports ICU 78.2's Thai, Lao, Burmese
+and Khmer dictionary break engines (dictbe.cpp, dictionarydata.cpp,
+bytestrie.cpp) and embeds ICU's dictionary data for them
+(brkitr/thaidict.dict, laodict.dict, burmesedict.dict, khmerdict.dict).
+ICU's code and data are under the following licences, whose notices are
 reproduced here as they require (third_party/icu/LICENSE):
 
 ----------------------------------------------------------------------------
