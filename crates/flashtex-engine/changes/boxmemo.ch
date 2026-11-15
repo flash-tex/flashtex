@@ -48,6 +48,13 @@
   flush_list(p);
 @z
 
+@x pdftex.web l.5044 - a recording that leaves its own semantic level is abandoned there
+begin free_avail(head); decr(nest_ptr); cur_list:=nest[nest_ptr];
+@y
+begin free_avail(head); decr(nest_ptr); cur_list:=nest[nest_ptr];
+if bm_rec_on then flashtex_bm_pop_nest;
+@z
+
 @x pdftex.web l.6585 (after changes/readset.ch) - a name looked up is a read, found or not
 found: if rs_on then flashtex_id_read(j,l,p);
 @y
@@ -507,6 +514,7 @@ function flashtex_bm_enabled:boolean; external;
 procedure flashtex_bm_loaded; external;
 procedure flashtex_bm_new_cs(@!p:pointer); external;
 procedure flashtex_bm_freed(@!p:pointer); external;
+procedure flashtex_bm_pop_nest; external;
 procedure flashtex_bm_call(@!n:integer;@!s:integer;@!w:pointer); external;
 procedure flashtex_bm_group(@!c:group_code); external;
 procedure flashtex_bm_unsave; external;

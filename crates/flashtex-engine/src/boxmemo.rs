@@ -3500,6 +3500,23 @@ impl Globals {
         }
     }
 
+    /// `pop_nest`, during a recording: the call leaves its own semantic
+    /// level. Abandoned there, not at the end: `init_math` on an empty
+    /// paragraph pops it and `push_math` pushes the display at the same
+    /// level, and `after_math` appends the display to the list below and
+    /// `resume_par` pushes the paragraph again (tex.web §1145, §1199,
+    /// §1200), so the end saw the level, the mode and the tail as at the
+    /// start and committed a call without its display (#2495).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_pop_nest(&mut self) {
+        let n = self.nest_ptr;
+        let below = self.bm_with_rec(|r| n < r.start.nest_ptr).unwrap_or(false);
+        if below {
+            self.bm_abort("OuterList");
+        }
+    }
+
     /// `main_control` at `reswitch`, and `prefixed_command`, during a
     /// recording.
     #[cold]

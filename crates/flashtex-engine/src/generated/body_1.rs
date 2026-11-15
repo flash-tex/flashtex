@@ -3719,6 +3719,9 @@ impl Globals {
         }
         self.nest_ptr = (self.nest_ptr).wrapping_sub(1i32);
         self.cur_list = self.nest[crate::ix::U((self.nest_ptr) as usize)];
+        if self.bm_rec_on {
+            self.flashtex_bm_pop_nest();
+        }
     }
 
     /// Here is a procedure that displays what \TeX\ is working on, at all levels.
