@@ -374,6 +374,11 @@ impl Globals {
         let Some(located) = located else {
             return 0;
         };
+        // (a change to the catalog's file is a change to what this lookup
+        // finds, #2296; a `[file]` is a read of its own)
+        if let (false, Some(r)) = (located.by_file, self.host.resident.as_mut()) {
+            r.font_found(std::path::Path::new(&located.path));
+        }
         self.host.req_engine = located.req_engine;
         // A bundle face (`fontmgr::catalog::bundle_faces`) not fetched yet.
         if std::fs::metadata(&located.path).map_or(true, |m| m.len() == 0) {

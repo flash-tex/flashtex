@@ -524,20 +524,29 @@ pub fn has_math_table(path: &Path, index: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// A file's size and modification time (nanoseconds since the epoch), the
-/// key a cached face's names are valid for.
-fn file_stamp(path: &Path) -> Option<(u64, u128)> {
+/// A file's size, modification time and status-change time (nanoseconds
+/// since the epoch), the key a cached face's names are valid for. The
+/// status-change time is set by every write and cannot be set back: a file
+/// rewritten in place with another font of the same size, its old
+/// modification time put back (`cp -p`), is read again (#2296).
+type Stamp = (u64, u128, i128);
+
+fn file_stamp(path: &Path) -> Option<Stamp> {
     let m = std::fs::metadata(path).ok()?;
     let t = m
         .modified()
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?;
-    Some((m.len(), t.as_nanos()))
+    Some((
+        m.len(),
+        t.as_nanos(),
+        flashtex_engine::os::file_stat(&m).ctime_ns,
+    ))
 }
 
 /// The names read from each face, kept between runs in a JSON file: by
-/// (path, face index), with the file's size and modification time. A face
+/// (path, face index), with the file's [`Stamp`]. A face
 /// whose file changed is read again. Only entries used by the last scan are
 /// kept, so the file does not grow with fonts that were removed.
 #[derive(Default)]
@@ -549,13 +558,13 @@ pub struct NameCache {
 
 #[derive(Clone)]
 struct Entry {
-    stamp: (u64, u128),
+    stamp: Stamp,
     pattern: PatternNames,
     names: NameCollection,
 }
 
 /// The format of the cache file; another version is ignored.
-const NAME_CACHE_VERSION: &str = "flashtex-xetex font names 1";
+const NAME_CACHE_VERSION: &str = "flashtex-xetex font names 2";
 
 impl NameCache {
     /// `$FLASHTEX_CACHE_DIR`, else the user's cache directory
@@ -607,6 +616,7 @@ impl NameCache {
                 let index = e.get("index")?.as_u64()? as u32;
                 let size = e.get("size")?.as_u64()?;
                 let mtime: u128 = e.get("mtime")?.as_str()?.parse().ok()?;
+                let ctime: i128 = e.get("ctime")?.as_str()?.parse().ok()?;
                 let pattern = PatternNames {
                     full_names: strs(e.get("pfull"))?,
                     families: strs(e.get("pfam"))?,
@@ -621,7 +631,7 @@ impl NameCache {
                 Some((
                     (path, index),
                     Entry {
-                        stamp: (size, mtime),
+                        stamp: (size, mtime, ctime),
                         pattern,
                         names,
                     },
@@ -638,7 +648,7 @@ impl NameCache {
         &mut self,
         path: &Path,
         index: u32,
-        stamp: (u64, u128),
+        stamp: Stamp,
     ) -> Option<(PatternNames, NameCollection)> {
         let key = (path.to_path_buf(), index);
         let e = self.old.get(&key).filter(|e| e.stamp == stamp)?.clone();
@@ -647,14 +657,7 @@ impl NameCache {
         Some(out)
     }
 
-    fn put(
-        &mut self,
-        path: &Path,
-        index: u32,
-        stamp: (u64, u128),
-        p: &PatternNames,
-        n: &NameCollection,
-    ) {
+    fn put(&mut self, path: &Path, index: u32, stamp: Stamp, p: &PatternNames, n: &NameCollection) {
         self.changed = true;
         self.new.push((
             (path.to_path_buf(), index),
@@ -684,6 +687,7 @@ impl NameCache {
                 m.insert("index".into(), Value::Num(f64::from(*i)));
                 m.insert("size".into(), Value::Num(e.stamp.0 as f64));
                 m.insert("mtime".into(), Value::Str(e.stamp.1.to_string()));
+                m.insert("ctime".into(), Value::Str(e.stamp.2.to_string()));
                 m.insert("pfull".into(), arr(&e.pattern.full_names));
                 m.insert("pfam".into(), arr(&e.pattern.families));
                 m.insert("pstyle".into(), arr(&e.pattern.styles));
@@ -955,7 +959,8 @@ mod cache_tests {
         let key = (fonts[0].clone(), 0);
         let mut c3 = NameCache::load(&cache_path);
         let st = c3.old[&key].stamp;
-        assert!(c3.get(&fonts[0], 0, (st.0 + 1, st.1)).is_none());
+        assert!(c3.get(&fonts[0], 0, (st.0 + 1, st.1, st.2)).is_none());
+        assert!(c3.get(&fonts[0], 0, (st.0, st.1, st.2 + 1)).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

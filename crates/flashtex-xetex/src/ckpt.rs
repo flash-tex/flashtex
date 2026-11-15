@@ -158,6 +158,8 @@ pub struct Taken {
     pub job_name: String,
     /// The font directories' state, when the run looked a font up by name.
     pub font_dirs: Option<[u64; 2]>,
+    /// The font files whose state `font_dirs` holds (`S0::font_files`).
+    pub font_files: Vec<String>,
     /// How many output opens the run had made (`Resident::opens`).
     pub opens: usize,
 }
@@ -169,8 +171,14 @@ pub struct S0 {
     pub key: Key,
     /// The font directories' state (`resident::Fonts::dirs`) when S₀ was
     /// taken, if the run looked a font up by name before it: a font added,
-    /// removed or renamed changes what a name finds.
+    /// removed or renamed changes what a name finds. With the state of
+    /// `font_files` (`resident::Fonts::dirs_of`). A 128-bit hash of that
+    /// state stands for it, here and in the persisted S0 file.
     pub font_dirs: Option<[u64; 2]>,
+    /// The font files lookups by name had been answered with when S0 was
+    /// taken (`resident::Fonts::watch`): one rewritten in place changes
+    /// what a name finds (#2296), the one a lookup no longer finds too.
+    pub font_files: Vec<String>,
     /// The read journal's lengths at S₀ (files, lookups, outputs).
     pub reads: (usize, usize, usize),
     /// How many output opens the run had made by then.
@@ -179,6 +187,16 @@ pub struct S0 {
     /// run that makes it cannot go on from an S₀ whose nodes have no
     /// positions, nor the other way.
     pub dl_on: bool,
+}
+
+impl S0 {
+    /// `font_files` as paths.
+    pub fn font_paths(&self) -> Vec<std::path::PathBuf> {
+        self.font_files
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect()
+    }
 }
 
 struct SnapFiles {
@@ -518,9 +536,12 @@ impl Globals {
         let named = self.host.font_mgr.is_some();
         // (the directories the catalog was made from: a change since is a
         // change to what its lookups found)
-        let font_dirs = match (named, self.host.resident.as_mut()) {
-            (true, Some(r)) => Some(r.catalog_dirs.unwrap_or_else(|| r.font_dirs())),
-            _ => None,
+        let (font_dirs, font_files) = match (named, self.host.resident.as_mut()) {
+            (true, Some(r)) => {
+                let (d, f) = r.s0_fonts();
+                (Some(d), f)
+            }
+            _ => (None, vec![]),
         };
         let opens = self.host.resident.as_ref().map_or(0, |r| r.opens.len());
         let id = self.checkpoint();
@@ -531,6 +552,7 @@ impl Globals {
             written,
             job_name,
             font_dirs,
+            font_files,
             opens,
         })
     }

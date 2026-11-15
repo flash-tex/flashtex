@@ -2816,3 +2816,202 @@ fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
     assert_eq!(auxes[0], auxes[1], "in process and a run of its own");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A font file rewritten in place with a font of another family (#2296):
+/// the directory's listing and identity are unchanged, so the resident
+/// host's catalog and S0's key, both kept while the font directories are,
+/// answered as before the change, where a compile in a process of its own
+/// reads the file's names again (the oracle: `FLASHTEX_UNICODE_INPROCESS=0`,
+/// a host and a name cache of its own each compile). The file is written
+/// back with the size and modification time it had (`cp -p`), so only its
+/// status-change time says it changed. `reopen`: the document is closed and
+/// reopened from its persisted S0 before every compile after the first.
+fn a_font_file_rewritten_in_place(reopen: bool) {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "flashtex-host-inplace-{}-{}",
+        if reopen { "reopen" } else { "open" },
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=3 {
+        body.push_str(&format!("\\section{{Part {i}}}\n"));
+        for _ in 0..6 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\setmainfont{{TeX Gyre Prob3x}}\n\\begin{{document}}\n{body}See this.\n\\end{{document}}\n"
+    );
+    let cursor = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/mac/Fonts/texgyrecursor-regular.otf"),
+    )
+    .unwrap();
+    let x = renamed_font(&cursor, "Cursor", "Prob3x");
+    let y = renamed_font(&cursor, "Cursor", "Prob3y");
+    // (the main file's text and the font file's bytes before each compile;
+    // `true`: its modification time is put back)
+    let edited = doc.replace("See this", "See that");
+    let steps: [(&str, Option<(&[u8], bool)>); 5] = [
+        (doc.as_str(), Some((x.as_slice(), false))),
+        (doc.as_str(), Some((y.as_slice(), false))),
+        (edited.as_str(), None),
+        (edited.as_str(), Some((x.as_slice(), true))),
+        (doc.as_str(), None),
+    ];
+    // (status, fonts, pages, start) of each compile
+    type Out = (Option<String>, Vec<String>, Vec<Vec<u8>>, String);
+    let run = |tag: &str, resident: bool| -> Vec<Out> {
+        let sub = dir.join(tag);
+        let fonts = sub.join("fonts");
+        std::fs::create_dir_all(&fonts).unwrap();
+        let (proj, out) = project(&sub, &doc);
+        let font = fonts.join("prob3x.otf");
+        let s0 = sub.join("s0").to_string_lossy().into_owned();
+        let fonts_s = fonts.to_string_lossy().into_owned();
+        let mut host: Option<(Host, Client)> = None;
+        let mut outs = vec![];
+        for (i, (text, write)) in steps.iter().enumerate() {
+            if let Some((bytes, keep_time)) = write {
+                let t = if *keep_time {
+                    // (past the file system's timestamp granularity: Linux
+                    // takes the status-change time from a coarse clock)
+                    std::thread::sleep(Duration::from_millis(50));
+                    std::fs::metadata(&font).unwrap().modified().unwrap()
+                } else {
+                    std::time::SystemTime::UNIX_EPOCH
+                        + Duration::from_secs(1_700_000_000 + 60 * i as u64)
+                };
+                std::fs::write(&font, bytes).unwrap();
+                std::fs::File::options()
+                    .write(true)
+                    .open(&font)
+                    .unwrap()
+                    .set_modified(t)
+                    .unwrap();
+            }
+            // a new host: the oracle's every compile, the resident's at a
+            // reopen (after the old one ended, its S0 written)
+            if !resident || reopen {
+                if let Some((mut h, mut c)) = host.take() {
+                    c.bye().unwrap();
+                    let t = Instant::now();
+                    while h.child.try_wait().unwrap().is_none() {
+                        assert!(
+                            t.elapsed() < Duration::from_secs(120),
+                            "the host did not end"
+                        );
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+            }
+            if host.is_none() {
+                let cache = sub.join(format!("cache{}", if resident { 0 } else { i }));
+                let cache = cache.to_string_lossy().into_owned();
+                let mut e = vec![
+                    ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+                    ("FLASHTEX_FONT_DIRS", fonts_s.as_str()),
+                    ("FLASHTEX_CACHE_DIR", cache.as_str()),
+                ];
+                if resident {
+                    e.push(("FLASHTEX_S0_CACHE", s0.as_str()));
+                } else {
+                    e.push(("FLASHTEX_UNICODE_INPROCESS", "0"));
+                    e.push(("FLASHTEX_UNICODE_SPARES", "0"));
+                }
+                let h = start_with(&sub, &e, &sub.join(format!("host{i}.err")));
+                // (the socket file exists from `bind`, a moment before `listen`)
+                let t = Instant::now();
+                let c = loop {
+                    match Client::connect(&h.sock) {
+                        Ok(c) => break c,
+                        Err(e) if t.elapsed() < Duration::from_secs(10) => {
+                            let _ = e;
+                            std::thread::sleep(Duration::from_millis(20))
+                        }
+                        Err(e) => panic!("connect: {e}"),
+                    }
+                };
+                host = Some((h, c));
+            }
+            let (_, c) = host.as_mut().unwrap();
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.to_string())];
+            c.compile(&r).unwrap();
+            let (ev, done) = events(c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let pages = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Page(p) => Some(p.encode()),
+                    _ => None,
+                })
+                .collect();
+            let fonts = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Font(f) => Some(f.info.str_field("ps_name").unwrap_or("").to_string()),
+                    _ => None,
+                })
+                .collect();
+            outs.push((
+                done.str_field("status").map(String::from),
+                fonts,
+                pages,
+                starts,
+            ));
+        }
+        if let Some((_, mut c)) = host.take() {
+            c.bye().unwrap();
+        }
+        outs
+    };
+    let own = run("own", false);
+    let got = run("resident", true);
+    // the oracle: found, not found once the file is another family's,
+    // found again once it is written back
+    let ok = |o: &Out| o.0.as_deref() == Some("ok");
+    assert!(
+        ok(&own[0]) && !ok(&own[1]) && !ok(&own[2]) && ok(&own[3]) && ok(&own[4]),
+        "the oracle: {:?}",
+        own.iter().map(|o| &o.0).collect::<Vec<_>>()
+    );
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        assert_eq!(a.0, b.0, "compile {}: the status ({})", i + 1, a.3);
+        assert_eq!(a.1, b.1, "compile {}: the fonts ({})", i + 1, a.3);
+        assert!(a.2 == b.2, "compile {}: the pages differ ({})", i + 1, a.3);
+    }
+    eprintln!(
+        "started from: {:?}",
+        got.iter().map(|o| &o.3).collect::<Vec<_>>()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_font_file_rewritten_in_place_with_another_family_is_seen() {
+    a_font_file_rewritten_in_place(false);
+}
+
+#[test]
+fn a_font_file_rewritten_in_place_while_closed_is_seen() {
+    a_font_file_rewritten_in_place(true);
+}
