@@ -673,15 +673,27 @@ fn the_verify_recorders_holes_are_never_replayed() {
         ("\\deadcycles=0\\relax", vmode, "Command"),
         ("\\pagegoal=500pt\\relax", vmode, "Command"),
         ("\\batchmode\\relax", vmode, "Command"),
-        ("\\fontdimen2\\font=\\fontdimen2\\font\\relax", vmode, "Command"),
+        (
+            "\\fontdimen2\\font=\\fontdimen2\\font\\relax",
+            vmode,
+            "Command",
+        ),
         ("\\hyphenchar\\font=45\\relax", vmode, "Command"),
         ("\\hyphenation{ab-cd}\\relax", vmode, "Command"),
-        ("\\edef\\IntrU{\\uniformdeviate 10}\\relax", vmode, "Expandable"),
+        (
+            "\\edef\\IntrU{\\uniformdeviate 10}\\relax",
+            vmode,
+            "Expandable",
+        ),
         ("\\font\\IntrF=cmr10\\relax", vmode, "Command"),
         ("\\XeTeXlinebreaklocale \"zh\"\\relax", vmode, "Command"),
         ("\\XeTeXdefaultencoding \"utf8\"\\relax", vmode, "Command"),
         ("\\XeTeXinputencoding \"utf8\"\\relax", vmode, "Command"),
-        ("\\begingroup\\noindent\\par\\endgroup", &empty_par, "Command"),
+        (
+            "\\begingroup\\noindent\\par\\endgroup",
+            &empty_par,
+            "Command",
+        ),
     ] {
         never_replayed_in("", body, ctx, why);
     }
@@ -696,7 +708,10 @@ fn the_verify_recorders_holes_are_never_replayed() {
 /// cell.
 #[test]
 fn an_ampersand_read_only_for_its_token_is_seen_by_the_guard() {
-    for body in ["\\let\\IntrA=\\IntrB\\relax", "\\def\\IntrD\\IntrB{}\\relax"] {
+    for body in [
+        "\\let\\IntrA=\\IntrB\\relax",
+        "\\def\\IntrD\\IntrB{}\\relax",
+    ] {
         let Some((on, verify)) = modes_agree(&format!(
             "\\documentclass{{article}}\\let\\IntrB=\\relax\n\
              \\def\\pdfstringdefPreHook{{{body}}}\n\
