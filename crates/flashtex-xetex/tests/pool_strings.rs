@@ -4,8 +4,10 @@
 //! out of`) and in `TeX capacity exceeded, sorry [pool size=...]`. Without
 //! changes/pool.ch the port had 15 strings and 428 characters fewer. The
 //! expected lines are TeX Live 2026's XeTeX 0.999998 (MacTeX 2026, macOS
-//! arm64; x86_64-linux gives the same) on the same input. No TeX
-//! installation needed.
+//! arm64; x86_64-linux gives the same) on the same input, with
+//! `SOURCE_DATE_EPOCH=0` (the format's ` (preloaded format=d 1970.1.1)` is
+//! one of the strings) and the file named `./s.tex` (kpathsea's name for it,
+//! which the `cwd` resolver would shorten). No TeX installation needed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -47,7 +49,7 @@ fn the_dumped_pool_is_tex_lives() {
     initex(&d, &["-jobname=d", "\\dump"]);
     assert_eq!(
         lines_with(&d.join("d.log"), &["strings of total length"]),
-        ["66981 strings of total length 30053"]
+        ["66981 strings of total length 30051"]
     );
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -60,13 +62,13 @@ fn a_runs_pool_statistics_are_tex_lives() {
         "\\catcode`\\{=1 \\catcode`\\}=2 \\tracingstats=1 \\tracingonline=1\n\\showlists\n\\end\n",
     )
     .unwrap();
-    initex(&d, &["-jobname=s", "s.tex"]);
+    initex(&d, &["-jobname=s", "./s.tex"]);
     assert_eq!(
         lines_with(
             &d.join("s.log"),
             &["strings out of", "string characters out of"]
         ),
-        [" 5 strings out of 498558", " 19 string characters out of 6219985"]
+        [" 6 strings out of 498558", " 23 string characters out of 6219985"]
     );
     let _ = std::fs::remove_dir_all(&d);
 }
