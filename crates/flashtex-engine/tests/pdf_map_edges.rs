@@ -26,15 +26,26 @@ fn cases(files: &Path) -> Vec<(String, String)> {
     let x = "x".repeat(1100);
     let mut v: Vec<(String, String)> = [
         // (integer)(d - 0.5) of -1e33 is INT_MIN, which `abs(x) > 1000`
-        // rejects (the entry is dropped with a warning)
+        // rejects (the entry is dropped with a warning).
+        // These three pin the DESIGN §13 arm64 ruling, as pdf_setmatrix_scan's
+        // NaN cases do: a double out of `int`'s range cast to `int`, and
+        // `abs(INT_MIN)`, are undefined behaviour in C. TeX Live's macOS
+        // arm64 build saturates and warns ("SlantFont value too big:
+        // -2.14748e+06"); its x86_64 Linux build takes the entry without a
+        // word (the NixOS PC's nightly, run 43263177560: the engine's log
+        // has the warning, TeX Live's does not, and the PDFs differ by 62 or
+        // 63 bytes). So only an arm64 macOS pdftex is the oracle for them.
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         (
             "slant-min",
             "\\pdfmapline{=cmr10 CMR10 \"-1e30 SlantFont\" <cmr10.pfb}".to_string(),
         ),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         (
             "extend-min",
             "\\pdfmapline{=cmr10 CMR10 \"-1e30 ExtendFont\" <cmr10.pfb}".to_string(),
         ),
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         (
             "extend-max",
             "\\pdfmapline{=cmr10 CMR10 \"1e30 ExtendFont\" <cmr10.pfb}".to_string(),
