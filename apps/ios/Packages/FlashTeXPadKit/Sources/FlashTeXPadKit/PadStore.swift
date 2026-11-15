@@ -154,7 +154,11 @@ public final class CaptureStore: @unchecked Sendable {
         }
     }
 
+    /// Tests: runs at the start of every `save`, on the saving thread.
+    var willSave: (() -> Void)?
+
     public func save(_ records: [CaptureRecord]) throws {
+        willSave?()
         try lock.withLock {
             let fm = FileManager.default
             try fm.createDirectory(at: directory.appendingPathComponent("captures", isDirectory: true), withIntermediateDirectories: true)

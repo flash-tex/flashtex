@@ -1,0 +1,45 @@
+% Preview probe: \pdfxform forms drawn in a graphics state other than a new
+% page's. A Form XObject inherits the state where it is drawn (PDF `Do`):
+% the fill and stroke colour, the text render mode, the line width. pdfTeX
+% writes no colour at the start of a form (only a page starts with the
+% colour stacks' current values). One case per page; page 1 is the case
+% the display list expresses (a form drawn in the initial state).
+\documentclass{article}
+\usepackage{xcolor}
+\pagestyle{empty}
+\begin{document}
+\setbox0=\hbox{Form text, a rule \vrule width 1cm height 3pt\ and a thin one \vrule width 1cm height 0.5pt}
+\immediate\pdfxform0 \edef\FA{\the\pdflastxform}
+\setbox0=\hbox{Outer [\pdfrefxform\FA] {\color{green!50!black}its own colour} [\pdfrefxform\FA]}
+\pdfxform0 \edef\FB{\the\pdflastxform}
+\setbox0=\hbox{{\color{black}Black set in the form} and inherited}
+\pdfxform0 \edef\FC{\the\pdflastxform}
+
+\noindent Initial state: \pdfrefxform\FA\par
+\noindent Nested: \pdfrefxform\FB\par
+\noindent Explicit black: \pdfrefxform\FC
+\newpage
+
+\noindent{\color{red}Red: \pdfrefxform\FA}
+\newpage
+
+\noindent{\color{blue}Nested in blue: \pdfrefxform\FB}
+\newpage
+
+\noindent{\color{red}Explicit black in red: \pdfrefxform\FC}
+\newpage
+
+\noindent Literal colour: \pdfliteral{0 0.5 0 rg 0 0.5 0 RG}\pdfrefxform\FA\pdfliteral{0 g 0 G}
+\newpage
+
+\noindent{\color[cmyk]{0,1,0,0}CMYK: \pdfrefxform\FA}
+\newpage
+
+\noindent Outline (1 Tr): \pdfliteral{1 Tr}\pdfrefxform\FA\pdfliteral{0 Tr}
+\newpage
+
+\noindent Invisible (3 Tr): \pdfliteral{3 Tr}\pdfrefxform\FA\pdfliteral{0 Tr}
+\newpage
+
+\noindent Wide pen: \pdfliteral{1 Tr 0.2 w}\pdfrefxform\FA\pdfliteral{0 Tr 1 w}
+\end{document}

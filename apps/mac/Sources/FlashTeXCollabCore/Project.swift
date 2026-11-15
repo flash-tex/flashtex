@@ -25,8 +25,30 @@ public struct DocVector: Equatable, Sendable {
 /// A whole project: the file map, a text CRDT per text file, a bounded
 /// pending buffer for out-of-order delivery, and state-vector sync.
 public final class CollabProject {
+    /// The project's caps (contract §2.4, §2.6); the contract's values are
+    /// the default, tests use smaller ones so they need not store 64 MiB.
+    public struct Caps: Equatable, Sendable {
+        public var maxFiles: Int
+        public var maxTextBytes: Int
+        /// How far below each cap this replica's own edits stop (contract
+        /// §2.4a): remote operations are taken up to the cap itself, so
+        /// concurrent edits made near it still reach every replica alike.
+        public var localFileHeadroom: Int
+        public var localTextHeadroom: Int
+        public init(maxFiles: Int = CollabLimits.maxFiles, maxTextBytes: Int = CollabLimits.maxProjectTextBytes,
+                    localFileHeadroom: Int = CollabLimits.localFileHeadroom,
+                    localTextHeadroom: Int = CollabLimits.localTextHeadroom) {
+            self.maxFiles = maxFiles
+            self.maxTextBytes = maxTextBytes
+            self.localFileHeadroom = localFileHeadroom
+            self.localTextHeadroom = localTextHeadroom
+        }
+    }
+
     public let replica: UInt64
+    public let caps: Caps
     public let files: FileMap
+    let budget: TextBudget
     var texts: [FileID: TextDocument] = [:]
 
     enum PendingOp {
@@ -100,6 +122,23 @@ public final class CollabProject {
         case rejected(DocRef, CollabID, CollabError)
         case pendingFull(DocRef, CollabID)
 
+        /// A remote operation the project caps refused (§2.4a): this
+        /// replica no longer holds what its peers do, so the session must
+        /// resynchronise or end, never go on diverged.
+        public var isProjectFull: Bool {
+            if case .rejected(_, _, .projectFull) = self { return true }
+            return false
+        }
+
+        /// Refused for good, whatever the reason (not `pendingFull`, which
+        /// a resync recovers): this replica no longer holds what the sender
+        /// does, and a resync would be refused again, so the session ends
+        /// that participant's part instead of going on diverged (§7.4).
+        public var isRefusal: Bool {
+            if case .rejected = self { return true }
+            return false
+        }
+
         /// The contract's name for the refusal (fixtures compare these).
         public var kindName: String {
             switch self {
@@ -112,6 +151,7 @@ public final class CollabProject {
                 case .malformed: return "malformed"
                 case .documentFull: return "document_full"
                 case .pendingFull: return "pending_full"
+                case .projectFull: return "project_full"
                 }
             }
         }
@@ -129,10 +169,15 @@ public final class CollabProject {
         }
     }
 
-    public init(replica: UInt64) {
+    public init(replica: UInt64, caps: Caps = Caps()) {
         self.replica = replica
-        files = FileMap(replica: replica)
+        self.caps = caps
+        files = FileMap(replica: replica, maxFiles: caps.maxFiles, localHeadroom: caps.localFileHeadroom)
+        budget = TextBudget(limit: caps.maxTextBytes, localHeadroom: caps.localTextHeadroom)
     }
+
+    /// Stored text bytes across all text documents, tombstones included.
+    public var storedTextBytes: Int { budget.used }
 
     public func text(_ file: FileID) -> TextDocument? { texts[file] }
 
@@ -141,7 +186,9 @@ public final class CollabProject {
 
     private func noteFileOp(_ op: FileOp) {
         if case .create(.text, _) = op.kind, texts[op.file] == nil {
-            texts[op.file] = TextDocument(replica: replica)
+            let doc = TextDocument(replica: replica)
+            doc.budget = budget
+            texts[op.file] = doc
         }
     }
 
@@ -151,6 +198,17 @@ public final class CollabProject {
         let op = try body(files)
         noteFileOp(op)
         return .fileMap([op])
+    }
+
+    /// A new text file holding `text`: its create and its insert, or, when
+    /// either would be refused, neither (nothing changes).
+    public func createTextFile(_ file: FileID, path: String, text: String) throws -> [Section] {
+        let n = text.utf8.count
+        guard n <= CollabLimits.maxDocumentBytes else { throw CollabError.documentFull }
+        guard budget.fits(n, local: true) else { throw CollabError.projectFull }
+        let create = try fileOp { try $0.create(file, kind: .text, path: path) }
+        guard let insert = try insert(text, at: 0, in: file) else { return [create] }
+        return [create, insert]
     }
 
     public func insert(_ text: String, at position: Int, in file: FileID) throws -> Section? {

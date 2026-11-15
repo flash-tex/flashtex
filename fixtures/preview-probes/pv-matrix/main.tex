@@ -1,0 +1,43 @@
+% Preview probe: \pdfsetmatrix, \pdfsave and \pdfrestore (and graphicx's
+% \rotatebox, \scalebox, \resizebox, which use them): glyphs, filled and
+% thin rules under rotation, mirroring and non-uniform scaling; nesting;
+% and ink at negative and far-off coordinates. One group per page.
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\pagestyle{empty}
+\newcommand\sample{\fbox{Ag \vrule width 8mm height 2pt\ \vrule width 8mm height 0.4pt}}
+\begin{document}
+\noindent\rotatebox{30}{\sample}\quad
+\rotatebox{90}{\sample}\quad
+\rotatebox{180}{\sample}\quad
+\rotatebox{-45}{\textcolor{red}{\sample}}
+\newpage
+
+\noindent\scalebox{-1}[1]{\sample}\quad
+\scalebox{1}[-1]{\sample}\quad
+\scalebox{2.5}[0.7]{\sample}\quad
+\resizebox{2cm}{1.5cm}{\sample}
+\newpage
+
+\noindent Raw: \pdfsave\pdfsetmatrix{0.866 0.5 -0.5 0.866}\rlap{\sample}\pdfrestore
+\hspace{3cm}
+\pdfsave\pdfsetmatrix{1 0 0.4 1}\rlap{Skewed text \vrule width 1cm height 4pt}\pdfrestore
+\hspace{4cm}
+\pdfsave\pdfsetmatrix{0.5 0 0 0.5}\rlap{\pdfsave\pdfsetmatrix{0 1 -1 0}\rlap{nested}\pdfrestore}\pdfrestore
+\newpage
+
+\noindent\hspace*{-1.35in}Text that starts left of the page edge and a rule
+\vrule width 5mm height 3pt depth 1pt
+
+\vspace*{-3in}\noindent Above the top edge?\par
+\vfill
+\noindent\rlap{\hspace{-2in}\rule{4in}{2pt}}\par
+\noindent\hspace*{5.5in}Past the right edge of the page.\par
+\vspace*{1in}\noindent\raisebox{-2in}{Below the bottom edge}
+\newpage
+
+\noindent Far-off ink brought back by a matrix:
+\pdfsave\pdfsetmatrix{0.001 0 0 0.001}\rlap{\kern 5000pt\kern 5000pt\kern 5000pt
+  \scalebox{1000}{far}}\pdfrestore
+\end{document}

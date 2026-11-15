@@ -400,8 +400,9 @@ final class EditorInstantTests: XCTestCase {
     /// re-diffed the whole list on the main thread (seconds per key). Here:
     /// the panel shows 3,000 groups, a compile is running (STARTED, no DONE),
     /// and 40 keys are typed. Key → glyph and the run loop's wait must stay
-    /// within a frame budget (`FLASHTEX_EDITOR_KEY_BUDGET_MS`, default 100 ms
-    /// for a loaded CI runner; the freeze was well over a second).
+    /// within `keyBound` of the same 40 keys typed before the problems were
+    /// listed (the floor plus `FLASHTEX_EDITOR_KEY_BUDGET_MS`, default 100 ms,
+    /// or 2.5 times the floor on a slow runner; the freeze was well over a second).
     func testTypingStaysInstantWithThousandsOfProblemsShown() async throws {
         env.set("FLASHTEX_HOST", "none") // the feed is the host
         let n = 1142
@@ -423,6 +424,10 @@ final class EditorInstantTests: XCTestCase {
         let delivery: EngineV3Delivery = s.delivery
         let problems = 3000
         let page = try XCTUnwrap(Self.pages(1).first)
+        // The floor: the same keys with no problems listed, what typing itself
+        // costs on this machine and build (on the hosted runner its p95 ranges
+        // from 27 to 256 ms between runs of one commit).
+        let floorPhase = try await typePhase("problems_floor", keys: 40, into: tv, session: s)
         for out in ManyProblemsFixture.compile(id: 1, page: page, pages: n, warnings: ManyProblemsFixture.warnings(problems, path: path, lines: lines)) {
             delivery.post(out, connection: nil)
         }
@@ -431,14 +436,32 @@ final class EditorInstantTests: XCTestCase {
         // A long compile is running: the host has started and not answered.
         delivery.post(.started(.object(["id": .int(2), "keep": .bool(true), "mode": .string("incremental")])), connection: nil)
         let phase = try await typePhase("problems", keys: 40, into: tv, session: s)
-        report([phase], extra: ["pages": n, "problems": model.problemsList.count,
-                                "groups": EditorDiagnostics.groups(of: model.problemsList).count])
-        let budget = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100
+        report([floorPhase, phase], extra: ["pages": n, "problems": model.problemsList.count,
+                                            "groups": EditorDiagnostics.groups(of: model.problemsList).count])
         XCTAssertFalse(phase.timedOut, "the main thread did not take the keys")
         XCTAssertEqual(phase.keys, 40)
         let glyph = phase.stats(phase.keyToGlyphMs), wait = RunLoopLatencyProbe.stats(phase.pingMs)
-        XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, budget, "key → glyph p95 with \(problems) problems shown: \(glyph)")
-        XCTAssertLessThanOrEqual(wait["p99"] ?? .infinity, budget, "run-loop wait p99 with \(problems) problems shown: \(wait)")
+        let alone = floorPhase.stats(floorPhase.keyToGlyphMs), aloneWait = RunLoopLatencyProbe.stats(floorPhase.pingMs)
+        let glyphBound = Self.keyBound(floor: alone["p95"] ?? 0), waitBound = Self.keyBound(floor: aloneWait["p99"] ?? 0)
+        XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, glyphBound,
+                                 "key → glyph p95 with \(problems) problems shown: \(glyph); with none: \(alone)")
+        XCTAssertLessThanOrEqual(wait["p99"] ?? .infinity, waitBound,
+                                 "run-loop wait p99 with \(problems) problems shown: \(wait); with none: \(aloneWait)")
+    }
+
+    /// The bound on a key latency measured against the same run's floor (the
+    /// same keys without the load under test): the floor plus
+    /// `FLASHTEX_EDITOR_KEY_BUDGET_MS` (default 100), or `FLASHTEX_EDITOR_BUSY_RATIO`
+    /// (default 2.5) times the floor when that is more. On this Mac the floor
+    /// is a few ms and the first term holds; on the hosted runner, where one
+    /// commit's floor p95 went from 27 to 256 ms between runs (main, runs
+    /// 41305845461 to 41318785370), a fixed 100 ms over it failed one run in
+    /// three. The freezes these tests guard against cost seconds a key.
+    static func keyBound(floor: Double) -> Double {
+        let e = ProcessInfo.processInfo.environment
+        let budget = e["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100
+        let ratio = e["FLASHTEX_EDITOR_BUSY_RATIO"].flatMap(Double.init) ?? 2.5
+        return max(floor + budget, ratio * floor)
     }
 
     // MARK: the main thread stays free while compiles report thousands of problems (APP-MAIN-THREAD)
@@ -463,8 +486,7 @@ final class EditorInstantTests: XCTestCase {
     /// busy typing alone, 24 % with the compiles, a ratio of 1.85); the
     /// ratio is the compiles' share whatever the runner's speed.
     /// `FLASHTEX_EDITOR_FREE_MIN` adds an absolute bound when set. Key →
-    /// glyph p95 may exceed typing alone's by at most
-    /// `FLASHTEX_EDITOR_KEY_BUDGET_MS` (default 100).
+    /// glyph p95 is bounded by `keyBound` of typing alone's.
     func testTheMainThreadStaysFreeWhileCompilesReportThousandsOfProblems() async throws {
         env.set("FLASHTEX_HOST", "none") // the feed is the host
         let n = 1142
@@ -537,9 +559,8 @@ final class EditorInstantTests: XCTestCase {
         if let minFree = e["FLASHTEX_EDITOR_FREE_MIN"].flatMap(Double.init) {
             XCTAssertGreaterThanOrEqual(fraction, minFree, "main thread free \(fraction) of \(ms) ms while typing during compiles")
         }
-        let budget = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100
         let glyph = phase.stats(phase.keyToGlyphMs), alone = floorPhase.stats(floorPhase.keyToGlyphMs)
-        XCTAssertLessThanOrEqual((glyph["p95"] ?? .infinity) - (alone["p95"] ?? 0), budget,
+        XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, Self.keyBound(floor: alone["p95"] ?? 0),
                                  "key → glyph p95 during compiles with \(problems) problems: \(glyph); typing alone: \(alone)")
     }
 

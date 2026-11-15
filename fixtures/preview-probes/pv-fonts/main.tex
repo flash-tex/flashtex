@@ -1,0 +1,38 @@
+% Preview probe: glyphs whose program, encoding or transform is not plain
+% Computer Modern: virtual fonts over 8r-encoded base fonts (Times, T1
+% ligatures and kerns), SlantFont and ExtendFont from the font map, font
+% expansion and letter spacing (microtype), and Latin Modern in T1. One
+% kind per page.
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[expansion=true,protrusion=true,letterspace=200]{microtype}
+\pagestyle{empty}
+\newcommand\words{Affine fluffy office -- --- ``quoted'' AVAW To. Ty. f\/i fi ffi ffl}
+\begin{document}
+\fontfamily{ptm}\selectfont
+\noindent Times through its T1 virtual font: \words\par
+\noindent\textit{Italic: \words}\par
+\noindent\textsl{Slanted (SlantFont .167 in the map): \words}\par
+\noindent\textsc{Small caps (a VF over the 8r font)}
+\newpage
+
+\fontfamily{phv}\fontseries{mc}\selectfont
+\noindent Helvetica narrow (ExtendFont .82 in the map): \words
+\newpage
+
+\fontfamily{ptm}\selectfont
+\noindent Expansion: a paragraph set by microtype with font expansion, so
+that each line's glyphs are drawn from a font expanded or contracted by a
+few thousandths, with protrusion of the punctuation into the margins as
+well. It runs for a few lines so that the stretch differs from line to
+line, which only shows if every glyph is at its place and of its width.
+More text, more lines, more expansion, until the paragraph has enough of
+them to show it, and a short last line.
+\newpage
+
+\noindent Letter spacing: \textls{Spaced Out Letters} and \textls[-50]{tight}.
+\newpage
+
+\fontfamily{lmr}\selectfont
+\noindent Latin Modern in T1: \words. Accents: \'e \`a \^o \"u \c{c} \v{s} \aa{} \ss.
+\end{document}

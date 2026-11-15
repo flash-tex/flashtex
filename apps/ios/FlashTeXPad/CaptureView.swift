@@ -193,6 +193,8 @@ struct CaptureView: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(model.link.isConnected ? .primary : .secondary)
                     .lineLimit(1).truncationMode(.tail)
+                    .accessibilityLabel("Connection status")
+                    .accessibilityValue(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")" : "Not connected: \(model.linkStatus)")
                     .accessibilityIdentifier("capture.connection")
                 Group {
                     if let d = model.destination {
@@ -207,6 +209,8 @@ struct CaptureView: View {
             .frame(maxWidth: 300, alignment: .leading)
             if !model.link.isConnected, model.pairedMac != nil, !model.reconnecting {
                 Button("Reconnect") { Task { await model.autoReconnect() } }.buttonStyle(.bordered).controlSize(.small)
+                    .accessibilityLabel("Reconnect to \(model.pairedMac?.macName ?? "Mac")")
+                    .accessibilityValue("Available")
                     .accessibilityIdentifier("capture.reconnect")
             }
             if model.reconnecting { ProgressView().controlSize(.small) }
@@ -269,13 +273,16 @@ struct CaptureView: View {
     @ViewBuilder private func imageSourceButtons(inline: Bool) -> some View {
         if Self.cameraAvailable {
             Button { cameraShown = true } label: { sourceLabel("Camera", "camera", inline) }
+                .accessibilityLabel("Take photo with camera")
                 .accessibilityIdentifier("capture.camera")
         }
         PhotosPicker(selection: $photo, matching: .images) {
             sourceLabel(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", "photo", inline)
         }
+        .accessibilityLabel("Choose photo from library")
         .accessibilityIdentifier("capture.photo")
         Button { loadSample() } label: { sourceLabel("Sample image", "photo.on.rectangle", inline) }
+            .accessibilityLabel("Load sample image")
             .accessibilityIdentifier("capture.sample")
     }
 
@@ -328,6 +335,8 @@ struct CaptureView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(sending)
+                .accessibilityLabel("Send capture")
+                .accessibilityValue(sending ? "Sending" : model.link.isConnected ? "Ready to send" : "Disabled, not connected")
                 .accessibilityIdentifier("capture.send")
             }
             if let p = problem {
@@ -507,6 +516,38 @@ struct CameraPicker: UIViewControllerRepresentable {
     }
 }
 
+/// A capture's thumbnail: decoded once, off the main actor, then drawn
+/// from `CaptureThumbnails` on every re-render (the list re-renders on each
+/// outcome poll; decoding the full PNG in the row's body cost a full-size
+/// decode per row per poll on the main thread).
+struct CaptureThumbnail: View {
+    let id: String
+    let png: Data
+    let thumbnails: CaptureThumbnails
+    @State private var image: CGImage?
+
+    init(id: String, png: Data, thumbnails: CaptureThumbnails) {
+        self.id = id; self.png = png; self.thumbnails = thumbnails
+        _image = State(initialValue: thumbnails.cached(id))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 1).resizable().scaledToFit()
+            } else {
+                Color.white
+            }
+        }
+        .frame(width: 72, height: 54).background(Color.white).border(.gray.opacity(0.3))
+        .task(id: id) {
+            guard image == nil else { return }
+            let id = id, png = png, thumbnails = thumbnails
+            image = await Task.detached(priority: .utility) { thumbnails.thumbnail(id: id, png: png) }.value
+        }
+    }
+}
+
 struct CapturesList: View {
     @EnvironmentObject var model: PadModel
 
@@ -516,9 +557,7 @@ struct CapturesList: View {
                 if model.captures.isEmpty { Text("none yet").foregroundStyle(.secondary) }
                 ForEach(model.captures) { c in
                     HStack(alignment: .top) {
-                        if let img = UIImage(data: c.png) {
-                            Image(uiImage: img).resizable().scaledToFit().frame(width: 72, height: 54).background(Color.white).border(.gray.opacity(0.3))
-                        }
+                        CaptureThumbnail(id: c.id, png: c.png, thumbnails: model.thumbnails)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.id).font(.caption.monospaced())
                             Text("\(c.source.rawValue) · \(c.png.count) bytes · “\(c.instructions)”").font(.caption).foregroundStyle(.secondary)

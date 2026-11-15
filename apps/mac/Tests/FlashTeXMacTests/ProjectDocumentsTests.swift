@@ -362,6 +362,53 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(model.activeText, "Chapter one, saved twice.\n")
     }
 
+    /// A member's save conflict is resolvable per document, either way:
+    /// Overwrite writes the buffer over the changed file; Reload takes the
+    /// file's text, keeping the unsaved edits as a snapshot. After either,
+    /// the member saves normally again. Before, nothing cleared a member's
+    /// conflict (the entry's Overwrite/Reload refuse another tab), so every
+    /// later save — the quit flow's Save included — was refused.
+    func testAMemberSaveConflictIsResolvedByOverwriteOrReload() async throws {
+        let project = try TempProject()
+        defer { project.remove() }
+        let snapshots = FileManager.default.temporaryDirectory.appendingPathComponent("member-conflict-snapshots-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: snapshots) }
+        let model = ShellModel()
+        model.dirtySnapshots.directory = snapshots
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        let p = model.project
+        _ = await p.openDiscoveredIncludes()
+        let chapterURL = project.root.appendingPathComponent("project/chapter.tex")
+        p.switchDocument(to: "chapter.tex")
+
+        // Overwrite.
+        try "external one\n".write(to: chapterURL, atomically: true, encoding: .utf8)
+        model.updateActiveText("mine one\n")
+        guard case .conflict = p.saveDocumentNow("chapter.tex") else { return XCTFail("expected a conflict") }
+        guard case .saved = p.overwriteDocumentOnDisk("chapter.tex") else { return XCTFail("overwrite: \(p.status)") }
+        XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), "mine one\n")
+        XCTAssertNil(p.saveConflict(for: "chapter.tex"))
+        XCTAssertFalse(p.isDirty("chapter.tex"))
+        model.updateActiveText("mine one, again\n")
+        guard case .saved = p.saveDocumentNow("chapter.tex") else { return XCTFail("the next save is normal: \(p.status)") }
+
+        // Reload (from another tab: it switches to the member).
+        try "external two\n".write(to: chapterURL, atomically: true, encoding: .utf8)
+        model.updateActiveText("mine two\n")
+        guard case .conflict = p.saveDocumentNow("chapter.tex") else { return XCTFail("expected a conflict") }
+        p.switchDocument(to: "main.tex")
+        XCTAssertNil(p.reloadDocumentFromDisk("chapter.tex"))
+        XCTAssertEqual(model.activePath, "chapter.tex")
+        XCTAssertEqual(model.activeText, "external two\n")
+        XCTAssertFalse(p.isDirty("chapter.tex"))
+        XCTAssertNil(p.saveConflict(for: "chapter.tex"))
+        XCTAssertEqual(model.dirtySnapshots.read(for: chapterURL)?.text, "mine two\n", "the replaced edits are kept")
+        model.updateActiveText("after reload\n")
+        guard case .saved = p.saveDocumentNow("chapter.tex") else { return XCTFail("the next save is normal: \(p.status)") }
+        XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), "after reload\n")
+        XCTAssertEqual(try String(contentsOf: project.main, encoding: .utf8), "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n", "the entry file is untouched")
+    }
+
     // MARK: transitive discovery
 
     func testClosureIsDepthFirstRefusesCyclesAndListsDiamondsOnce() async throws {
@@ -425,6 +472,48 @@ final class ProjectDocumentsTests: XCTestCase {
         // A direct refresh (tests, `flushChrome`) still makes it here.
         model.updateActiveText("\\input{chapter}\n")
         model.flushChrome()
+        XCTAssertEqual(chrome.closure.paths, ["chapter.tex"])
+    }
+
+    /// Opening the window and opening a tab change the document set: the
+    /// model's own refreshes make that closure off the main thread too (it
+    /// reads every unopened include from disk: 144 ms of main thread per
+    /// tab opened in a 1,152-page book, lane APP-LAG-AUDIT). Only a direct
+    /// refresh makes it on main.
+    func testOpeningATabMakesTheClosureOffTheMainThread() async throws {
+        let project = try TempProject(main: "\\input{chapter}\n\\input{appendix}\n", chapter: "Chapter.\n",
+                                      extra: ["appendix.tex": "Appendix.\n"])
+        defer { project.remove() }
+        let model = ShellModel()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        let chrome = model.chrome
+        func settle(_ what: String, _ cond: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(15)
+            while !cond() {
+                guard Date() < deadline else { XCTFail("timed out waiting for \(what)"); return }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        try await settle("the open's closure") { chrome.closure.paths == ["chapter.tex", "appendix.tex"] }
+        XCTAssertEqual(chrome.closuresMadeOnMain, 0, "the window's first closure is made off the main thread")
+        let offMain = chrome.closuresMadeOffMain
+        XCTAssertGreaterThan(offMain, 0)
+
+        // A tab opens: the document set changes, the closure follows (the
+        // chapter's node is now open), still made off the main thread.
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        try await settle("the opened tab's closure") {
+            chrome.closure.nodes.first { $0.resolvedPath == "chapter.tex" }?.state == .open
+        }
+        XCTAssertEqual(chrome.closuresMadeOnMain, 0, "a tab opened makes its closure off the main thread")
+        XCTAssertGreaterThan(chrome.closuresMadeOffMain, offMain)
+        XCTAssertEqual(chrome.closure, model.project.discoverClosure())
+
+        // A direct refresh (tests, `flushChrome`) still makes it here.
+        model.updateActiveText("\\input{chapter}\n")
+        model.flushChrome()
+        XCTAssertEqual(chrome.closuresMadeOnMain, 1)
         XCTAssertEqual(chrome.closure.paths, ["chapter.tex"])
     }
 
