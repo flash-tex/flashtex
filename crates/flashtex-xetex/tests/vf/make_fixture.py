@@ -24,7 +24,9 @@ Python needs: qpdf and fontTools) it then runs TeX Live's `xetex -ini` on
 xdvipdfmx draws the page with them, and writes what its PDF shows to
 `expected.json`: every glyph (font, code, size, origin), every rule and
 the link's rectangle, in bp. That file is the test's expected data;
-nothing in it is written by hand.
+nothing in it is written by hand. It also keeps the page as TeX Live's
+`xetex -no-pdf` writes it, `vf.xdv`, which tools/xetex-pdfparity/test_vf.py
+reads.
 """
 import json
 import os
@@ -290,6 +292,10 @@ def oracle():
         version = subprocess.run(["xdvipdfmx", "--version"], capture_output=True, text=True).stdout
         if os.environ.get("FXVF_KEEP"):
             shutil.copy(os.path.join(tmp, "vf.pdf"), os.environ["FXVF_KEEP"])
+        # the same page as XDV, for tools/xetex-pdfparity/test_vf.py
+        subprocess.run(["xetex", "-ini", "-interaction=nonstopmode", "-no-pdf", "vf.tex"], cwd=tmp, env=env,
+                       capture_output=True, text=True, check=True)
+        shutil.copy(os.path.join(tmp, "vf.xdv"), os.path.join(HERE, "vf.xdv"))
         m = extract(os.path.join(tmp, "vf.pdf"))
         page = m.pages[0]
         glyphs = []
