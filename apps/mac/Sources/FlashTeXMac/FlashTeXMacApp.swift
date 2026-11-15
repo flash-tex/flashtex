@@ -12,18 +12,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var launched = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Each window with unsaved edits asks in turn, brought forward so
-        // the question names what you see; Cancel in any keeps the app open.
-        for model in windows.models {
-            guard Self.askBeforeQuitting(model) else { return .terminateCancel }
-        }
+        guard Self.confirmQuit(windows.models, ask: Self.askBeforeQuitting) else { return .terminateCancel }
         windows.beginTerminating()
         return .terminateNow
     }
 
-    /// The quit question for one window: true to go on quitting.
-    @MainActor static func askBeforeQuitting(_ model: ShellModel) -> Bool {
-        guard model.project.anyDirty, model.documentURL != nil || !model.activeText.isEmpty else { return true }
+    /// One window's answer to the quit question.
+    enum QuitAnswer: Equatable {
+        /// Saved, or nothing to save: go on quitting.
+        case goOn
+        /// Don't Save: its edits are discarded on purpose.
+        case discard
+        /// Cancel (or a save that did not complete): the app stays open.
+        case cancel
+    }
+
+    /// Each window with unsaved edits asks in turn (`ask`: the alert in the
+    /// app), brought forward so the question names what you see; Cancel in
+    /// any keeps the app open. True when every window agreed to quit.
+    ///
+    /// Don't Save holds that window's autosave at once: its timer would
+    /// otherwise fire while a later window's question is up (the main queue
+    /// is served in the modal panel's run-loop mode) and write the file, or
+    /// the untitled draft the next launch then recovers (S-REVIEW on #2442).
+    /// What Don't Save discards is discarded only once every window agreed:
+    /// Cancel in a later window leaves the earlier ones open, so they keep
+    /// their drafts and their autosave.
+    @MainActor static func confirmQuit(_ models: [ShellModel], ask: (ShellModel) -> QuitAnswer) -> Bool {
+        var discarded: [ShellModel] = []
+        for model in models {
+            switch ask(model) {
+            case .goOn: continue
+            case .discard:
+                model.holdAutosaveForQuit()
+                discarded.append(model)
+            case .cancel:
+                for m in discarded { m.releaseAutosaveHold() }
+                return false
+            }
+        }
+        for model in discarded {
+            // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
+            model.preserveDirtyBuffers(reason: "quit without saving")
+            model.discardUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
+        }
+        return true
+    }
+
+    /// The quit question for one window.
+    @MainActor static func askBeforeQuitting(_ model: ShellModel) -> QuitAnswer {
+        guard model.project.anyDirty, model.documentURL != nil || !model.activeText.isEmpty else { return .goOn }
         ProjectWindows.shared.entry(for: model)?.window?.makeKeyAndOrderFront(nil)
         let dirty = model.project.listing.filter(\.isDirty).map(\.path)
         let alert = NSAlert()
@@ -55,13 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if model.files.conflict != nil { model.resolveConflictPanel() }
                 }
             }
-            return allSaved && !model.project.anyDirty
-        case .alertSecondButtonReturn:
-            // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
-            model.preserveDirtyBuffers(reason: "quit without saving")
-            model.dropUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
-            return true
-        default: return false
+            return allSaved && !model.project.anyDirty ? .goOn : .cancel
+        case .alertSecondButtonReturn: return .discard
+        default: return .cancel
         }
     }
 

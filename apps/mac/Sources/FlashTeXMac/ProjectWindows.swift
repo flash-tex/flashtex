@@ -206,7 +206,13 @@ final class ProjectWindows {
         // Its host ends now and its project copy is released for a later
         // reopen (EngineV3Session.end); while quitting the next launch takes
         // the copies over anyway, and the app's exit ends the hosts.
-        if !terminating { entries[i].model.engineV3.end() }
+        if !terminating {
+            entries[i].model.engineV3.end()
+            // The user closed it: an untitled buffer's text is discarded, not
+            // offered again at the next launch (UntitledDrafts.swift). A quit
+            // keeps the quit prompt's decision instead (AppDelegate).
+            entries[i].model.discardUntitledDraftOnClose()
+        }
         entries.remove(at: i)
         if frontmostID == id {
             frontmostID = byRecency.first?.id
