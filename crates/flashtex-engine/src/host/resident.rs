@@ -905,9 +905,7 @@ impl Engine {
     fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) -> Vp {
         let debug = std::env::var_os("FLASHTEX_INCR_DEBUG").is_some()
             || std::env::var_os("FLASHTEX_VIEWPORT_DEBUG").is_some();
-        if self.profile.mode == crate::profile::Mode::LowMemory {
-            return Vp::Nothing;
-        }
+        // PROOF: VIEWPORT in Low Memory as in the other modes (MINOR 3's choice reverted)
         let Some(d) = self.doc.as_mut() else {
             return Vp::Nothing;
         };
