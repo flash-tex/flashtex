@@ -599,6 +599,7 @@ impl Globals {
             };
             e.name = Some(name.clone());
             e.file = Some(name.clone());
+            crate::system::recorder_record_input(&String::from_utf8_lossy(&name));
             // type checks
             g.check_type_by_header(&mut e);
             Self::check_type_by_extension(&mut e, &name);
