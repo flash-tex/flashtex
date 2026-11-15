@@ -2174,10 +2174,19 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             let (a, b) = (self.o.i32_at(l.cur_mark, k), self.n.i32_at(l.cur_mark, k));
             self.ptr(K::Tok, a, b);
         }
-        // disc_ptr[copy_code..vsplit_code]: the Rust array may start at 0
-        for k in 0..4 {
-            let (a, b) = (self.o.i32_at(l.disc_ptr, k), self.n.i32_at(l.disc_ptr, k));
-            self.ptr(K::List, a, b);
+        // disc_ptr[copy_code..vsplit_code], at Rust indices 0..3 (code - 1;
+        // three elements): tail_page_disc, page_disc, split_disc (etex.ch).
+        // tail_page_disc points into page_disc's list and is dead while
+        // page_disc is null: nothing resets it when fire_up, the end of an
+        // output routine or \pagediscards takes the list (#2433, the
+        // pdfTeX side's iso.rs).
+        let disc = |s: &Self, k: usize| (s.o.i32_at(l.disc_ptr, k), s.n.i32_at(l.disc_ptr, k));
+        let (page_disc, split_disc) = (disc(self, 1), disc(self, 2));
+        self.ptr(K::List, page_disc.0, page_disc.1);
+        self.ptr(K::List, split_disc.0, split_disc.1);
+        if page_disc != (NULL, NULL) {
+            let (a, b) = disc(self, 0);
+            self.later("tail_page_disc", a, b);
         }
         // sa_root[int_val..mark_val]
         for k in 0..=MARK_VAL as usize {
