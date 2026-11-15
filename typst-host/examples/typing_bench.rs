@@ -11,6 +11,7 @@
 //! # waits for each compile's DONE; one JSON line per location.
 //! typing_bench run --host BIN --fonts DIR --doc DIR [--keys N] [--label L]
 //!                  [--locs EDITSTART,EDITMID] [--host-arg ARG]... [--rss-every K]
+//!                  [--accept font-program-refs,color-spaces,line-state,image-data]
 //! ```
 //!
 //! Per keystroke it records the time from sending `COMPILE` to the first
@@ -223,6 +224,14 @@ fn generate(dir: &Path, sections: usize, chapter_every: usize) {
     std::fs::write(dir.join("main.typ"), s).unwrap();
 }
 
+fn num_json(j: &Json, k: &str) -> Json {
+    match j.get(k) {
+        Some(Json::Num(v)) => Json::Num(*v),
+        Some(Json::Int(v)) => Json::Num(*v as f64),
+        _ => Json::Null,
+    }
+}
+
 fn pct(v: &[f64], p: f64) -> f64 {
     if v.is_empty() {
         return f64::NAN;
@@ -299,6 +308,9 @@ fn run(args: &[String]) {
     let mut locs = vec!["EDITSTART".to_string(), "EDITMID".into(), "EDITEND".into()];
     let mut host_args: Vec<String> = vec![];
     let mut rss_every = 0usize;
+    // The client's HELLO `accept` (spec §11.7); a 3.3 app client also says
+    // color-spaces, line-state and image-data.
+    let mut accept = vec!["font-program-refs".to_string()];
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -311,6 +323,7 @@ fn run(args: &[String]) {
             "--locs" => locs = v.split(',').map(String::from).collect(),
             "--host-arg" => host_args.push(v),
             "--rss-every" => rss_every = v.parse().unwrap(),
+            "--accept" => accept = v.split(',').map(String::from).collect(),
             a => panic!("unknown argument {a}"),
         }
         i += 2;
@@ -342,9 +355,13 @@ fn run(args: &[String]) {
         r: BufReader::new(s.try_clone().unwrap()),
         w: BufWriter::new(s),
     };
+    let accept: Vec<String> = accept.iter().map(|a| format!("{a:?}")).collect();
     c.send(
         kind::C_HELLO,
-        r#"{"protocol":"display-list-v3","version":[3,3],"client":"typing_bench","accept":["font-program-refs"]}"#,
+        &format!(
+            r#"{{"protocol":"display-list-v3","version":[3,3],"client":"typing_bench","accept":[{}]}}"#,
+            accept.join(",")
+        ),
     );
     let _ = c.frame();
     let mut text = std::fs::read_to_string(doc.join("main.typ")).unwrap();
@@ -377,6 +394,9 @@ fn run(args: &[String]) {
         let mut pages_sent = vec![];
         let mut rss = vec![];
         let mut not_ok = 0;
+        // DONE's `stages` (ms), and the client's time to the first page
+        // past the host's (reading the request before it, the frames after).
+        let mut stages: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
         let (mut checked_same, mut checked_differ, mut seeded) = (0, 0, 0);
         for k in 0..keys {
             let off = text.find(loc.as_str()).expect("marker");
@@ -415,6 +435,19 @@ fn run(args: &[String]) {
                 pos_ms.push(num("positions_ms"));
                 hash_ms.push(num("hash_ms"));
                 host_first.push(num("first_page_ms"));
+                if let (Some(f), Json::Num(h)) = (f, num_json(&done, "first_page_ms")) {
+                    stages
+                        .entry("client_extra_ms".into())
+                        .or_default()
+                        .push(f - h);
+                }
+                if let Some(Json::Obj(kv)) = done.get("stages") {
+                    for (k, v) in kv {
+                        if let Json::Num(v) = v {
+                            stages.entry(k.clone()).or_default().push(*v);
+                        }
+                    }
+                }
                 iters.push(num("iterations"));
                 pages_sent.push(num("typeset_pages"));
             }
@@ -423,7 +456,7 @@ fn run(args: &[String]) {
             }
         }
         println!(
-            "{{\"label\":{label:?},\"loc\":{loc:?},\"keys\":{keys},\"first_page_p50\":{:.2},\"first_page_p95\":{:.2},\"first_page_max\":{:.2},\"done_p50\":{:.2},\"done_p95\":{:.2},\"compile_p50\":{:.2},\"compile_p95\":{:.2},\"host_first_page_p95\":{:.2},\"positions_p50\":{:.3},\"positions_p95\":{:.3},\"hash_p50\":{:.3},\"iterations_max\":{},\"pages_sent_max\":{},\"not_ok\":{not_ok},\"seeded\":{seeded},\"verified_same\":{checked_same},\"verified_differ\":{checked_differ},\"rss_mb\":{:.1},\"rss\":[{}],\"load\":{:?}}}",
+            "{{\"label\":{label:?},\"loc\":{loc:?},\"keys\":{keys},\"first_page_p50\":{:.2},\"first_page_p95\":{:.2},\"first_page_max\":{:.2},\"done_p50\":{:.2},\"done_p95\":{:.2},\"compile_p50\":{:.2},\"compile_p95\":{:.2},\"host_first_page_p95\":{:.2},\"positions_p50\":{:.3},\"positions_p95\":{:.3},\"hash_p50\":{:.3},\"iterations_max\":{},\"pages_sent_max\":{},\"not_ok\":{not_ok},\"seeded\":{seeded},\"verified_same\":{checked_same},\"verified_differ\":{checked_differ},\"rss_mb\":{:.1},\"rss\":[{}],\"stages\":{{{}}},\"load\":{:?}}}",
             pct(&first, 50.0),
             pct(&first, 95.0),
             pct(&first, 100.0),
@@ -439,6 +472,11 @@ fn run(args: &[String]) {
             pct(&pages_sent, 100.0),
             rss_mb(pid),
             rss.join(","),
+            stages
+                .iter()
+                .map(|(k, v)| format!("{k:?}:[{:.3},{:.3}]", pct(v, 50.0), pct(v, 95.0)))
+                .collect::<Vec<_>>()
+                .join(","),
             load()
         );
     }

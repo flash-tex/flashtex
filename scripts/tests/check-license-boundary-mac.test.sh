@@ -33,6 +33,9 @@ expect() { # expect <description> <command...>
   if "$@"; then printf 'ok    %s\n' "$what"; else printf 'FAIL  %s\n' "$what" >&2; FAILS=$((FAILS + 1)); fi
 }
 
+# 0. The check script itself must parse under the macOS /bin/bash (3.2).
+expect "check script parses under /bin/bash -n" /bin/bash -n "$CHECK"
+
 # 1. The violations fire.
 set +e
 FLASHTEX_BOUNDARY_ROOT="$WORK/tree" "$CHECK" > "$WORK/out1" 2>&1

@@ -90,6 +90,7 @@ final class LiveShareController {
     /// Where the session's files live: the hub's project folder, or the
     /// guest's copy.
     @ObservationIgnored private(set) var root: URL?
+    @ObservationIgnored private var rootFD: Int32 = -1
     @ObservationIgnored private var opened = false
     @ObservationIgnored private var pendingWrites: Set<FileID> = []
     @ObservationIgnored private var reconcileTimer: Timer?
@@ -110,6 +111,7 @@ final class LiveShareController {
 
     deinit {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        if rootFD >= 0 { close(rootFD) }
     }
 
     /// Observed (the File menu and the status bar read them); they change
@@ -145,6 +147,7 @@ final class LiveShareController {
             return
         }
         let root = entryURL.deletingLastPathComponent().resolvingSymlinksInPath()
+        beginProvenance()
         let session = CollabSession(role: .hub, replica: UInt64.random(in: 1...UInt64.max), name: Self.defaultDisplayName, colourIndex: 0)
         var shared = 0
         var allowed: [FileID: String] = [:]
@@ -179,6 +182,16 @@ final class LiveShareController {
             sheetShown = true
             return
         }
+        // The folder as it resolves now (a project opened through a link to
+        // it is still shareable); the fd pins it from here on.
+        let fd = open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            hub.stop()
+            note = "Could not open the shared project folder: \(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))"
+            sheetShown = true
+            return
+        }
+        rootFD = fd
         self.hub = hub
         self.root = root
         self.allowed = allowed
@@ -283,6 +296,7 @@ final class LiveShareController {
         } else {
             guestDisposition = .none
         }
+        beginProvenance()
         let g = CollabGuest(invite: invite, displayName: name.isEmpty ? Self.defaultDisplayName : String(name.prefix(64)))
         g.onStateChange = { [weak self] s in self?.guestState(s) }
         g.onJoined = { [weak self] session, ack in self?.joined(session, ack, invite: invite) }
@@ -332,6 +346,12 @@ final class LiveShareController {
         FlashTeXLog.write("liveshare: opening the shared copy in \(root.path)")
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            // The copy is the host's text: marked as received (`markReceived`).
+            Self.markReceived(root, value: receivedMark)
+            if rootFD < 0 {
+                rootFD = open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                guard rootFD >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            }
             // The copy is exactly the files present now, each at a safe path
             // that collides with no other (a hostile host cannot name
             // dotfiles, links or case twins); nothing is added later.
@@ -382,11 +402,20 @@ final class LiveShareController {
     }
 
     private func teardown(keepPhase: Bool) {
+        if !isHost, opened, let root {
+            // An editor save replaces a file without its extended
+            // attributes: what the copy holds at the end is marked again.
+            Self.markReceived(root, value: receivedMark)
+            for path in allowed.values {
+                if let url = Self.safeTarget(root: root, path: path) { Self.markReceived(url, value: receivedMark) }
+            }
+        }
         for l in links.values { l.binding.attach(nil) }
         links = [:]
         session?.stopTimers()
         session = nil
         allowed = [:]
+        if rootFD >= 0 { close(rootFD); rootFD = -1 }
         isActive = false
         isHost = false
         hub = nil
@@ -475,11 +504,87 @@ final class LiveShareController {
     }
 
     private func write(_ file: FileID, path: String, session: CollabSession, root: URL) throws {
-        guard allowed[file] == path, let text = session.text(of: file),
-              let url = Self.safeTarget(root: root, path: path, creating: true) else { return }
-        if let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
-        try Self.writeNoFollow(Data(text.utf8), to: url)
+        guard allowed[file] == path, let text = session.text(of: file) else { return }
+        // Only to skip an unchanged file; the write itself is confined.
+        if let url = Self.safeTarget(root: root, path: path),
+           let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
+        guard rootFD >= 0,
+              let url = try Self.writeConfined(Data(text.utf8), root: root, path: path, rootFD: rootFD,
+                                               quarantine: isHost ? nil : receivedMark) else { return }
         if isHost { markGuestEdited(url) }
+    }
+
+    /// Writes `data` at `path` under `root`, or returns nil when `path` may
+    /// not be written there (`safeParts`, a link or a non-folder on the
+    /// way, a link or a non-file at the target). The check and the write
+    /// are one walk, so nothing can redirect the write after its check:
+    /// each folder is opened relative to the one before with
+    /// `O_NOFOLLOW | O_DIRECTORY` (made with `mkdirat` when missing), and
+    /// the file is written to a new temporary name in the last open folder
+    /// (`O_CREAT | O_EXCL | O_NOFOLLOW`) and renamed over the target with
+    /// `renameat` on that same folder. A folder swapped for a link once it
+    /// is open no longer matters: the write goes where the check was made.
+    /// The target's mode, ACL and extended attributes are kept.
+    /// `quarantine`: a `com.apple.quarantine` value the written file
+    /// carries (a guest's received text, `markReceived`).
+    /// `afterCheck` runs between the walk and the write (tests).
+    @discardableResult
+    static func writeConfined(_ data: Data, root: URL, path: String, rootFD: Int32? = nil, quarantine: String? = nil,
+                              afterCheck: (() -> Void)? = nil) throws -> URL? {
+        guard let parts = safeParts(path), let name = parts.last else { return nil }
+        func failure() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        var dir = rootFD.map { fcntl($0, F_DUPFD_CLOEXEC, 0) } ?? open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard dir >= 0 else { throw failure() }
+        defer { close(dir) }
+        for part in parts.dropLast() {
+            var next = openat(dir, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if next < 0, errno == ENOENT {
+                guard mkdirat(dir, part, 0o755) == 0 || errno == EEXIST else { throw failure() }
+                next = openat(dir, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            // ELOOP (a link) or ENOTDIR (a file): refused, as safeTarget does.
+            guard next >= 0 else { return nil }
+            close(dir)
+            dir = next
+        }
+        var entry = stat()
+        let found = fstatat(dir, name, &entry, AT_SYMLINK_NOFOLLOW) == 0
+        if !found && errno != ENOENT {
+            throw failure()
+        }
+        afterCheck?()
+        // Open before choosing the temporary file's mode: the target may have
+        // appeared or changed since the path check.
+        let old = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        defer { if old >= 0 { close(old) } }
+        var st = stat()
+        if old >= 0 {
+            guard fstat(old, &st) == 0 else { throw failure() }
+            guard st.st_mode & S_IFMT == S_IFREG else { return nil }
+        } else if found && entry.st_mode & S_IFMT != S_IFREG {
+            return nil
+        }
+        let temp = ".\(name).liveshare-\(UUID().uuidString)"
+        let fd = openat(dir, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, old >= 0 ? 0o600 : 0o644)
+        guard fd >= 0 else { throw failure() }
+        var renamed = false
+        defer { if !renamed { unlinkat(dir, temp, 0) } }
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        try h.write(contentsOf: data)
+        // Keep what the file carried; never block on a FIFO swapped in.
+        if old >= 0 {
+            _ = fcopyfile(old, fd, nil, copyfile_flags_t(COPYFILE_ACL | COPYFILE_XATTR))
+            guard fchmod(fd, st.st_mode & 0o7777) == 0 else { throw failure() }
+        }
+        if let quarantine {
+            guard fsetxattr(fd, EngineV3Trust.quarantineAttribute, quarantine, quarantine.utf8.count, 0, 0) == 0 else {
+                throw failure()
+            }
+        }
+        try h.close()
+        guard renameat(dir, temp, dir, name) == 0 else { throw failure() }
+        renamed = true
+        return root.appendingPathComponent(path)
     }
 
     /// Writes through a new temporary file (`O_CREAT | O_EXCL | O_NOFOLLOW`,
@@ -498,8 +603,32 @@ final class LiveShareController {
         guard rename(temp.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 
-    @ObservationIgnored private var quarantineEvent = UUID().uuidString
+    @ObservationIgnored private(set) var quarantineEvent = UUID().uuidString
     @ObservationIgnored private(set) var guestEdited: Set<String> = []
+
+    /// Each session is a provenance event of its own (host and guest): a
+    /// later session's guest edits taint the project again even after the
+    /// user trusted an earlier one's, in the same run of the app.
+    private func beginProvenance() {
+        quarantineEvent = UUID().uuidString
+        guestEdited = []
+    }
+
+    /// The `com.apple.quarantine` value a guest's copy carries: flags,
+    /// time, agent and this session's event (EngineV3Trust.quarantineEvent).
+    var receivedMark: String {
+        "0081;\(String(Int(Date().timeIntervalSince1970), radix: 16));FlashTeX Live Share;\(quarantineEvent)"
+    }
+
+    /// Marks a guest's copy as received, as a download is (#2060): a copy
+    /// of the session folder, or of a file in it, made by the Finder, `cp`
+    /// or `ditto` carries the attribute, so it compiles untrusted (shell
+    /// escape off, no external tools) until the user trusts it, wherever it
+    /// is opened. Inside the session folder compiles are pinned anyway.
+    /// Never follows a link.
+    static func markReceived(_ url: URL, value: String) {
+        _ = setxattr(url.path, EngineV3Trust.quarantineAttribute, value, value.utf8.count, 0, XATTR_NOFOLLOW)
+    }
 
     /// A guest's text reached this project file: the project is tainted in
     /// the trust store (`EngineV3Trust.taint`, one event per session), so
@@ -535,6 +664,17 @@ final class LiveShareController {
         path.precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive], locale: nil)
     }
 
+    /// The segments of `path` when its text may name a shared file:
+    /// `FileMap.isValidPath`, no segment starting with `.`, a text-source
+    /// extension. Nil otherwise.
+    static func safeParts(_ path: String) -> [String]? {
+        guard FileMap.isValidPath(path) else { return nil }
+        let parts = path.split(separator: "/").map(String.init)
+        guard !parts.contains(where: { $0.hasPrefix(".") }),
+              let last = parts.last, sharedExtensions.contains((last as NSString).pathExtension.lowercased()) else { return nil }
+        return parts
+    }
+
     /// Where `path` may be written under `root`, or nil. Refused: anything
     /// `FileMap.isValidPath` refuses; any segment starting with `.` (no
     /// `.git/config`, no `.latexmkrc`); a file that is not a text source;
@@ -542,10 +682,7 @@ final class LiveShareController {
     /// part resolves outside the root. `creating` makes missing folders
     /// (each checked first).
     static func safeTarget(root: URL, path: String, creating: Bool = false) -> URL? {
-        guard FileMap.isValidPath(path) else { return nil }
-        let parts = path.split(separator: "/").map(String.init)
-        guard !parts.contains(where: { $0.hasPrefix(".") }),
-              let last = parts.last, sharedExtensions.contains((last as NSString).pathExtension.lowercased()) else { return nil }
+        guard let parts = safeParts(path) else { return nil }
         let fm = FileManager.default
         let realRoot = root.resolvingSymlinksInPath().path
         var url = root
@@ -687,6 +824,10 @@ extension ShellModel {
         objc_setAssociatedObject(self, &Self.liveShareKey, c, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return c
     }
+
+    /// A Live Share session runs in this window (without making the
+    /// controller: a window that never used Live Share has none).
+    var liveShareActive: Bool { (objc_getAssociatedObject(self, &Self.liveShareKey) as? LiveShareController)?.isActive ?? false }
 
     /// The editor's session link changed (a session started, ended or its
     /// project opened): nudge the editor pane to re-read it.

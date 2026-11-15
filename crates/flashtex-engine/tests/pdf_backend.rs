@@ -48,6 +48,14 @@ const CASES: &[(&str, &str)] = &[
         "plain-streams",
         "\\pdfcompresslevel=0 \\pdfobjcompresslevel=0 Uncompressed $x$\n\\bye\n",
     ),
+    (
+        // The prefix is the CRC-32 of utils.c's job id, which names the
+        // date, job, format, banner, web2c and kpathsea versions: fonts,
+        // forms and XObjects are all named with it.
+        "uniqueresname",
+        "\\pdfuniqueresname=1 Unique {\\bf names}\\setbox0\\hbox{form $x$}\
+         \\pdfxform0 \\pdfrefxform\\pdflastxform\n\\bye\n",
+    ),
 ];
 
 fn run(bin: &Path, dir: &Path, args: &[&str], ours: bool) {

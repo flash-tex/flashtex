@@ -1,0 +1,119 @@
+# A parity hunt on the owner's NixOS PC: any parity.py tier, of any ref,
+# by hand (lane PARITY-HUNT, 2026-11-01; DESIGN §8 and §12).
+#
+# The board (p5-scoreboard.yml) and T4 (nightly.yml corpus-t4) measure fixed
+# corpora on main. This job measures a corpus they don't hold yet, such as
+# tools/parity/corpus/hunt-arxiv-2k.json, on the branch that is fixing what
+# it finds, so a fix is measured on the same host and oracle as the board.
+# It is a report, never a gate, and records no baseline.
+#
+# The oracle is the PC's own TeX Live 2026 (pdfTeX 1.40.29); nothing expected
+# is committed. Fetched sources go to a cache of this lane's own
+# (~/.cache/flashtex-agents/<lane>/), never the board's or T4's, and
+# `cleanup: true` deletes it. The run takes flashtex-pc-heavy, the group of T4
+# and the PC board, so it never runs beside them, and runs in a scope of its own
+# inside flashtex.slice (MemoryMax 10G, nice 10). Never on a pull request.
+name: parity hunt
+
+on:
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: parity.py tiers (space separated)
+        required: false
+        default: 'hunt-arxiv'
+      lane:
+        description: the cache directory's name under ~/.cache/flashtex-agents/
+        required: false
+        default: 'parityhunt'
+      args:
+        description: more parity.py arguments, e.g. --shard 0/4 or --only ID
+        required: false
+        default: ''
+      jobs:
+        description: parity workers (-j), at most 4
+        required: false
+        default: '4'
+      cleanup:
+        description: delete the lane's cache after the run
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    name: parity hunt (${{ inputs.tiers }})
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 720
+    concurrency:
+      group: flashtex-pc-heavy
+      cancel-in-progress: false
+    env:
+      TIERS: ${{ inputs.tiers }}
+      LANE: ${{ inputs.lane }}
+      ARGS: ${{ inputs.args }}
+      JOBS: ${{ inputs.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: the oracle and the lane's cache
+        run: |
+          set -euo pipefail
+          case "$LANE" in *[!a-z0-9-]*|'') echo "::error::lane must be [a-z0-9-]+"; exit 1 ;; esac
+          case "$JOBS" in [1-4]) ;; *) echo "::error::jobs must be 1-4"; exit 1 ;; esac
+          for t in pdflatex pdftex kpsewhich qpdf pdftoppm; do
+            command -v "$t" >/dev/null || { echo "::error::no $t on this runner's PATH"; exit 1; }
+          done
+          pdftex --version | head -1 | grep -q '1\.40\.29' || { echo "::error::the oracle is not pdfTeX 1.40.29"; exit 1; }
+          home="$HOME/.cache/flashtex-agents/$LANE"
+          mkdir -p "$home/cache"
+          {
+            echo "HUNT_HOME=$home"
+            echo "FLASHTEX_PARITY_CACHE=$home/cache"
+            echo "CARGO_TARGET_DIR=$home/target"
+            echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
+            echo "PARITY_ORACLE=$(command -v pdftex)"
+            echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+          } | tee -a "$GITHUB_ENV"
+          awk '/^MemAvailable:/ { printf "MemAvailable %.1f GiB\n", $2 / 1048576 }' /proc/meminfo
+      - name: build the engine and its formats
+        run: CARGO_BUILD_JOBS=4 scripts/engine-parity.sh --work "$RUNNER_TEMP/engine-parity" build
+      - name: run the tiers
+        run: |
+          set -euo pipefail
+          # at least 8 GB left to the owner (the PC froze twice under agents' runs)
+          avail="$(awk '/^MemAvailable:/ { print int($2 / 1048576) }' /proc/meminfo)"
+          [ "$avail" -ge 18 ] || { echo "::error::only $avail GiB available: a 10G run would leave under 8"; exit 1; }
+          scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0 -p OOMPolicy=continue)
+          "${scope[@]}" true 2>/dev/null || { echo "::error::systemd-run --user is unavailable: the hunt runs only in its own scope"; exit 1; }
+          targs=()
+          for t in $TIERS; do targs+=(--tier "$t"); done
+          ew="$RUNNER_TEMP/engine-parity"
+          # shellcheck disable=SC2086 # ARGS is a list of parity.py arguments
+          "${scope[@]}" nice -n 10 python3 tools/parity/parity.py "${targs[@]}" -j "$JOBS" \
+            --engine "$ew/eng/flashtex-initex" \
+            --engine-env "FLASHTEX_FORMATS=$ew/fmt" --engine-env "FLASHTEX_POOL=$ew/eng/pdftex.pool" \
+            --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" --texmf "$PARITY_TEXMF" \
+            --pt1-max-log-mb 64 --pt1-timeout 900 \
+            --out "$RUNNER_TEMP/hunt" --work "$RUNNER_TEMP/hunt-work" $ARGS
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/hunt/report.md" ] || exit 0
+          cat "$RUNNER_TEMP/hunt/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-hunt
+          path: ${{ runner.temp }}/hunt
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: delete the lane's cache
+        if: always() && inputs.cleanup
+        run: rm -rf "$HUNT_HOME" "$RUNNER_TEMP/hunt-work"

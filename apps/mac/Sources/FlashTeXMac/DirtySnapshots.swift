@@ -40,7 +40,7 @@ struct DirtySnapshot: Codable, Equatable, Identifiable {
     var summary: String {
         "\(url.lastPathComponent): \(text.utf8.count) bytes of unsaved text (\(reason), \(Self.stamp.string(from: savedAt)))"
     }
-    nonisolated(unsafe) private static let stamp: DateFormatter = {
+    private static let stamp: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short

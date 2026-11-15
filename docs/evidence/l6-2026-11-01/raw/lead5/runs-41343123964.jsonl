@@ -1,0 +1,2 @@
+{"wall_s": 0.7661, "utime_s": 0.7166, "stime_s": 0.044, "maxrss": 75824, "status": 0, "load1": 4.7, "instr": 9666045227, "cycles": 3430774316, "pdf": "0f199e16efd441be", "doc": "full-100", "engine": "e0-origin_main", "variant": "dbg", "rep": 0}
+{"wall_s": 0.6829, "utime_s": 0.6504, "stime_s": 0.0297, "maxrss": 61884, "status": 0, "load1": 4.64, "instr": 8684843084, "cycles": 3088427814, "pdf": "0f199e16efd441be", "doc": "full-100", "engine": "e0-origin_main", "variant": "d9", "rep": 0}

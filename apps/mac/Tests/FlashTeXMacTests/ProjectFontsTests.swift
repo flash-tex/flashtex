@@ -176,6 +176,52 @@ final class ProjectFontsTests: XCTestCase {
         XCTAssertEqual(model.projectFonts.note, reason)
     }
 
+    /// Like Mode (ProjectMode.setProjectMode): Apply never writes over
+    /// flashtex.toml's unsaved edits in the editor, and a change to the file
+    /// while the helper rewrote it is a conflict, not overwritten. Before,
+    /// the save expected `.any`: both were replaced silently.
+    func testApplyRefusesOverUnsavedManifestEditsAndAChangeDuringTheRewrite() async throws {
+        let model = try project()
+        let original = "[project]\nentry = \"main.tex\"\n"
+        let toml = try write("flashtex.toml", original)
+        model.manifest.reader = { root, _ in .success(self.payload(root: root, fonts: [:])) }
+        let rewritten = original + "\n[fonts]\ntext = \"Georgia\"\n"
+        var during: (() -> Void)?
+        model.projectFonts.rewriter = { root, _, _ in
+            during?()
+            return .success(.init(path: root.appendingPathComponent("flashtex.toml").path, exists: true, changed: true, text: rewritten))
+        }
+        model.projectFonts.lister = { _ in ([], []) }
+        XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)
+        XCTAssertEqual(model.manifest.snapshot?.path.map { URL(fileURLWithPath: $0).standardizedFileURL }, toml.standardizedFileURL)
+        _ = await model.project.openDocument("flashtex.toml")
+        model.project.switchDocument(to: "flashtex.toml")
+        model.updateActiveText(original + "# mine, unsaved\n")
+        XCTAssertTrue(model.project.isDirty("flashtex.toml"))
+
+        model.projectFonts.present()
+        model.projectFonts.selection[.text] = "Georgia"
+        let refused = await model.projectFonts.apply()
+        guard case .refused(let why) = refused else { return XCTFail("\(refused)") }
+        XCTAssertTrue(why.contains("unsaved edits"), why)
+        XCTAssertEqual(try String(contentsOf: toml, encoding: .utf8), original, "nothing written over the edits")
+
+        // Edits reverted; the file changes while the helper rewrites it.
+        model.updateActiveText(original)
+        XCTAssertFalse(model.project.isDirty("flashtex.toml"))
+        during = { try? "# external\n".write(to: toml, atomically: true, encoding: .utf8) }
+        let conflicted = await model.projectFonts.apply()
+        guard case .refused(let reason) = conflicted else { return XCTFail("\(conflicted)") }
+        XCTAssertTrue(reason.contains("cannot write"), reason)
+        XCTAssertEqual(try String(contentsOf: toml, encoding: .utf8), "# external\n", "the external change is kept")
+
+        // Unchanged since: written.
+        during = nil
+        let applied = await model.projectFonts.apply()
+        guard case .applied = applied else { return XCTFail("\(applied)") }
+        XCTAssertEqual(try String(contentsOf: toml, encoding: .utf8), rewritten)
+    }
+
     // MARK: the compile request
 
     func testTheDirectRouteSendsTheTableAndAChangeReRequestsUnchangedBuffers() throws {
