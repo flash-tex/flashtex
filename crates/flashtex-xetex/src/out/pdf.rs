@@ -2619,6 +2619,7 @@ mod tests {
     fn the_name_tree_is_xdvipdfmxs() {
         use super::super::pdfobj::{Dict as D, Obj as O};
         let mut doc = Doc::new();
+        doc.check_gotos = false; // every destination kept (dvipdfmx -C 0x10): this test is about the tree's shape
         for n in [
             "d10", "d02", "d03", "d04", "d05", "d06", "d07", "d08", "d09", "d1", "d1",
         ] {
@@ -2677,6 +2678,7 @@ mod tests {
         );
         // 8 names or fewer: the root holds them, without `/Limits`
         let mut doc = Doc::new();
+        doc.check_gotos = false; // every destination kept (dvipdfmx -C 0x10): this test is about the tree's shape
         doc.dests
             .push((b"a".to_vec(), O::Array(vec![O::Name(b"Fit".to_vec())])));
         let bytes = write(&doc, &opts).unwrap().0;
