@@ -1341,6 +1341,12 @@ fn an_s0_saved_after_a_keystroke_is_the_one_saved_at_once() {
                 ("FLASHTEX_S0_CACHE", cache_s.as_str()),
                 // (no save before the second compile: it comes at once)
                 ("FLASHTEX_UNICODE_SAVE_IDLE_MS", "3000"),
+                // (no signature is racy: a stat signature's `racy` word says
+                // whether it was taken within 2 s of its file's times, so
+                // it depends on how long the runs took, not on what the
+                // save holds; the `.aux`'s one in S₀'s key was 1 at once
+                // and 0 after the keystroke on a loaded PC, #2528)
+                ("FLASHTEX_RACY_MS", "0"),
             ],
             &dir.join(format!("{tag}.err")),
         );
@@ -1454,11 +1460,28 @@ fn an_s0_saved_after_a_keystroke_is_the_one_saved_at_once() {
     );
     let edited = doc.replace("Some words", "Some more words");
     let later = saved(&dir.join("cache-b"), &[doc, &edited], "later");
+    // (the first byte that differs and is not volatile, with the three
+    // files' bytes around it, in hex)
+    let hex = |x: &[u8], p: usize| -> String {
+        x[p.saturating_sub(56)..(p + 24).min(x.len())]
+            .chunks(8)
+            .map(|c| c.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let unmasked =
+        (0..at_once.len().min(later.len())).find(|&p| !volatile[p] && at_once[p] != later[p]);
     assert!(
-        at_once.len() == later.len()
-            && (0..at_once.len()).all(|p| volatile[p] || at_once[p] == later[p]),
-        "the S0 saved after a keystroke differs from the one saved at once: {}",
-        diff(&at_once, &later)
+        at_once.len() == later.len() && unmasked.is_none(),
+        "the S0 saved after a keystroke differs from the one saved at once: {}; \
+         first byte not volatile: {unmasked:?}{}",
+        diff(&at_once, &later),
+        unmasked.map_or(String::new(), |p| format!(
+            "\n at once: {}\n again:   {}\n later:   {}",
+            hex(&at_once, p),
+            hex(&again, p),
+            hex(&later, p)
+        ))
     );
     let log = std::fs::read_to_string(dir.join("later.err")).unwrap_or_default();
     assert!(log.contains("\"saved_s0\""), "the save was made: {log}");
