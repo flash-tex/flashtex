@@ -701,6 +701,17 @@ impl Engine {
         let r = crate::s0file::open(
             &path.to_string_lossy(),
             &mut |m| {
+                // (the font files S0's lookups by name were answered with
+                // are watched from now on, whether S0 is taken or not: one
+                // rewritten while the document was closed changes the
+                // state, and a run that does not take S0 and no longer
+                // finds the font keeps the file in its own S0, #2296)
+                let files: Vec<PathBuf> = m.font_files.iter().map(PathBuf::from).collect();
+                if let Some(f) = fonts.borrow_mut().as_mut() {
+                    for p in &files {
+                        f.watch(p);
+                    }
+                }
                 let (k, f) = PointKey::dec(&m.point)?;
                 if k != *key {
                     return Err("it is for another command line or directory".into());
@@ -719,16 +730,7 @@ impl Engine {
                 m.key.check(m.key.clock, line)?;
                 m.key.check_arm()?;
                 if let Some(d) = m.font_dirs {
-                    // (the font files S0's lookups by name were answered
-                    // with are watched from now on: one rewritten while
-                    // the document was closed changes the state, #2296)
-                    let files: Vec<PathBuf> = m.font_files.iter().map(PathBuf::from).collect();
-                    let now = fonts.borrow_mut().as_mut().map(|f| {
-                        for p in &files {
-                            f.watch(p);
-                        }
-                        f.dirs_of(&files)
-                    });
+                    let now = fonts.borrow_mut().as_mut().map(|f| f.dirs_of(&files));
                     match now {
                         Some(now) if now == d => {}
                         Some(_) => return Err("the font directories changed".into()),
