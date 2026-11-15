@@ -756,7 +756,7 @@ fn run_job(
                         ("message", js(e)),
                     ]),
                 );
-                done(out, job, &compile::Outcome::none("failed"), t0, None);
+                done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
                 return;
             }
         }
