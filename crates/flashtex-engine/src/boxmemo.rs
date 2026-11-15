@@ -2148,6 +2148,14 @@ impl Globals {
     }
 
     /// The words of the current list's tail noad, in math mode ([`Frame`]).
+    ///
+    /// A tail that is no noad (a style, a choice, glue, a kern, a penalty,
+    /// a whatsit) has no words here, and needs none: no command changes
+    /// such a tail in place at the call's own level. `sub_sup` (tex.web
+    /// §1176) and `math_limit_switch` (§1159) test for a noad first, and
+    /// otherwise append one or complain; `build_choices` (§1174),
+    /// `\\middle` and `\\right` (§1191) change their lists only through an
+    /// `unsave` of a group older than the call, which is `Group`.
     fn bm_tail_noad(&self) -> Vec<u64> {
         let l = &self.cur_list;
         if l.mode_field.abs() != k::mmode || l.tail_field == l.head_field {

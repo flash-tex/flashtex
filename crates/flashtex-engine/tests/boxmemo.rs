@@ -384,9 +384,9 @@ fn changes_a_call_makes_to_its_list_in_place() {
     // `incompleat_noad` (tex.web §1181); `\\limits` sets the tail op
     // noad's subtype (§1159); `^` fills the tail noad's script, with a
     // group's list at its `}` (§1176, §1186); a letter `\\nullfont` lacks
-    // sets `space_factor` (§1034). On main a replay left them all as they
-    // were: the math calls are refused now, and the space factor is
-    // replayed
+    // sets `space_factor` (§1034), in a box and in a paragraph. On main a
+    // replay left them all as they were: the math calls are refused now,
+    // and the space factor is replayed
     let s = check(
         "in-place",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n\
@@ -398,9 +398,12 @@ fn changes_a_call_makes_to_its_list_in_place() {
          \\m{x\\measure{^y}}\\m{x\\measure{^y}}\\m{x\\measure{^y}}\n\
          \\m{x\\measure{^{yy}}}\\m{x\\measure{^{yy}}}\\m{x\\measure{^{yy}}}\n\
          \\def\\h{\\setbox1\\hbox{\\spacefactor=1234 \\measure A\\message{[\\the\\spacefactor]}}}\n\
-         \\h\\h\\h\\end\n",
+         \\h\\h\\h\n\
+         \\def\\p{\\setbox1\\vbox{\\noindent\\spacefactor=1234 \\measure A\\message{[\\the\\spacefactor]}}}\n\
+         \\p\\p\\p\\end\n",
     );
-    assert!(stat(&s, "hits") >= 2, "{s}");
+    // (the space factor's calls replay, in the box and in the paragraph)
+    assert!(stat(&s, "hits") >= 4, "{s}");
 }
 
 #[test]
