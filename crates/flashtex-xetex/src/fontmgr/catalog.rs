@@ -502,6 +502,27 @@ impl FontCatalog {
         }
     }
 
+    /// Whether every font file this catalog has a stamp for is as it was
+    /// when the catalog read its names (a status call a file): what a
+    /// lookup that found nothing depends on (#2504).
+    pub fn all_still_read(&self) -> bool {
+        self.stamps
+            .iter()
+            .all(|(p, st)| file_stamp(p).as_ref() == Some(st))
+    }
+
+    /// A hash of the faces' files and their stamps: the same for two
+    /// catalogs made from the same files as they were, in this process or
+    /// another (#2504).
+    pub fn stamps_hash(&self) -> [u64; 2] {
+        let mut seen = std::collections::BTreeMap::new();
+        for f in &self.faces {
+            seen.entry(&f.path)
+                .or_insert_with(|| self.stamps.get(&f.path));
+        }
+        flashtex_engine::persist::hash128(format!("{seen:?}").as_bytes())
+    }
+
     pub fn faces(&self) -> &[CatalogFace] {
         &self.faces
     }

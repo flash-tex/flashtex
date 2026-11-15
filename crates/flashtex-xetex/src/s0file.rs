@@ -82,6 +82,8 @@ pub struct Meta {
     pub font_dirs: Option<[u64; 2]>,
     /// `ckpt::S0::font_files`.
     pub font_files: Vec<String>,
+    /// `ckpt::S0::font_catalog`.
+    pub font_catalog: Option<[u64; 2]>,
     pub dl_on: bool,
     pub rec: Record,
     /// The output files the run had opened by S₀, in order.
@@ -96,6 +98,7 @@ impl Meta {
         self.key.enc(w);
         self.font_dirs.enc(w);
         self.font_files.enc(w);
+        self.font_catalog.enc(w);
         self.dl_on.enc(w);
         self.rec.enc(w);
         self.opens.enc(w);
@@ -108,6 +111,7 @@ impl Meta {
             key: Codec::dec(r)?,
             font_dirs: Codec::dec(r)?,
             font_files: Codec::dec(r)?,
+            font_catalog: Codec::dec(r)?,
             dl_on: Codec::dec(r)?,
             rec: Codec::dec(r)?,
             opens: Codec::dec(r)?,

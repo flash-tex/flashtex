@@ -396,6 +396,28 @@ impl Globals {
             located = mgr.locate(&String::from_utf8_lossy(&full), scaled_size);
             self.host.font_mgr = Some(Arc::new(mgr));
         }
+        // A lookup that found nothing depends on every font file the
+        // catalog read (#2504): once a run, the kept catalog's files are
+        // checked, and the catalog made again if one changed; the catalog
+        // it was made from is recorded for S0 and the page checkpoints.
+        if located.is_none() {
+            if let Some(r) = self.host.resident.as_mut() {
+                let mgr = self.host.font_mgr.as_ref().expect("made above");
+                if !r.catalog_checked {
+                    r.catalog_checked = true;
+                    if !mgr.catalog().all_still_read() {
+                        let catalog = r.font_catalog_again();
+                        let mut mgr = crate::fontmgr::FontMgr::new(catalog);
+                        located = mgr.locate(&String::from_utf8_lossy(&full), scaled_size);
+                        self.host.font_mgr = Some(Arc::new(mgr));
+                    }
+                }
+                if located.is_none() {
+                    let mgr = self.host.font_mgr.as_ref().expect("made above");
+                    r.miss_catalog = Some(mgr.catalog().stamps_hash());
+                }
+            }
+        }
         let Some(located) = located else {
             return 0;
         };
