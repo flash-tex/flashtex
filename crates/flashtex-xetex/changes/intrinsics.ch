@@ -10,7 +10,9 @@
 % |open_or_close_in| and \.{\\XeTeXinputencoding}, whose input files a check does
 % not compare (the files' positions and encodings); 17
 % |save_for_after| at level |p|; 18 the end of |get_next|, which reads past
-% the call when the token comes from below its body's input level), and
+% the call when the token comes from below its body's input level; 21
+% \.{\\XeTeXdefaultencoding} and \.{\\XeTeXlinebreaklocale}, which write |eqtb|
+% outside |eq_define|), and
 % |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 %
@@ -231,6 +233,26 @@ begin
 @ @<Implement \.{\\XeTeXinputencoding}@>=
 begin if intr_verify_on then flashtex_intr_op(16,0,0,0);
     scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@z
+
+@x xetex.web - \.{\\XeTeXdefaultencoding} writes |eqtb| directly: not replayable (kind 21)
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@y
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin if intr_verify_on then flashtex_intr_op(21,0,0,0);
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@z
+
+@x xetex.web - \.{\\XeTeXlinebreaklocale} writes |eqtb| directly: not replayable (kind 21)
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin
+  scan_file_name; {scan a filename-like arg for the locale name}
+@y
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin if intr_verify_on then flashtex_intr_op(21,0,0,0);
+  scan_file_name; {scan a filename-like arg for the locale name}
 @z
 
 @x xetex.web - a sparse-array definition ends a recording's replayability
