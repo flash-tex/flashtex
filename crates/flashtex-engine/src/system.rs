@@ -2352,7 +2352,7 @@ pub fn recorder_record_input(name: &str) {
 /// first lookup of a TFM, PK, GF or OFM file reads every `texfonts.map` on
 /// the font map path (fontmap.c's `read_all_maps`, from tex-file.c's
 /// `target_fontmaps`), once per process.
-fn recorder_fontmaps() {
+pub fn recorder_fontmaps() {
     static LISTED: AtomicBool = AtomicBool::new(false);
     if !fontmaps_due(&LISTED, run().recorder) {
         return;
@@ -2411,6 +2411,18 @@ fn recorder_line(prefix: &str, listed: &str) {
         let _ = writeln!(rec.file, "{prefix} {listed}");
         let _ = rec.file.flush();
     }
+}
+
+/// lib/openclose.c's `recorder_record_output` alone, for the XeTeX port's
+/// `open_output` (which notes the write itself): an `OUTPUT` line.
+pub fn recorder_record_output(name: &str) {
+    recorder_line("OUTPUT", name);
+}
+
+/// `recorder_change_filename(new_name)` for the XeTeX port's `open_log_file`
+/// (the `.fls` takes the job's name; with `-output-directory`, there).
+pub fn recorder_rename(new_name: &str) {
+    recorder_change_filename(new_name)
 }
 
 /// `recorder_change_filename`.
