@@ -35,6 +35,10 @@
 //! on other pages than `--page`), or a line with no plain word for the edit,
 //! exits 2 with a message.
 //!
+//! `--jump-viewport MS` first sends `VIEWPORT` with the watched page (spec
+//! §6.3.1, the jump a user makes before typing there) and waits MS ms (0:
+//! types at once).
+//!
 //! `--interval-ms MS` types on a clock instead (keystroke k sent at k * MS,
 //! whatever the host is doing, as a user types; with `--kind letter`, two
 //! letters typed and deleted in turn, `--keys` a multiple of 4, so that no
@@ -682,6 +686,10 @@ fn main() {
         let _ = std::io::stdout().flush();
         let _ = c.bye();
         return;
+    }
+    if let Some(ms) = arg("--jump-viewport").and_then(|v| v.parse::<u64>().ok()) {
+        c.set_viewport(page).expect("send VIEWPORT");
+        std::thread::sleep(std::time::Duration::from_millis(ms));
     }
     for k in 0..keys {
         if overlap {

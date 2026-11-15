@@ -1990,6 +1990,422 @@ fn newer_work_far_from_the_cursor_stops_at_a_held_segment() {
     check_against(&e, &dir, &reference, &r2, "after a stop at a held segment");
 }
 
+/// VIEWPORT (lane MEMORY, `Session::redensify`): far from the cursor,
+/// retention keeps the page checkpoints and no segment ones. After the
+/// client shows a far page, an idle run with nothing changed takes the
+/// checkpoints around it again; a key that comes while that run is still
+/// going stops it, and its compile drops it: back to the complete run,
+/// with nothing shipped again from the idle run's start, so the key
+/// restarts as if there had been no VIEWPORT. The output is a scratch
+/// run's each time. One paragraph a page (`\newpage`), so paragraph `k`
+/// is page `k`.
+#[test]
+fn a_viewport_far_away_takes_its_checkpoints_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let body = |edits: &[(usize, &str)]| {
+        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..120 {
+            let w = edits.iter().find(|x| x.0 == i).map_or("delta", |x| x.1);
+            d.push_str(&para(i, w));
+            d.push_str("\\newpage\n");
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let dir = e.dir.join("viewport-far");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
+    let env = [("FLASHTEX_DENSE", "2"), ("FLASHTEX_SEGMENT_S", "0.000001")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "pages"), "120", "{r}");
+    // the cursor near the start
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &body(&[(1, "alpha")]))],
+        "near",
+    );
+    let restart = |r: &str| field(r, "restart_pages").parse::<usize>().unwrap();
+    // a key far from the cursor, without VIEWPORT (the cursor goes there)
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &body(&[(1, "alpha"), (61, "beta")]))],
+        "far, no viewport",
+    );
+    // nothing to do near the cursor (there now)
+    let c = field(&r, "cursor").to_string();
+    assert_eq!(h.cmd(&format!("redensify {c}")).trim(), "null");
+    // far from it: the idle run starts pages before the page
+    let k = 91;
+    let r = h.cmd(&format!("redensify {k}"));
+    assert_ne!(r.trim(), "null", "far from the cursor");
+    assert!(restart(&r) + 2 <= k, "{r}");
+    assert_eq!(field(&r, "paused"), "false", "{r}");
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[(
+            "doc.tex",
+            &body(&[(1, "alpha"), (61, "beta"), (k, "gamma")]),
+        )],
+        "far, after a viewport",
+    );
+    assert!(restart(&r) + 1 >= k, "restarted pages back from {k}: {r}");
+    // a key while the idle run at a page as far is going (stopped after its
+    // first page): dropped, the key restarts where it would without it,
+    // not back at the idle run's start
+    let k2 = 31;
+    let r = h.cmd(&format!("redensify-interrupt {k2} 1"));
+    assert_eq!(field(&r, "paused"), "true", "{r}");
+    let idle_start = restart(&r);
+    assert!(idle_start + 2 <= k2, "{r}");
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[(
+            "doc.tex",
+            &body(&[(1, "alpha"), (61, "beta"), (k, "gamma"), (k2, "eps")]),
+        )],
+        "far, a key during the idle run",
+    );
+    assert!(
+        restart(&r) > idle_start && restart(&r) + 1 >= k2,
+        "the dropped idle run's pages were typeset again (it started at {idle_start}): {r}"
+    );
+}
+
+/// REVIEW-2248's MINOR 1: another program (a `git checkout`, a sync
+/// client) rewrites a file the document `\input`s on the shown page
+/// shown page while the idle run (`Session::redensify`) is going. The run
+/// reads the new text, so its page there differs from the old run's: it
+/// stops and is dropped, and the next compile finds the change and ships
+/// it. Before the fix the idle run went on to the end, took the file into
+/// the journal, and that compile reported `unchanged`. One paragraph a page.
+#[test]
+fn a_viewport_idle_run_drops_a_change_made_while_it_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const AT: usize = 95;
+    let body = |edits: &[(usize, &str)]| {
+        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..120 {
+            if i == AT {
+                d.push_str("\\input{chap}\n\n");
+            } else {
+                let w = edits.iter().find(|x| x.0 == i).map_or("delta", |x| x.1);
+                d.push_str(&para(i, w));
+            }
+            d.push_str("\\newpage\n");
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let dir = e.dir.join("viewport-write-during");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
+    std::fs::write(dir.join("chap.tex"), para(AT, "delta")).unwrap();
+    let env = [("FLASHTEX_DENSE", "2"), ("FLASHTEX_SEGMENT_S", "0.000001")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "pages"), "120", "{r}");
+    // the cursor near the start
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &body(&[(1, "alpha")]))],
+        "near",
+    );
+    // the shown page is the `\input`'s (read before the first test); the
+    // file is rewritten once the idle run has shipped its first page
+    let k = AT;
+    let chap = dir.join("chap.tex");
+    let new = para(AT, "omega").replace('\n', " ");
+    let r = h.cmd(&format!("redensify-write {k} 1 {} {new}", chap.display()));
+    assert_ne!(r.trim(), "null", "far from the cursor");
+    assert!(
+        field(&r, "restart_pages").parse::<usize>().unwrap() + 2 <= k,
+        "{r}"
+    );
+    assert_eq!(field(&r, "paused"), "false", "{r}");
+    assert_eq!(
+        field(&r, "mode"),
+        "\"idle-dropped\"",
+        "the idle run took in the file written while it ran: {r}"
+    );
+    // the next compile sees the change (the output is a scratch run's)
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[],
+        "the file written during the idle run",
+    );
+    assert_ne!(field(&r, "mode"), "\"unchanged\"", "{r}");
+}
+
+/// REVIEW-E's #9 on #2248: an idle run that must be dropped but cannot go
+/// back to the complete run (`abandon_paused` falls back to settling it:
+/// here because the changed file opens an output file the old run never
+/// opened, which no tail of it holds) is settled. The document is then its
+/// pages so far, and the journal holds the changed file as it read it, so
+/// the next compile, with nothing else changed, found nothing to do:
+/// `unchanged` over a cut PDF. It must run again from the idle run's start
+/// and give a scratch run's output. (`\nofiles`: with an `.aux` the next
+/// compile ran again from page 0 anyway, measured, which is correct if
+/// slow. Without the fix this test's next compile differs from a scratch
+/// run; with it, it restarts at the idle run's start, page 93.)
+#[test]
+fn a_viewport_idle_run_that_cannot_be_dropped_is_run_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const AT: usize = 95;
+    let body = |word: &str| {
+        let mut d = String::from("\\documentclass{article}\n\\nofiles\n\\begin{document}\n");
+        for i in 0..120 {
+            if i == AT {
+                d.push_str("\\input{chap}\n\n");
+            } else {
+                d.push_str(&para(i, if i == 1 { word } else { "delta" }));
+            }
+            d.push_str("\\newpage\n");
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let dir = e.dir.join("viewport-settled");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), body("delta")).unwrap();
+    std::fs::write(dir.join("chap.tex"), para(AT, "delta")).unwrap();
+    let env = [("FLASHTEX_DENSE", "2"), ("FLASHTEX_SEGMENT_S", "0.000001")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "pages"), "120", "{r}");
+    // the cursor near the start
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &body("alpha"))], "near");
+    // the new text opens a file for output: the idle run that reads it
+    // cannot be dropped
+    let chap = dir.join("chap.tex");
+    let new = format!(
+        "\\newwrite\\extra\\immediate\\openout\\extra=extra.txt \\immediate\\write\\extra{{x}}\\immediate\\closeout\\extra {}",
+        para(AT, "omega").replace('\n', " ")
+    );
+    let r = h.cmd(&format!("redensify-write {AT} 1 {} {new}", chap.display()));
+    assert_eq!(field(&r, "mode"), "\"idle-dropped\"", "{r}");
+    // (settled, not dropped: the document is cut at the idle run's stop)
+    let cut = field(&r, "pages").parse::<usize>().unwrap();
+    assert!(cut < 120, "the idle run went back to the complete run: {r}");
+    let r = compile_and_check(&e, &mut h, &dir, &[], "after the idle run was settled");
+    assert_ne!(field(&r, "mode"), "\"unchanged\"", "{r}");
+    assert_eq!(field(&r, "pages"), "120", "{r}");
+}
+
+/// REVIEW-2248's MINOR 3: the shown page's window (`Session::view`) is the
+/// cursor's `dense` pages either side, at most Balanced's 16; with High
+/// Performance's 512 it held up to 1,025 dense pages. Here `dense` is 20,
+/// the shown page 40: after the cursor goes far away, the segment
+/// checkpoints a key made 14 pages from the shown page stay, and those 18
+/// pages from it go (a key there again restarts at a page checkpoint).
+/// Five paragraphs a page; the output is a scratch run's each time.
+#[test]
+fn a_viewport_window_is_at_most_balanceds() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const PAGES: usize = 100;
+    let last = |p: usize| 5 * p + 4;
+    let body = |edits: &[(usize, &str)]| {
+        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..5 * PAGES {
+            let w = edits.iter().find(|x| x.0 == i).map_or("delta", |x| x.1);
+            d.push_str(&para(i, w));
+            if i % 5 == 4 {
+                d.push_str("\\newpage\n");
+            }
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let restart = |r: &str| field(r, "restart_pages").parse::<usize>().unwrap();
+    let mid = |r: &str| field(r, "restart_mid_page") == "true";
+    let dir = e.dir.join("viewport-window");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
+    let env = [("FLASHTEX_DENSE", "20"), ("FLASHTEX_SEGMENT_S", "0.000001")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "pages"), PAGES.to_string(), "{r}");
+    let (b, inside, outside, far) = (40, 54, 58, 95);
+    let r = h.cmd(&format!("redensify {b}"));
+    assert_ne!(r.trim(), "null", "far from the cursor: {r}");
+    let mut edits: Vec<(usize, &str)> = vec![];
+    let mut key = |h: &mut Host, page: usize, w: &'static str, what: &str| {
+        edits.retain(|x| x.0 != last(page));
+        edits.push((last(page), w));
+        compile_and_check(&e, h, &dir, &[("doc.tex", &body(&edits))], what)
+    };
+    key(
+        &mut h,
+        inside,
+        "alpha",
+        "a key 14 pages from the shown page",
+    );
+    key(&mut h, outside, "alpha", "a key 18 pages from it");
+    key(&mut h, far, "alpha", "a key far away");
+    let r = key(&mut h, inside, "beta", "14 pages from the shown page again");
+    assert!(mid(&r) && restart(&r).abs_diff(inside) <= 1, "{r}");
+    let r = key(&mut h, outside, "beta", "18 pages from it again");
+    assert!(
+        !mid(&r),
+        "the window kept 18 pages from the shown page: {r}"
+    );
+}
+
+/// REVIEW-E's MAJOR on #2248: the user types at page A, glances at a far
+/// page B (VIEWPORT, whose idle run completes there), then types at A
+/// again without scrolling back. Retention keeps A's window as well as
+/// B's (`Session::view`): the key back at A restarts at the same segment
+/// checkpoint as with no VIEWPORT at all (main's behaviour), and a key at
+/// B does too. An idle run takes no change it finds (a `.bbl` a tool
+/// wrote, REVIEW-E's MINOR): it does not run, and the next compile ships
+/// the change. Five paragraphs a page, so a restart mid-page is a segment
+/// checkpoint's. The output is a scratch run's each time.
+#[test]
+fn a_viewport_keeps_the_last_edits_checkpoints() {
+    viewport_keeps_the_last_edits_checkpoints(20, 50);
+}
+
+/// REVIEW-2248: the shown page B before the last edit A.
+#[test]
+fn a_viewport_before_the_edit_keeps_its_checkpoints() {
+    viewport_keeps_the_last_edits_checkpoints(40, 10);
+}
+
+/// REVIEW-2248: B = A ± (dense + 1), the nearest page that takes an idle
+/// run (dense 2 here): its restart point lies inside A's window, and its
+/// first convergence test after it (B < A) or inside it (B > A).
+#[test]
+fn a_viewport_just_past_the_edits_window_keeps_its_checkpoints() {
+    viewport_keeps_the_last_edits_checkpoints(20, 23);
+    viewport_keeps_the_last_edits_checkpoints(20, 17);
+}
+
+fn viewport_keeps_the_last_edits_checkpoints(a: usize, b: usize) {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const PAGES: usize = 60;
+    // the last paragraph of page `p` (0-based)
+    let last = |p: usize| 5 * p + 4;
+    let body = |edits: &[(usize, &str)]| {
+        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..5 * PAGES {
+            let w = edits.iter().find(|x| x.0 == i).map_or("delta", |x| x.1);
+            d.push_str(&para(i, w));
+            if i % 5 == 4 {
+                d.push_str("\\newpage\n");
+            }
+        }
+        d.push_str("\\input{doc.bbl}\n\\end{document}\n");
+        d
+    };
+    let restart = |r: &str| field(r, "restart_pages").parse::<usize>().unwrap();
+    let mid = |r: &str| field(r, "restart_mid_page") == "true";
+    let env = [("FLASHTEX_DENSE", "2"), ("FLASHTEX_SEGMENT_S", "0.000001")];
+    // (the key back at A's report, a key at B's; with or without VIEWPORT)
+    let run = |viewport: bool| -> (String, String) {
+        let dir = e.dir.join(format!("viewport-keeps-{a}-{b}-{viewport}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
+        std::fs::write(dir.join("doc.bbl"), "Bibliography one.\n").unwrap();
+        let mut h = Host::start_env(&e, &dir, &env);
+        let r = h.cmd("compile");
+        assert_eq!(field(&r, "pages"), (PAGES + 1).to_string(), "{r}");
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &body(&[(last(a), "alpha")]))],
+            "a key at A",
+        );
+        assert!(restart(&r).abs_diff(a) <= 1, "{r}");
+        if viewport {
+            let r = h.cmd(&format!("redensify {b}"));
+            assert_ne!(r.trim(), "null", "far from the cursor");
+            assert_eq!(field(&r, "paused"), "false", "{r}");
+            // (at B: from a page checkpoint before it, not at A's restart)
+            assert!(restart(&r) + 2 <= b && restart(&r) + 8 >= b, "{r}");
+            if a.abs_diff(b) > 5 {
+                assert!(restart(&r).abs_diff(a) > 2, "the idle run ran at B: {r}");
+            }
+            // the same page again: dense already
+            assert_eq!(h.cmd(&format!("redensify {b}")).trim(), "null");
+        }
+        let back = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &body(&[(last(a), "beta")]))],
+            "the key back at A",
+        );
+        // a tool writes the `.bbl` while the user looks a few pages on
+        std::fs::write(dir.join("doc.bbl"), "Bibliography two.\n").unwrap();
+        if viewport {
+            let r = h.cmd(&format!("redensify {}", b + 5));
+            assert_eq!(r.trim(), "null", "an idle run took the .bbl: {r}");
+        }
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &body(&[(last(a), "beta")]))],
+            "the .bbl the tool wrote",
+        );
+        assert_ne!(field(&r, "mode"), "\"unchanged\"", "{r}");
+        let at_b = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &body(&[(last(a), "beta"), (last(b), "gamma")]))],
+            "a key at B",
+        );
+        (back, at_b)
+    };
+    let (main_back, main_b) = run(false);
+    let (vp_back, vp_b) = run(true);
+    // without VIEWPORT, A's segment checkpoint: a restart mid-page
+    assert!(mid(&main_back), "{main_back}");
+    assert_eq!(
+        (restart(&vp_back), mid(&vp_back)),
+        (restart(&main_back), mid(&main_back)),
+        "the key back at A after a VIEWPORT at B: {vp_back}\nwithout: {main_back}"
+    );
+    // and B's window stays: mid-page there too, where main restarts at a
+    // page checkpoint
+    assert!(!mid(&main_b), "{main_b}");
+    assert!(mid(&vp_b) && restart(&vp_b).abs_diff(b) <= 1, "{vp_b}");
+}
+
 /// `k` in lower-case roman numerals (control sequence names of letters).
 fn roman(mut k: usize) -> String {
     let mut s = String::new();
