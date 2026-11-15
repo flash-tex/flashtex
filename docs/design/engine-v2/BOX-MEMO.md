@@ -344,6 +344,12 @@ operations are all local (§11.2, MACRO-REPLAY revision 5's §11.5).
     from an old run that was not recording, so it does not converge there. That is conservative.
   - The version words are fresh numbers. The convergence test treats them as dead (`incr.rs`
     `dead_word`): the arrays they name are compared themselves.
+  - A version is a number of the process that took it (each process counts from 1). A stored S₀ or
+    S₁ holds its writer's, so a process that opens one names the state it read afresh
+    (`boxmemo::opened`, from `host::read_s0` and `host::s1::File::load_into`). Without that the
+    stored number was one this process gave another state, at the first font change after an open
+    at the latest, and a call recorded before the change replayed after it (lane F-FONTKEY; test
+    `a_stored_s0s_font_version_is_not_one_of_the_opening_process`).
 - **Checkpoints inside a recording are fine.** A segment or timed checkpoint in the middle of a
   recording is an ordinary checkpoint. A later restore to it finds `bm_rec_on` true and the Rust
   recorder gone, and `after_restore` clears the flag.

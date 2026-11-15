@@ -1226,6 +1226,21 @@ fn pop_used_up(g: &mut Globals) {
     }
 }
 
+/// A stored image was put into `g`: the host's S₀ or S₁, read from a file
+/// that any process may have written (`host::read_s0`,
+/// `host::s1::File::load_into`). The image holds its writer's version
+/// words, and a version is a number of the process that took it
+/// (`fresh_version` counts from 1 in each): here it would be equal to a
+/// version this process gives another state, the first font change after
+/// an open at the latest (it gave `next_version` its first number, which
+/// was the stored one's), and a call recorded before the change replayed
+/// after it. So the state just read is named afresh, before its checkpoint
+/// is taken: nothing this process recorded describes it (lane F-FONTKEY).
+pub fn opened(g: &mut Globals) {
+    g.bm_font_version = fresh_version();
+    g.bm_hyph_version = fresh_version();
+}
+
 pub fn after_restore(g: &mut Globals) {
     // (the word space is another state: §12.4's entries say nothing of it)
     seen_clear();
