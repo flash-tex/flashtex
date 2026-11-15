@@ -202,10 +202,13 @@ jobs:
           FLASHTEX_V3_PARITY_SCALES: ${{ inputs.scales || '1,2,4' }}
         # The Core Graphics sweep, the checked-in fixture and the renderer's
         # own checks; not the PDFKit comparison (a looser bound than 0 px,
-        # and a third full render of every page).
+        # and a third full render of every page). LinkBorderMeasureTests
+        # measures, on the pages with links only, what PDFKit draws for link
+        # borders that Core Graphics does not (`link-borders:` lines in the
+        # log, parity.links.json); it never fails on what it measures.
         run: |
           set -o pipefail
-          swift test --filter 'PreviewParityTests/(testEveryParityFixtureIsPixelIdenticalToThePDF|testCheckedInFixtureIsPixelIdenticalToThePDF|testGlyphsAreDrawnAtTheirOrigins|testScreenLayoutDrawsTheSamePixels)' \
+          swift test --filter 'PreviewParityTests/(testEveryParityFixtureIsPixelIdenticalToThePDF|testCheckedInFixtureIsPixelIdenticalToThePDF|testGlyphsAreDrawnAtTheirOrigins|testScreenLayoutDrawsTheSamePixels)|LinkBorderMeasureTests' \
             2>&1 | tee "$DL3/swift-test.log" | grep -vE '^\s*$' | tail -n 200
       - name: summary (per scale, fallback rate, fallback pages)
         if: always()
@@ -213,12 +216,14 @@ jobs:
           python3 tools/displaylist/preview_parity_summary.py \
             --sweep "$DL3/parity.coreGraphics.json" \
             --positions "$DL3/positions.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo; echo '```'; grep -h 'link-borders:' "$DL3/swift-test.log" | tail -n 40 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: preview-parity-report
           path: |
             ${{ env.DL3 }}/parity.coreGraphics.json
+            ${{ env.DL3 }}/parity.links.json
             ${{ env.DL3 }}/swift-test.log
           if-no-files-found: ignore
           retention-days: 30
