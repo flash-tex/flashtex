@@ -179,6 +179,74 @@ fn refuses_another_major_version() {
     let _ = std::fs::remove_file(&path);
 }
 
+// The handshake over a socket pair: Unix only (Windows' AF_UNIX has no
+// socketpair). A host that answers ERROR, names another protocol, or
+// closes before HELLO is refused.
+#[cfg(unix)]
+#[test]
+fn refuses_error_reply() {
+    let (a, b) = Stream::pair().unwrap();
+    let host = std::thread::spawn(move || {
+        let mut h = a;
+        read_frame(&mut h).unwrap().unwrap();
+        write_frame(
+            &mut h,
+            kind::ERROR,
+            obj([("message", s("busy"))]).to_string().as_bytes(),
+        )
+        .unwrap();
+    });
+    let err = Client::over(b).err().expect("an ERROR reply is refused");
+    assert!(err.to_string().contains("host refused"), "{err}");
+    host.join().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_wrong_protocol() {
+    let (a, b) = Stream::pair().unwrap();
+    let host = std::thread::spawn(move || {
+        let mut h = a;
+        read_frame(&mut h).unwrap().unwrap();
+        write_frame(
+            &mut h,
+            kind::HELLO,
+            obj([
+                ("protocol", s("display-list-v2")),
+                ("version", Json::Arr(vec![Json::Int(3), Json::Int(0)])),
+            ])
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+    });
+    let err = Client::over(b).err().expect("a wrong protocol is refused");
+    assert!(
+        err.to_string().contains("not a display-list-v3 host"),
+        "{err}"
+    );
+    host.join().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_close_before_hello() {
+    let (a, b) = Stream::pair().unwrap();
+    let host = std::thread::spawn(move || {
+        let mut h = a;
+        read_frame(&mut h).unwrap().unwrap();
+        // Drop `h`: the host closes before HELLO.
+    });
+    let err = Client::over(b)
+        .err()
+        .expect("a close before HELLO is refused");
+    assert!(
+        err.to_string().contains("host closed before HELLO"),
+        "{err}"
+    );
+    host.join().unwrap();
+}
+
 // A socket pair: Unix only (Windows' AF_UNIX has no socketpair).
 #[cfg(unix)]
 #[test]
@@ -203,4 +271,68 @@ fn corrupt_page_fails_closed() {
     assert!(e.to_string().contains("opcode"), "{e}");
     t.join().unwrap();
     let _ = b.flush();
+}
+
+/// Frames far bigger than the socket's buffer (lane AUDIT-DL): a 48 MiB
+/// font program and a page of 600,000 glyphs (about 8 MB), written by a
+/// host that blocks on the full socket while the client reads slowly, arrive
+/// whole and decode to what was sent.
+#[cfg(unix)]
+#[test]
+fn frames_bigger_than_the_socket_buffer_arrive_whole() {
+    let (a, b) = Stream::pair().unwrap();
+    let font = Font {
+        id: 7,
+        key: [9; 32],
+        info: obj([("pdf_name", s("F7")), ("format", s("type1"))]),
+        program: (0..48u32 << 20)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect(),
+    };
+    let mut page = Page::new(StreamKind::Page, 3);
+    page.width = 40_000_000;
+    page.height = 50_000_000;
+    page.items = (0..600_000i32)
+        .map(|i| Item::Glyph {
+            font: 7,
+            code: (i % 256) as u16,
+            x: i * 13,
+            y: i * 7,
+            col: (i % 1000) as u16,
+        })
+        .collect();
+    let (f2, p2) = (font.clone(), page.clone());
+    let t = std::thread::spawn(move || {
+        let mut a2 = a.try_clone().unwrap();
+        read_frame(&mut a2).unwrap().unwrap();
+        write_frame(&mut a2, kind::HELLO, &hello(3)).unwrap();
+        write_frame(&mut a2, kind::FONT, &f2.encode()).unwrap();
+        write_frame(&mut a2, kind::PAGE, &p2.encode()).unwrap();
+        write_frame(
+            &mut a2,
+            kind::DONE,
+            br#"{"id": 1, "status": "ok", "pages": 4}"#,
+        )
+        .unwrap();
+    });
+    let mut c = Client::over(b).unwrap();
+    // (the host fills the socket before the client reads on)
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    match c.next_event().unwrap().unwrap() {
+        Event::Font(f) => {
+            assert_eq!((f.id, f.key), (font.id, font.key));
+            assert!(f.program == font.program, "the program arrived whole");
+        }
+        e => panic!("{e:?}"),
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    match c.next_event().unwrap().unwrap() {
+        Event::Page(p) => assert!(p == page, "the page arrived whole"),
+        e => panic!("{e:?}"),
+    }
+    match c.next_event().unwrap().unwrap() {
+        Event::Done(d) => assert_eq!(d.int_field("pages"), Some(4)),
+        e => panic!("{e:?}"),
+    }
+    t.join().unwrap();
 }

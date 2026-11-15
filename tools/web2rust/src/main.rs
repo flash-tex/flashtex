@@ -71,6 +71,14 @@ struct Args {
     /// whose body the TeX engines write by hand (`a_open_in`, `input_ln`,
     /// ...); BibTeX's `input_ln` is its own Pascal.
     translate: Vec<String>,
+    /// `--total-division`: `div` and `mod` by a divisor that is not a
+    /// constant give what TeX Live's C build gives on AArch64 when the
+    /// divisor is 0, or -1 with the most negative dividend, instead of
+    /// panicking (emit.rs, `TOTAL_DIVISION`).
+    total_division: bool,
+    /// `--exact-abs`: an integer `abs` that is compared or divided is its
+    /// exact value, as in TeX Live's clang build (emit.rs, `exact_abs`).
+    exact_abs: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -113,6 +121,8 @@ fn parse_args() -> Result<Args, String> {
         first_string: 256,
         host_state: None,
         translate: vec![],
+        total_division: false,
+        exact_abs: false,
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -182,6 +192,8 @@ fn parse_args() -> Result<Args, String> {
             "--translate" => a
                 .translate
                 .push(it.next().ok_or("--translate needs a routine name")?),
+            "--total-division" => a.total_division = true,
+            "--exact-abs" => a.exact_abs = true,
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -322,6 +334,8 @@ fn main() -> ExitCode {
         &args.inline,
         &args.array_views,
         &args.translate,
+        args.total_division,
+        args.exact_abs,
     ) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;

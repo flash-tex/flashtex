@@ -20,6 +20,7 @@ public struct DL3Document {
             case .page(let p): pages[p.index] = bindings.prepare(p)
             case .form(let p): forms[p.index] = bindings.prepare(p)
             case .sources(let src): sources.apply(src)
+            case .spanShift(let s): sources.shift(s)
             default: break
             }
         }

@@ -1,0 +1,26 @@
+Stats {
+    offers: 2152,
+    hits: 1254,
+    replayed_ops: 3377,
+    recordings: 897,
+    committed: 896,
+    verified: 0,
+    verify_differences: 0,
+    full_verified: 0,
+    full_differences: 0,
+    entered: 0,
+    meanings_walked: 2433,
+    meanings_seen: 84374,
+    seen_cleared: 1,
+    abandoned: {
+        "Level": 1,
+    },
+    misses: {
+        "Meanings": 262,
+        "NotRecorded": 636,
+    },
+    budget_stopped: 1,
+    verify_details: [],
+    entries: 897,
+    bytes: 7698044,
+}

@@ -516,6 +516,38 @@ struct CameraPicker: UIViewControllerRepresentable {
     }
 }
 
+/// A capture's thumbnail: decoded once, off the main actor, then drawn
+/// from `CaptureThumbnails` on every re-render (the list re-renders on each
+/// outcome poll; decoding the full PNG in the row's body cost a full-size
+/// decode per row per poll on the main thread).
+struct CaptureThumbnail: View {
+    let id: String
+    let png: Data
+    let thumbnails: CaptureThumbnails
+    @State private var image: CGImage?
+
+    init(id: String, png: Data, thumbnails: CaptureThumbnails) {
+        self.id = id; self.png = png; self.thumbnails = thumbnails
+        _image = State(initialValue: thumbnails.cached(id))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 1).resizable().scaledToFit()
+            } else {
+                Color.white
+            }
+        }
+        .frame(width: 72, height: 54).background(Color.white).border(.gray.opacity(0.3))
+        .task(id: id) {
+            guard image == nil else { return }
+            let id = id, png = png, thumbnails = thumbnails
+            image = await Task.detached(priority: .utility) { thumbnails.thumbnail(id: id, png: png) }.value
+        }
+    }
+}
+
 struct CapturesList: View {
     @EnvironmentObject var model: PadModel
 
@@ -525,9 +557,7 @@ struct CapturesList: View {
                 if model.captures.isEmpty { Text("none yet").foregroundStyle(.secondary) }
                 ForEach(model.captures) { c in
                     HStack(alignment: .top) {
-                        if let img = UIImage(data: c.png) {
-                            Image(uiImage: img).resizable().scaledToFit().frame(width: 72, height: 54).background(Color.white).border(.gray.opacity(0.3))
-                        }
+                        CaptureThumbnail(id: c.id, png: c.png, thumbnails: model.thumbnails)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.id).font(.caption.monospaced())
                             Text("\(c.source.rawValue) · \(c.png.count) bytes · “\(c.instructions)”").font(.caption).foregroundStyle(.secondary)

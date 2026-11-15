@@ -182,9 +182,11 @@ MathPackages}`. Its feature list goes to the conversion model for iPad captures,
 is a user-visible contract. #1400 keeps it byte-identical (193 entries), and the
 transfer protocol does not change.
 
-The IDE crates stay: preview-controller, document-runtime, project-index, edit-ledger,
-project-files, project-manifest, package-resolver and docstrip. RQ7 covers
-preview-controller once its runtime-v1 producer is gone.
+At this stage the IDE crates stayed: preview-controller, document-runtime,
+project-index, edit-ledger, project-files, project-manifest, package-resolver and
+docstrip. RQ7 covers preview-controller once its runtime-v1 producer is gone.
+Preview-controller retired in S7; document-runtime retired after S8 when its
+consumer check found none (review 2026-11-01, §5 item 5).
 
 ### 1.4 apps/mac (Swift)
 
