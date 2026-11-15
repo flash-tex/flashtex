@@ -77,7 +77,19 @@ import subprocess
 import tempfile
 import threading
 
-import harness  # tools/parity, on sys.path wherever this module is imported
+try:
+    import harness  # tools/parity, on sys.path for every tools/parity importer
+except ModuleNotFoundError:
+    # tools/lockstep/run.py loads this file by path for `ElapsedMask`, with
+    # tools/lockstep (not tools/parity) on sys.path: load harness.py, which is
+    # beside this file, the same way.
+    import importlib.util
+    import sys
+    _spec = importlib.util.spec_from_file_location(
+        "_parity_harness", os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness.py"))
+    harness = importlib.util.module_from_spec(_spec)
+    sys.modules["_parity_harness"] = harness
+    _spec.loader.exec_module(harness)
 
 # The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
 # §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
