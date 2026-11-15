@@ -598,8 +598,8 @@ fn printing_reads_category_codes_and_the_escape_character() {
         "\\documentclass{article}\\def\\IntrM{\\b}\n\
          \\def\\pdfstringdefPreHook{\\edef\\IntrS{\\meaning\\IntrM}}\n\
          \\begin{document}\\relax\n\\pdfstringdefPreHook\\pdfstringdefPreHook \\IntrS\\par\n\
-         {\\catcode`\\b=12 \\pdfstringdefPreHook \\IntrS\\par}\n\
-         {\\escapechar=`\\! \\pdfstringdefPreHook \\IntrS\\par}\n\
+         \\catcode`\\b=12 \\pdfstringdefPreHook \\IntrS\\par\\catcode`\\b=11\n\
+         \\escapechar=`\\! \\pdfstringdefPreHook \\IntrS\\par\\escapechar=92\n\
          \\pdfstringdefPreHook \\IntrS\\par\\end{document}\n",
     ) else {
         return;
@@ -852,11 +852,17 @@ fn a_replay_is_refused_where_the_real_path_would_raise_a_high_water_mark() {
     let saves: String = (0..600)
         .map(|k| format!("\\def\\IntrQ{}{{}}", letters(k)))
         .collect();
-    let Some((on, verify)) = modes_agree(&three_calls(
-        "",
-        &format!("\\begingroup{saves}\\endgroup"),
-        "\\begingroup\\def\\IntrZa{}\\def\\IntrZb{}\\def\\IntrZc{}\\relax\
-         \\pdfstringdefPreHook\\endgroup",
+    // (every call in a group: a variant recorded at level one is not
+    // admitted deeper, `Ctx::level_one`)
+    let Some((on, verify)) = modes_agree(&format!(
+        "\\documentclass{{article}}\n\
+         \\def\\pdfstringdefPreHook{{\\begingroup{saves}\\endgroup}}\n\
+         \\begin{{document}}\\relax\n\
+         \\begingroup\\relax\\pdfstringdefPreHook\\relax\\endgroup\n\
+         \\begingroup\\def\\IntrZa{{}}\\def\\IntrZb{{}}\\def\\IntrZc{{}}\\relax\
+         \\pdfstringdefPreHook\\relax\\endgroup\n\
+         \\begingroup\\relax\\pdfstringdefPreHook\\relax\\endgroup\n\
+         x\\end{{document}}\n"
     )) else {
         return;
     };
@@ -895,6 +901,40 @@ fn the_one_word_room_counts_only_the_runs_own_cells() {
     };
     assert_eq!(count(&on, "replayed"), 0, "{on}");
     assert_eq!(count(&on, "missed.HighWater"), 1, "{on}");
+}
+
+/// Whether the run frees a list of its own depends on the level it
+/// starts at: the hook `\gdef`s `\IntrX` to a long list (its own cells),
+/// then `\def`s it again, which frees the list at level one
+/// (`eq_destroy`) and saves it deeper (`eq_save`). Recorded in the preamble
+/// (level one, a peak of about one copy), called inside a group the real
+/// path holds two copies at once; the context's `level_one` keeps the
+/// variant from that call. (Re-review F-XINTR-REV on #2251: before, on
+/// said 1048023 words of memory where off said 1080792.)
+#[test]
+fn a_variant_recorded_at_level_one_is_not_replayed_in_a_group() {
+    // \IntrA: 4 * 2^14 = 65536 letters; \IntrH: half of it
+    let copy = "\\unexpanded\\expandafter{\\IntrA}";
+    let half = "\\unexpanded\\expandafter{\\IntrH}";
+    let double = format!("\\edef\\IntrA{{{copy}{copy}}}\n");
+    let Some((on, _)) = modes_agree(&format!(
+        "\\documentclass{{article}}\n\\def\\IntrPa#1{{}}\n\
+         \\def\\IntrA{{aaaa}}\n{}\\let\\IntrH\\IntrA\n{}\
+         \\edef\\pdfstringdefPreHook{{\\noexpand\\gdef\\noexpand\\IntrX{{{copy}}}\
+         \\noexpand\\def\\noexpand\\IntrX{{y}}\\noexpand\\IntrPa{{{copy}}}\\noexpand\\relax}}\n\
+         \\relax\\pdfstringdefPreHook\\relax\n\
+         \\begin{{document}}\\relax\n\
+         \\edef\\IntrD{{{copy}{copy}{copy}{copy}{copy}}}\n\
+         \\edef\\IntrT{{{copy}{half}}}\\let\\IntrT\\relax\n\
+         \\begingroup\\relax\\pdfstringdefPreHook\\relax\\endgroup\n\
+         x\\end{{document}}\n",
+        double.repeat(13),
+        double
+    )) else {
+        return;
+    };
+    assert_eq!(count(&on, "replayed"), 0, "{on}");
+    assert_eq!(count(&on, "missed.Context"), 1, "{on}");
 }
 
 /// Verify compares the high-water marks and the extent of `mem`: with the
