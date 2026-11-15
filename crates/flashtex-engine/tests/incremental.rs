@@ -381,8 +381,8 @@ fn intrinsics_verify_in_the_host() {
             if fault.is_empty() {
                 let r = compile_and_check(&e, &mut h, &dir, &fs, &format!("compile {k}"));
                 if k == 2 {
-                    // a restart: its checks run with the old run's future
-                    // detached (a pending branch)
+                    // a restart (from S0, with no convergence tests: no
+                    // pending branch while its checks run)
                     assert!(r.contains("\"mode\":\"incremental\""), "{r}");
                 }
             } else {
@@ -409,7 +409,8 @@ fn intrinsics_verify_in_the_host() {
         let checks = counts.len();
         let differing = counts.iter().filter(|&&n| n > 0).count();
         // every check drops its checkpoint, in the restarted run too
-        // (REVIEW-A on #2161)
+        // (REVIEW-A on #2161: with a pending branch `drop_checkpoint` still
+        // keeps it; no run here has one)
         let kept: Vec<&str> = err
             .lines()
             .filter(|l| l.ends_with("kept after its check"))
