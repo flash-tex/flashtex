@@ -242,9 +242,6 @@ fn image_key(path: &str, page: i32, pagebox: i32) -> [u8; 32] {
             h.update(&[1]);
             h.update(&s.size.to_le_bytes());
             h.update(&s.mtime_ns.to_le_bytes());
-            h.update(&s.ctime_ns.to_le_bytes());
-            h.update(&s.ino.to_le_bytes());
-            h.update(&s.dev.to_le_bytes());
         }
         Err(_) => h.update(&[0]),
     }
