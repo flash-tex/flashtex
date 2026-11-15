@@ -11,6 +11,7 @@
 //! A special that is not understood is counted by its first word
 //! ([`Doc::unknown`]) and reported, never silently dropped.
 
+use super::cmap::{reencode, CMap, ToUnicode};
 use super::doc::{Col, Named, Outline, Phantom, Tracking};
 use super::page::{fx, Builder, Metrics};
 use super::pdfobj::{Dict, Obj, Parser};
@@ -368,6 +369,24 @@ impl<M: Metrics> Builder<'_, M> {
             self.doc.unknown_special("pdf:");
             return;
         };
+        // spc_pdfm.c's `parse_pdf_dict_with_tounicode`: the dictionary of
+        // these is read tainted after a `pdf:tounicode` of a Shift-JIS-like
+        // CMap
+        p.tainted = self.doc.tounicode.unescape_backslash
+            && matches!(
+                cmd.as_slice(),
+                b"ann"
+                    | b"annot"
+                    | b"annotate"
+                    | b"annotation"
+                    | b"bann"
+                    | b"bannot"
+                    | b"beginann"
+                    | b"outline"
+                    | b"out"
+                    | b"docinfo"
+                    | b"docview"
+            );
         match cmd.as_slice() {
             b"pagesize" | b"papersize" => {} // read before the page
             // PDF 1.4 to 1.7, what the writer writes (dvipdfmx's range); a
@@ -613,7 +632,8 @@ impl<M: Metrics> Builder<'_, M> {
                 let line = trim(p.rest()).to_vec();
                 self.doc.fonts.map_line(&line);
             }
-            b"tounicode" | b"mapfile" | b"encrypt" => {
+            b"tounicode" => self.tounicode(&mut p),
+            b"mapfile" | b"encrypt" => {
                 self.doc.ignored_special(&format!("pdf:{}", lossy(&cmd)));
             }
             _ => self.doc.unknown_special(&format!("pdf:{}", lossy(&cmd))),
@@ -690,13 +710,88 @@ impl<M: Metrics> Builder<'_, M> {
     /// `pdf:docinfo` and `pdf:docview`: [`fixup_dict`](Self::fixup_dict),
     /// with its text strings made UTF-16BE ([`text_strings`]).
     fn text_dict(&mut self, mut d: Dict) -> Dict {
-        if let Err(k) = text_strings(&mut d) {
-            self.doc.diag(format!(
+        let mut warn = Vec::new();
+        match text_strings_with(&mut d, &self.doc.tounicode, &mut warn) {
+            Ok(()) => {}
+            Err(Stop::Failed(k)) => warn.push(format!(
                 "Input string conversion (to UTF16BE) failed for {}...",
                 lossy(&k)
-            ));
+            )),
+            Err(Stop::Fatal(e)) => self.doc.errors.push(e),
+        }
+        for w in warn {
+            self.doc.diag(w);
         }
         self.fixup_dict(d)
+    }
+
+    /// `pdf:tounicode CMAP [/Key ...]` (spc_pdfm.c's
+    /// `spc_handler_pdfm_tounicode`): from now on the text strings of
+    /// [`text_dict`](Self::text_dict) are decoded through the CMap, and the
+    /// array's names are text keys too (for the rest of the document, even
+    /// after another `pdf:tounicode`). A CMap that does not load leaves no
+    /// CMap (strings are read as UTF-8 again) and adds no keys.
+    fn tounicode(&mut self, p: &mut Parser) {
+        const IDENT: &[u8] = b"!\"#$&'*+,-.0123456789:;=?@ABCDEFGHIJKLMNOPQRSTUVWXYZ\\^_`abcdefghijklmnopqrstuvwxyz|~";
+        let tu = &mut self.doc.tounicode;
+        tu.cmap = None;
+        tu.unescape_backslash = false;
+        if p.at_end() {
+            self.doc
+                .diag("Missing CMap name for pdf:tounicode.".into());
+            return;
+        }
+        let st = p.i;
+        while p.i < p.s.len() && IDENT.contains(&p.s[p.i]) {
+            p.i += 1;
+        }
+        let name = p.s[st..p.i].to_vec();
+        if name.is_empty() {
+            self.doc.diag("Missing ToUnicode mapping name...".into());
+            return;
+        }
+        let mut warn = Vec::new();
+        let found = tu.cache.find(&name, &mut warn);
+        for w in warn {
+            self.doc.diag(w);
+        }
+        let tu = &mut self.doc.tounicode;
+        match found {
+            Err(e) => {
+                self.doc.errors.push(e);
+                return;
+            }
+            Ok(None) => {
+                self.doc.diag(format!(
+                    "Failed to load ToUnicode mapping: {}",
+                    lossy(&name)
+                ));
+                return;
+            }
+            Ok(Some(id)) => tu.cmap = Some(id),
+        }
+        tu.unescape_backslash = [&b"RKSJ"[..], b"B5", b"GBK", b"KSC"]
+            .iter()
+            .any(|k| name.windows(k.len()).any(|w| w == *k));
+        if p.at_end() {
+            return;
+        }
+        match p.object() {
+            Some(Obj::Array(a)) => {
+                for k in a {
+                    match k {
+                        Obj::Name(n) => self.doc.tounicode.extra_keys.push(n),
+                        _ => self
+                            .doc
+                            .diag("Invalid argument specified in pdf:tounicode special.".into()),
+                    }
+                }
+            }
+            Some(_) => self
+                .doc
+                .diag("Invalid argument specified in pdf:unicode special.".into()),
+            None => {}
+        }
     }
 
     /// The current point as `@xpos`/`@ypos` give it: the DVI position
@@ -1445,25 +1540,68 @@ const TEXT_KEYS: [&[u8]; 11] = [
 /// as the C's error does (strings after it stay as they are); its key is
 /// the error.
 pub fn text_strings(d: &mut Dict) -> Result<(), Vec<u8>> {
+    match text_strings_with(d, &ToUnicode::default(), &mut Vec::new()) {
+        Ok(()) => Ok(()),
+        Err(Stop::Failed(k)) => Err(k),
+        Err(Stop::Fatal(_)) => unreachable!("no CMap"),
+    }
+}
+
+/// Why [`text_strings_with`] stopped.
+pub enum Stop {
+    /// A string under this key did not convert (the C's warning).
+    Failed(Vec<u8>),
+    /// A fatal dvipdfmx error: the run fails.
+    Fatal(String),
+}
+
+/// `modify_strings` with `pdf:tounicode`'s state ([`ToUnicode`]): the text
+/// keys are the default ones and those `pdf:tounicode` added; with a CMap
+/// in effect, every string under one that does not start with the byte
+/// order mark, ASCII or not, is decoded through the CMap
+/// ([`super::cmap::reencode`]), else it is read as UTF-8 as
+/// [`text_strings`] says. `warn` gets the CMap's warnings.
+pub fn text_strings_with(d: &mut Dict, tu: &ToUnicode, warn: &mut Vec<String>) -> Result<(), Stop> {
+    let cmap = tu.cmap.map(|id| tu.cache.get(id).clone());
+    let cx = (tu, cmap.as_deref());
     for (k, v) in d.0.iter_mut() {
-        text_strings_of(k, v)?;
+        text_strings_of(k, v, cx, warn)?;
     }
     Ok(())
 }
 
-fn text_strings_of(k: &[u8], v: &mut Obj) -> Result<(), Vec<u8>> {
+fn text_strings_of(
+    k: &[u8],
+    v: &mut Obj,
+    cx: (&ToUnicode, Option<&CMap>),
+    warn: &mut Vec<String>,
+) -> Result<(), Stop> {
     match v {
         Obj::Str(s) => {
-            if TEXT_KEYS.contains(&k) && !s.starts_with(b"\xfe\xff") && s.iter().any(|&c| c > 127) {
+            let (tu, cmap) = cx;
+            let key = TEXT_KEYS.contains(&k) || tu.extra_keys.iter().any(|x| x == k);
+            if !key || s.starts_with(b"\xfe\xff") {
+                return Ok(());
+            }
+            if let Some(cmap) = cmap {
+                match reencode(cmap, s, warn) {
+                    Ok(Some(u)) => *s = u,
+                    Ok(None) => return Err(Stop::Failed(k.to_vec())),
+                    Err(e) => return Err(Stop::Fatal(e)),
+                }
+            } else if s.iter().any(|&c| c > 127) {
                 match utf8_to_utf16be(s) {
                     Some(u) => *s = u,
-                    None => return Err(k.to_vec()),
+                    None => return Err(Stop::Failed(k.to_vec())),
                 }
             }
             Ok(())
         }
-        Obj::Array(a) => a.iter_mut().try_for_each(|e| text_strings_of(k, e)),
-        Obj::Dict(d) => text_strings(d),
+        Obj::Array(a) => a.iter_mut().try_for_each(|e| text_strings_of(k, e, cx, warn)),
+        Obj::Dict(d) => d
+            .0
+            .iter_mut()
+            .try_for_each(|(k, v)| text_strings_of(k, v, cx, warn)),
         _ => Ok(()),
     }
 }

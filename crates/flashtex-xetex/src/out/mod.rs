@@ -30,6 +30,7 @@
 
 pub mod agl;
 pub mod cffcid;
+pub mod cmap;
 pub mod content;
 pub mod doc;
 pub mod fontmap;

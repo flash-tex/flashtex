@@ -122,11 +122,20 @@ pub fn is_delim(c: u8) -> bool {
 pub struct Parser<'a> {
     pub s: &'a [u8],
     pub i: usize,
+    /// pdfparse.c's `parser_state.tainted` (`parse_pdf_tainted_dict`, for
+    /// a `pdf:tounicode` CMap of a Shift-JIS-like encoding): in a literal
+    /// string, a byte above 127 and the byte after it are taken as they
+    /// are, so a second byte that is a backslash or `)` is neither an escape nor the end.
+    pub tainted: bool,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(s: &'a [u8]) -> Self {
-        Parser { s, i: 0 }
+        Parser {
+            s,
+            i: 0,
+            tainted: false,
+        }
     }
 
     pub fn rest(&self) -> &'a [u8] {
@@ -369,6 +378,11 @@ impl<'a> Parser<'a> {
         let mut depth = 1;
         while self.i < self.s.len() {
             let c = self.s[self.i];
+            if self.tainted && c & 0x80 != 0 && self.i + 1 < self.s.len() {
+                out.extend_from_slice(&self.s[self.i..self.i + 2]);
+                self.i += 2;
+                continue;
+            }
             self.i += 1;
             match c {
                 b'(' => {
