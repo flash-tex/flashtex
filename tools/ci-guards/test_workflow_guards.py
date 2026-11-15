@@ -98,6 +98,36 @@ class ReopenLegIsRedWhenItsScriptGoes(unittest.TestCase):
         self.assertIn("pull-requests: read", text)
 
 
+class ReportOnlyStepsWarnWhenTheyFail(unittest.TestCase):
+    """unicode-m3 is met (DESIGN §12), so its report-only tool runs do not
+    gate; a failure warns and goes to the job summary (ruling on #2116)."""
+
+    def test_no_tool_run_swallows_its_failure(self):
+        for wf in ("unicode-m3.yml", "unicode-m3-bundle.yml"):
+            text = (WORKFLOWS / wf).read_text()
+            swallowed = [l.strip() for l in text.splitlines() if "| tee " in l and "|| true" in l]
+            self.assertEqual(swallowed, [], f"{wf}: a tool's failure ends in || true")
+            for l in text.splitlines():
+                if "report-only.sh" in l and not l.lstrip().startswith("#"):
+                    self.assertRegex(l, r'report-only\.sh" \S+ \$\? ', f"{wf}: {l.strip()}")
+            self.assertIn("report-only.sh", text, f"{wf}: no report-only step read")
+
+    def test_report_only_warns_and_writes_the_summary(self):
+        import subprocess
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("r", suffix=".md") as summary:
+            r = subprocess.run(
+                [str(ROOT / "scripts" / "ci" / "report-only.sh"), "visual", "3", "pixel counts"],
+                env={**os.environ, "GITHUB_STEP_SUMMARY": summary.name},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("::warning::visual exited 3", r.stdout)
+            self.assertIn("visual exited 3", summary.read())
+
+
 class PathFiltersCoverWhatTheJobsRun(unittest.TestCase):
     def check(self, wf, want):
         blocks = paths_blocks((WORKFLOWS / wf).read_text())
