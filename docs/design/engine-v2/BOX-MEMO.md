@@ -165,7 +165,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
-| K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, `error_count = 0` (§17), the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
+| K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, `error_count = 0` for a call that ends a paragraph and for any recording (§17), the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
 
 **Box registers** are not in the key. A box register the recording reads must be one of two kinds:
 - one it wrote first;
@@ -1126,9 +1126,17 @@ the guard admitted `\@oddhead` with the count at 2. The normal path reset it, th
 have left it at 2, and the verifier's abandoned recording counted as a difference ("a verification
 found a difference", exit 3, in the CI sweeps of #2041, #2064, #1992 and #2093). The count matters:
 replayed after 99 scrolled errors, the next error is TeX's hundredth and ends the run. A call is
-now offered only while the count is 0 (K6, beside `\globaldefs` and `after_token`), where the
-reset changes nothing. This hole is older than this revision; the higher hit rate of K3 by first
-access made a sweep reach it. Test: `a_call_that_ends_a_paragraph_is_not_replayed_after_an_error`.
+now replayed only while the count is 0 (K6, beside `\globaldefs` and `after_token`), where the
+reset changes nothing, if it ended a paragraph: `end_graf` itself tells the recording
+(`flashtex_bm_end_graf`, at its `error_count:=0`), and the entry keeps it (`ends_graf`). Any other
+entry is replayed at any count: nothing else in a call that makes no error reads or writes it (an
+error in the call abandons the recording). No call is recorded while the count is not 0: a call
+that ends a paragraph would be abandoned there, and its doomed key, which does not hold the count,
+would keep the same call from being recorded at 0. (Refusing every offer at a nonzero count lost
+#2433's replay after "Infinite glue shrinkage found on current page".) This hole is older than this
+revision; the higher hit rate of K3 by first access made a sweep reach it. Tests:
+`a_call_that_ends_a_paragraph_is_not_replayed_after_an_error`,
+`a_call_that_ends_no_paragraph_is_replayed_after_an_error`.
 
 **Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
 - a `\def` of `\reserved@a` first, which hits whatever the document left there;

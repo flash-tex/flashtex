@@ -9028,6 +9028,9 @@ impl Globals {
                 }
                 self.normal_paragraph();
                 self.error_count = 0i32;
+                if self.bm_rec_on {
+                    self.flashtex_bm_end_graf();
+                }
             }
         }
     }
