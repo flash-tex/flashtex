@@ -2756,7 +2756,7 @@ impl Globals {
         let Some(rec) = rec else { return };
         if rec.verify.is_some() {
             if let Some(fv) = FULL.with(|f| f.borrow_mut().take()) {
-                self.drop_checkpoint(fv.ck);
+                self.retain_checkpoints(&|id| id != fv.ck);
             }
         }
         if dbg {
@@ -4152,7 +4152,7 @@ impl Globals {
         })();
         self.best_page_break = bpb;
         let ck = fv.ck;
-        self.drop_checkpoint(ck);
+        self.retain_checkpoints(&|id| id != ck);
         let fail = with_config(|c| c.verify_fail);
         ST.with(|s| {
             let mut s = s.borrow_mut();
