@@ -8011,3 +8011,73 @@ fn a_call_that_makes_expanded_fonts_after_their_maker_is_gone() {
         eprintln!("boxmemo stats: {s}");
     }
 }
+
+/// (lane F-FONTKEY, the note on #2338) `get_expand_font` links an expanded
+/// font into its base font's list, and when `load_expand_font` finds the
+/// font already made for another base font of the same name and size (a
+/// font and its `\pdfcopyfont` copy), `copy_expand_params` hands it over to
+/// this one: its back link and code tables become this font's. No font is
+/// made, so a call that does this was recorded, and a replay skipped the
+/// handing over. Here paragraph X, set in `\fa` (cmss10, which nothing
+/// else on the page uses), makes the ratios it needs; a registered
+/// `\measure` then breaks the same text in the copy `\fb`, which takes X's
+/// fonts over, so that pdfTeX writes X's lines with `\fb`'s PDF font (TeX
+/// Live 2026 on this document: `/F42` with the call, `/F41` without it).
+/// The call is offered again in edits' windows, and the page must be a
+/// scratch run's each time. (`\fb`'s interword glue is made before the
+/// call, in a box that is not shipped: a call that makes it is refused.)
+/// Run with BOX-MEMO off, on and verify.
+#[test]
+fn a_call_that_takes_over_another_fonts_expanded_fonts() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let text = "The quick brown fox jumps over the lazy dog while seventeen wizards \
+                quietly box jumping frogs, and lexicographic analysis of typesetting \
+                with expansion and protrusion makes justified paragraphs differently \
+                whenever stretch and shrink meet the tolerance and the badness.";
+    let before: String = (0..14).map(|i| para(i, "alpha")).collect();
+    let after: String = (14..34).map(|i| para(i, "beta")).collect();
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\vbox{{#1\\par}}\\global\\dimen1=\\ht0 \\endgroup}}\n\
+             \\font\\fa=cmss10 at 10.5pt \\pdfcopyfont\\fb=\\fa\n\
+             \\pdffontexpand\\fa 50 50 5 autoexpand \\pdffontexpand\\fb 50 50 5 autoexpand\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             \\setbox0\\hbox{{\\fb a b}}\n\
+             {{\\hsize=20em \\pdfadjustspacing=2 \\fa {text}\\par}}\n\n\
+             A\\relax\\measure{{\\hsize=20em \\pdfadjustspacing=2 \\fb {text}}}\\the\\dimen1\\par\n\n\
+             {after}\\end{{document}}\n"
+        )
+    };
+    for mode in ["off", "on", "verify"] {
+        let dir = e.dir.join(format!("expanded-font-links-{mode}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(
+            &e,
+            &dir,
+            &[
+                ("FLASHTEX_BOXMEMO", mode),
+                ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+                ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
+            ],
+        );
+        let first = doc("plain");
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &first)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        // edits just before X: their windows make X's fonts again and offer
+        // the call
+        for word in ["plainx", "plain", "plainx", "plain"] {
+            let t = doc(word);
+            let what = format!("{mode} {word}");
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", &t)], &what);
+        }
+    }
+}
