@@ -2353,14 +2353,17 @@ pub fn recorder_record_input(name: &str) {
 /// the font map path (fontmap.c's `read_all_maps`, from tex-file.c's
 /// `target_fontmaps`), once per process.
 fn recorder_fontmaps() {
-    static LISTED: AtomicBool = AtomicBool::new(false);
-    if !fontmaps_due(&LISTED, run().recorder) {
+    if !fontmaps_due(&FONTMAPS_LISTED, run().recorder) {
         return;
     }
     for p in with_resolver(|r| r.find_all("texfonts.map", Format::Map)) {
         recorder_line("INPUT", &p.to_string_lossy());
     }
 }
+
+/// Whether this `.fls` lists the `texfonts.map` files already
+/// (`recorder_fontmaps`); a new `.fls` (`reset_recorder`) does not.
+static FONTMAPS_LISTED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the `texfonts.map` lines are due now. They are latched only once
 /// a `-recorder` run lists them: in a process whose sessions differ in
@@ -2416,8 +2419,11 @@ fn recorder_line(prefix: &str, listed: &str) {
 /// A resident host's next run starts a new `.fls`, as a from-scratch run
 /// does (#2291): the recorder opens again at the run's first file open,
 /// truncating `<program><pid>.fls`, and is renamed over `<jobname>.fls`.
+/// Its `texfonts.map` lines are listed again, before its first TFM, as
+/// that run's are.
 pub fn reset_recorder() {
     *RECORDER.lock().unwrap() = None;
+    FONTMAPS_LISTED.store(false, Ordering::SeqCst);
 }
 
 /// `recorder_change_filename`.
