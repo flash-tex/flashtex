@@ -38,6 +38,29 @@ pub fn fmt_g(x: f64) -> Vec<u8> {
     buf[..(n.max(0) as usize).min(buf.len() - 1)].to_vec()
 }
 
+/// `"%.4d/%.2d/%.2d %.2d:%.2d "` of `y`, `m`, `d`, `h`, `mi`: the date part
+/// of utils.c's `setjobid`. C's precision pads the digits and puts a sign in
+/// front of them (`-0003`); Rust's `{:04}` counts the sign in the width.
+pub fn fmt_job_date(y: i32, m: i32, d: i32, h: i32, mi: i32) -> Vec<u8> {
+    let mut buf = [0u8; 80];
+    // SAFETY: `buf` is 80 bytes and `snprintf` writes at most that many, NUL
+    // included (five ints are at most 60 characters with the separators);
+    // the format takes exactly five ints.
+    let n = unsafe {
+        snprintf(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            c"%.4d/%.2d/%.2d %.2d:%.2d ".as_ptr(),
+            y as c_int,
+            m as c_int,
+            d as c_int,
+            h as c_int,
+            mi as c_int,
+        )
+    };
+    buf[..(n.max(0) as usize).min(buf.len() - 1)].to_vec()
+}
+
 /// `sprintf(buf, "%.<prec>f", x)` (pdftoepdf.cc's `%.1f` and `%.8f`).
 pub fn fmt_f(prec: i32, x: f64) -> Vec<u8> {
     let mut buf = vec![0u8; 512];
@@ -259,9 +282,45 @@ pub fn scan_hex4(s: &[u8]) -> Option<u64> {
     (r == 1).then_some(v as u64)
 }
 
+/// `sscanf(s, " %lf %lf %lf %lf %c", &a, &b, &c, &d, &dummy)` (utils.c's
+/// `pdfsetmatrix`): the assignment count and the four numbers. `%lf` is
+/// `strtod`'s grammar, so numbers need no blank between them where one
+/// ends before the next begins (`1-0`, `.5.5`), and hexadecimal, `inf`
+/// and `nan(...)` forms are numbers.
+pub fn scan_matrix(s: &[u8]) -> (i32, [f64; 4]) {
+    let cs = c_string(s);
+    let mut v = [0f64; 4];
+    let mut dummy: c_char = 0;
+    // SAFETY: four double conversions, each into its own element of `v`,
+    // and one char conversion into `dummy`.
+    let r = unsafe {
+        sscanf(
+            cs.as_ptr() as *const c_char,
+            c" %lf %lf %lf %lf %c".as_ptr(),
+            &mut v[0] as *mut f64,
+            &mut v[1] as *mut f64,
+            &mut v[2] as *mut f64,
+            &mut v[3] as *mut f64,
+            &mut dummy as *mut c_char,
+        )
+    };
+    (r, v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matrix_scans_as_sscanf() {
+        assert_eq!(scan_matrix(b"1 0 0 1"), (4, [1.0, 0.0, 0.0, 1.0]));
+        assert_eq!(scan_matrix(b"1-0 0 1"), (4, [1.0, -0.0, 0.0, 1.0]));
+        assert_eq!(scan_matrix(b".5.5 0 1"), (4, [0.5, 0.5, 0.0, 1.0]));
+        assert_eq!(scan_matrix(b"0x1p-1 0 0 2"), (4, [0.5, 0.0, 0.0, 2.0]));
+        assert_eq!(scan_matrix(b"1 0 0 1 x").0, 5);
+        assert_eq!(scan_matrix(b"1 0 0").0, 3);
+        assert_eq!(scan_matrix(b"1 0 x 1").0, 2);
+    }
 
     #[test]
     fn g_is_cs() {
@@ -269,6 +328,17 @@ mod tests {
         assert_eq!(fmt_g(-9.46), b"-9.46");
         assert_eq!(fmt_g(1e-5), b"1e-05");
         assert_eq!(fmt_g(0.1669999957084656), b"0.167");
+    }
+
+    #[test]
+    fn job_dates_are_cs() {
+        assert_eq!(fmt_job_date(2023, 11, 14, 22, 13), b"2023/11/14 22:13 ");
+        // the sign goes in front of the padded digits (#2270)
+        assert_eq!(fmt_job_date(-3, -1, -7, 0, -5), b"-0003/-01/-07 00:-05 ");
+        assert_eq!(
+            fmt_job_date(12345, 123, 0, 1666, 40),
+            b"12345/123/00 1666:40 "
+        );
     }
 
     #[test]
