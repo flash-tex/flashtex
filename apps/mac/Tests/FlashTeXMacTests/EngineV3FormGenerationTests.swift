@@ -131,6 +131,31 @@ final class EngineV3FormGenerationTests: XCTestCase {
         XCTAssertEqual(drawn(s, page: 0, form: 7), Self.hash(0xB7))
     }
 
+    /// A run superseded between a page and its FORM leaves the live table
+    /// empty at the next `keep: false`: its page still keeps that (empty)
+    /// table, so it never draws a later run's form under the reused id.
+    func testAPageSupersededBeforeItsFormNeverDrawsALaterRunsForm() {
+        let model = v3Model()
+        defer { model.engineV3Enabled = false }
+        let s = model.engineV3
+        s.handle(.started(.object(["id": .int(1)])))
+        s.handle(.page(Self.page(0, forms: [2], 0xA0), compileID: 1, timing: .init(), image: nil))
+        s.handle(.form(Self.form(2, 0xA2)))
+        s.handle(.done(.object(["id": .int(1), "status": .string("ok"), "pages": .int(1)]), compileID: 1))
+        // Run 2 (another job) sends page 1, drawing its form 2, and is superseded before its FORM.
+        s.handle(.started(.object(["id": .int(2), "keep": .bool(false)])))
+        s.handle(.page(Self.page(1, forms: [2], 0xB1), compileID: 2, timing: .init(), image: nil))
+        s.handle(.started(.object(["id": .int(3), "keep": .bool(false)])))
+        // Run 3 sends its page 0 and its own form 2.
+        s.handle(.page(Self.page(0, forms: [2], 0xC0), compileID: 3, timing: .init(), image: nil))
+        s.handle(.form(Self.form(2, 0xC2)))
+        XCTAssertEqual(drawn(s, page: 0, form: 2), Self.hash(0xC2), "the new page draws the new run's form")
+        XCTAssertTrue(s.stale.contains(1))
+        XCTAssertNil(drawn(s, page: 1, form: 2), "run 2's stale page drew run 3's form 2")
+        XCTAssertTrue(s.holdsForms(page: 1), "a new FORM must not re-rasterise the held page")
+        XCTAssertFalse(s.holdsForms(page: 0))
+    }
+
     /// The reader thread rasterises a visible page with its own form table
     /// (`EngineV3Reader.forms`): `keep: false` empties it too, so a new
     /// run's page that arrives before its FORM is never drawn on screen with
