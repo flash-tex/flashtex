@@ -2487,6 +2487,99 @@ fn a_run_that_replayed_and_runs_out_of_main_memory_is_compiled_again() {
     );
 }
 
+/// #2309 (the Commander's ruling, third piece): the document of the test
+/// above with its macros stopped a few after the step where a scratch run
+/// runs out of memory. With the calls replayed after an edit, the run had
+/// room for them and ended without that error, so nothing overflowed and the
+/// second piece did not fire; the log said what pdfTeX's does not. A run that
+/// replayed and ended within an eighth of main memory's end is now compiled
+/// again from the format without replays, and replays come back with the
+/// first compile that ends below that. (The page before the macros makes
+/// the second compile open the PDF too, which its fatal error then removes,
+/// as pdfTeX's does: a file the first compile wrote and the second never
+/// opens stays as the first left it, BOX-MEMO.md §18.)
+#[test]
+fn a_run_that_replayed_and_ends_near_main_memorys_end_is_compiled_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("memory-near");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str, fill: &str| -> String {
+        format!(
+            "\\documentclass{{article}}\n\\newcount\\kc \\newcount\\fc\n\
+             \\def\\kloop{{\\ifnum\\kc<20000 \\advance\\kc 1 \\kern0.1pt \\expandafter\\kloop\\fi}}\n\
+             \\def\\measure{{\\begingroup\\setbox0\\hbox{{\\kc=0 \\kloop}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\def\\T{{{}}}\n\
+             \\def\\fill{{\\ifnum\\fc<\\lim\\relax \\advance\\fc 1 \\message{{\\the\\fc}}\
+             \\expandafter\\edef\\csname m\\the\\fc\\endcsname{{\\T}}\\expandafter\\fill\\fi}}\n\
+             \\begin{{document}}\nA {word} paragraph.\\par\n\\def\\lim{{{fill}}}\n\
+             \\measure\\measure\\measure\n\\kc=0 \\setbox1\\hbox{{\\kloop}}\n\\measure\n\\newpage\n\
+             \\fill\nThe end.\n\\end{{document}}\n",
+            "t".repeat(10_000)
+        )
+    };
+    let env = [("FLASHTEX_BOXMEMO_NAMES", "measure")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let full = "TeX capacity exceeded, sorry [main memory size=5000000]";
+    // from the format, the normal path: the step it runs out at
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("first", "10000"))],
+        "cold",
+    );
+    assert!(!r.contains("without replays"), "{r}");
+    let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
+    let at = log.find(full).expect("the scratch run runs out");
+    let last: usize = log[..at]
+        .split_whitespace()
+        .rev()
+        .find_map(|w| w.parse().ok())
+        .expect("the last step's number");
+    // a document that fits, for a complete run to go on from
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("second", "20"))],
+        "it fits",
+    );
+    assert!(!r.contains("without replays"), "{r}");
+    // an edit before the calls, and five steps more than fit: recorded,
+    // replayed, ended near the end of main memory, and compiled again
+    let fill = (last + 5).to_string();
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("third", &fill))],
+        "the edit",
+    );
+    assert!(r.contains("again without replays"), "{r}");
+    let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
+    assert!(log.contains(full), "{log}");
+    // far from the limit again: no second compile, and replays back
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("fourth", "20"))],
+        "it fits again",
+    );
+    assert!(!r.contains("without replays"), "{r}");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("fifth", "20"))],
+        "with replays",
+    );
+}
+
 /// P4-EDIT-LATENCY: every converged compile adds a PDF-position correction
 /// to each later checkpoint it keeps, and a restore of one of them applies
 /// them all in order, rebuilding `rs_seen` once after the last. Letter

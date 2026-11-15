@@ -159,13 +159,20 @@ pub const MEMORY_AGAIN: &str = "running again without replays";
 /// number, `\count1`, in the log.
 #[allow(dead_code)]
 pub fn memory_drift_case(m: &str, defs: &str, after: &str, step: &str) -> String {
+    memory_drift_case_to(m, defs, after, step, 10_000)
+}
+
+/// [`memory_drift_case`] with its steps stopped after `steps` and
+/// `[survived]` in the log after them (#2309's `memdrift` probe).
+#[allow(dead_code)]
+pub fn memory_drift_case_to(m: &str, defs: &str, after: &str, step: &str, steps: usize) -> String {
     format!(
         "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\catcode`\\%=14 \\scrollmode\n\
          {defs}\n\\{m}\\{m}\\{m}\n{after}\n\\{m}\n\
          \\def\\T{{{}}}\n\
-         \\count1=0 \\def\\fill{{\\ifnum\\count1<10000 \\advance\\count1 1 \\message{{\\the\\count1}}\
+         \\count1=0 \\def\\fill{{\\ifnum\\count1<{steps} \\advance\\count1 1 \\message{{\\the\\count1}}\
          {step}\\expandafter\\fill\\fi}}\n\
-         \\fill\n\\end\n",
+         \\fill\n\\message{{[survived]}}\n\\end\n",
         "t".repeat(10_000)
     )
 }

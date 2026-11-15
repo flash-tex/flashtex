@@ -38,6 +38,8 @@ struct Run {
     pdf: Option<Vec<u8>>,
     /// Standard error.
     err: String,
+    /// The exit status.
+    code: Option<i32>,
 }
 
 /// Run `\input t` in INITEX with BOX-MEMO in `mode`, offering `names`.
@@ -69,6 +71,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         stats: std::fs::read_to_string(&stats).unwrap_or_default(),
         pdf,
         err: err.into_owned(),
+        code: out.status.code(),
     }
 }
 
@@ -729,6 +732,37 @@ fn a_run_that_replayed_and_runs_out_of_main_memory_is_made_again() {
     assert!(!off.err.contains(common::MEMORY_AGAIN), "{}", off.err);
     let on = run(&d, "on", "measure");
     assert_eq!(off.log, on.log, "log with BOX-MEMO on differs");
+    assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
+}
+
+#[test]
+fn a_run_that_replayed_and_ends_near_main_memorys_end_is_made_again() {
+    // (#2309, the ruling's third piece) the case above with its steps
+    // stopped at 480, #2309's `memdrift` probe: the normal path runs out of
+    // memory at step 475 and so does pdfTeX, but with the fourth call
+    // replayed the run reached step 480 with room left (it would have run
+    // out at 487) and said `[survived]`, exit 0. Nothing overflowed, so the
+    // second piece did not fire. The run ended within an eighth of main
+    // memory's end, though, so it is made again without replays, and the
+    // log and the exit status are pdfTeX's
+    let src = common::memory_drift_case_to(
+        "measure",
+        "\\def\\kloop{\\ifnum\\count3<20000 \\advance\\count3 1 \\kern0.1pt \\expandafter\\kloop\\fi}\n\
+         \\def\\measure{\\begingroup\\setbox0\\hbox{\\count3=0 \\kloop}\\global\\dimen1=\\wd0 \\endgroup}",
+        "\\count3=0 \\setbox1\\hbox{\\kloop}",
+        "\\expandafter\\edef\\csname m\\the\\count1\\endcsname{\\T}",
+        480,
+    );
+    let d = scratch("memory-near");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "measure");
+    assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
+    assert!(!off.log.contains("[survived]"), "{}", off.log);
+    assert_eq!(off.code, Some(1), "{}", off.err);
+    assert!(!off.err.contains(common::MEMORY_AGAIN), "{}", off.err);
+    let on = run(&d, "on", "measure");
+    assert_eq!(off.log, on.log, "log with BOX-MEMO on differs");
+    assert_eq!(on.code, Some(1), "{}", on.err);
     assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
 }
 

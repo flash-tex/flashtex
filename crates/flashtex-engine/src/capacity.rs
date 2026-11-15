@@ -86,15 +86,30 @@
 //!   replays switched off ([`set_replays_off`]) until a compile ends
 //!   without that overflow.
 //!
-//! Not covered: a document pdfTeX stops on with `main memory size` that
-//! fits here because replays left it the room (#2309).
+//! **Near the limit** (#2309's third piece, the Commander's ruling of
+//! 2026-11-15). A document pdfTeX stops on with `main memory size` can fit
+//! here because replays left it the room: then nothing overflows and the
+//! rule above never fires. So a run that replayed is also made again
+//! without replays, the same way, when it ends using more than 7/8 of main
+//! memory: when `hi_mem_min - lo_mem_max`, the room neither kind of node
+//! has taken yet, is below `mem_max/8` ([`Globals::flashtex_cap_run_end`]).
+//! That room only shrinks during a run (`get_avail` lowers `hi_mem_min`,
+//! tex.web §120, `get_node` raises `lo_mem_max`, §125, and nothing else
+//! writes them after `undump`), so its value at the end is the run's
+//! peak. The rerun's own result is shipped whatever it is, and replays stay
+//! off until a compile ends below 7/8 (a host), so a document that stays
+//! near the limit is compiled once per edit, without replays.
+//!
+//! Not covered (the residual the ruling accepts, BOX-MEMO.md K8 and §18): a
+//! document pdfTeX stops on only because the normal path's drift took more
+//! than an eighth of main memory, while the replaying run stays below 7/8.
 //!
 //! Where a test would fail, or the bound is not tight enough to tell, the
 //! call runs for real, which is always right. A recording that wrote an
 //! array's last place, or came within the slack of the pool's or the string
 //! table's top, may have been cut short there, so it is abandoned.
 
-use crate::generated::consts::{buf_size, max_strings, pool_size};
+use crate::generated::consts::{buf_size, max_strings, mem_max, pool_size};
 use crate::generated::Globals;
 
 /// Never a character code (`buffer`, `str_pool`) or a pool position
@@ -149,7 +164,8 @@ fn marks(lo: i32, top: i32) -> impl Iterator<Item = i32> {
 }
 
 thread_local! {
-    /// A run of this thread stopped with `main memory size`.
+    /// A run of this thread stopped with `main memory size`, or ended within
+    /// an eighth of it ([`Globals::flashtex_cap_run_end`]).
     static MEM_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Calls replayed (BOX-MEMO and D9, not their verify modes) by the
     /// engines of this thread since [`new_run`]. Never restored with a
@@ -198,9 +214,10 @@ fn rerun_enabled() -> bool {
 }
 
 /// What a host does after a run of its engine ended (not one it stopped):
-/// `true` when the run stopped with `main memory size` after replays, and
-/// replays are now off: the host runs the document again from the format.
-/// A run that ended without that overflow switches replays back on.
+/// `true` when the run stopped with `main memory size`, or ended within an
+/// eighth of it, after replays, and replays are now off: the host runs the
+/// document again from the format. A run that ended below that switches
+/// replays back on.
 pub fn take_rerun() -> bool {
     let full = MEM_FULL.with(|f| f.replace(false));
     if !rerun_enabled() {
@@ -227,7 +244,9 @@ fn rerun_process() {
     };
     let mut args = std::env::args_os();
     let arg0 = args.next();
-    eprintln!("flashtex: main memory ran out after replayed calls; running again without replays");
+    eprintln!(
+        "flashtex: main memory ran out, or nearly, after replayed calls; running again without replays"
+    );
     let _ = std::io::stdout().flush();
     let mut c = std::process::Command::new(exe);
     c.args(args)
@@ -286,6 +305,16 @@ impl Globals {
     /// `get_avail` and `get_node`, about to stop with `main memory size`
     /// (changes/boxmemo.ch; module documentation, "A later `main memory
     /// size`").
+    /// A run ended, or stopped (`exit_process` for the command-line engine,
+    /// `catch_exit` for a resident one, not a run its host paused): if it
+    /// came within an eighth of main memory's end, it is treated as one that
+    /// ran out (module documentation, "Near the limit").
+    pub fn flashtex_cap_run_end(&mut self) {
+        if self.hi_mem_min - self.lo_mem_max < mem_max / 8 {
+            self.flashtex_cap_mem_full();
+        }
+    }
+
     pub fn flashtex_cap_mem_full(&mut self) {
         if crate::system::is_resident() {
             MEM_FULL.with(|f| f.set(true));

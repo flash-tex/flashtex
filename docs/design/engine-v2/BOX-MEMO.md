@@ -166,6 +166,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
 | K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
+| K8 | room in main memory (#2309) | **not keyed, bounded**: the free lists are in no key, so an offer needs the room the call's normal path could take, `Need::mem` ("Room in main memory" below). A later `main memory size` is kept by running again without replays when a run that replayed stops with it or ends within an eighth of main memory's end. **Known divergence** (the Commander's ruling, §18): a drift over `mem_max/8` while the replaying run stays below 7/8 is not caught ([#2532](https://github.com/flash-tex/flashtex/issues/2532)) |
 
 **Box registers** are not in the key. A box register the recording reads must be one of two kinds:
 - one it wrote first;
@@ -237,8 +238,9 @@ log from the normal path.
   the first attempt printed on the terminal, and what it ran through `\write18`, stays done.
 - `FLASHTEX_MEM_RERUN=0` turns the rule off. Verify mode is not covered: it reports the drift.
 
-**Not covered** (#2309, decision needed): a document pdfTeX stops on with `main memory size` that
-fits here because replays left it the room. No overflow happens, so nothing is run again.
+A document pdfTeX stops on with `main memory size` can fit here because replays left it the room:
+then nothing overflows. The ruling's third piece, the near-limit fallback, and the divergence it
+leaves are in §18 (K8).
 
 ## 4. Recording
 
@@ -1075,3 +1077,53 @@ byte-identical both times).
    The convergence test shares the walk; there such a state compared as different (conservative).
    Test: `calls_in_math_groups_compare_their_save_stack`. It fails with the old walk (`save entry 2
    of type 104`).
+
+## 18. Revision 8: main memory near its end (#2309's ruling, lane DRAFTS-BM1, 2026-11-15)
+
+(§17 is the spans' section, #1997.) §3's "Room in main memory" keeps a call's own overflow
+(piece 1) and a later overflow of a run that replayed (piece 2). Neither catches a document that
+pdfTeX stops on with `main memory size` while a run with replays fits: a replay does not grow
+`lo_mem_max` or lower `hi_mem_min` as the call's normal path does, so the replaying run uses less
+of main memory and nothing overflows. The Commander's ruling on #2309 (2026-11-15) rejected
+replaying the allocator's trace (option (b)) for now and added a third piece and a documented
+residual.
+
+**Piece 3, the near-limit fallback.** A run that replayed anything (as for piece 2: BOX-MEMO and D9
+replays since the last run from the format, a state opened from S₀ or S₁ counting as one) and that
+ends within an eighth of main memory's end is treated as one that ran out: it is made again from
+the format with replays and recordings off, by piece 2's path, and that run is shipped.
+- "Within an eighth": `hi_mem_min - lo_mem_max < mem_max/8` when the run ends
+  (`Globals::flashtex_cap_run_end`, `src/capacity.rs`). That room only shrinks during a run:
+  `get_avail` lowers `hi_mem_min` (tex.web §120), `get_node` raises `lo_mem_max` (§125), and
+  nothing else writes them after `undump`. Its value at the end is therefore the run's peak use,
+  `mem_max - (hi_mem_min - lo_mem_max)`, with nothing counted on the allocator's path.
+- Where: the command-line engine checks in `system::exit_process`, the way out of a run's end, of
+  `jump_out` and of `-halt-on-error` (not of the few that exit at once, a broken image say), and
+  starts over as for piece 2; a resident engine checks
+  in `catch_exit` after `run_to_end`/`resume_to_end` (not for a run its host paused), and the host
+  runs the document again (`capacity::take_rerun`; the report's `cold_reason` says "main memory ran
+  out, or nearly, after replayed calls").
+- Replays stay off until a compile ends below 7/8 of main memory (as after piece 2's overflow), so a
+  document that stays near the limit is compiled once per edit, without replays, not twice.
+- Cost: one extra compile from the format, once, for a document that uses more than 7/8 of main
+  memory (4,375,000 of 5,000,000 words) after replays; one comparison per run otherwise.
+
+**Tests.** `tests/boxmemo.rs` `a_run_that_replayed_and_ends_near_main_memorys_end_is_made_again`:
+#2309's `memdrift` probe (`common::memory_drift_case_to`) stopped at step 480. With BOX-MEMO off it
+stops at step 475 with `! TeX capacity exceeded, sorry [main memory size=5000000]`, exit 1; with the
+fourth call replayed and without piece 3 it said `[survived]` and exited 0 (it would have run out at
+487). With piece 3 the log and the exit status are the normal path's. `tests/incremental.rs`
+`a_run_that_replayed_and_ends_near_main_memorys_end_is_compiled_again` is the host's case: without
+piece 3 the edit's compile ends with status 0 and a PDF where the scratch run stops and removes it.
+
+**Known divergences (accepted by the ruling).**
+- A document that pdfTeX overflows only through a drift larger than an eighth of main memory
+  (625,000 words), while the replaying run stays below 7/8, compiles here and not in pdfTeX. The
+  drift seen so far is a few calls' worth (the probe: 12 steps of 10,002 words). Option (b), to
+  measure and perhaps build later: [#2532](https://github.com/flash-tex/flashtex/issues/2532).
+- Pieces 2 and 3 do not undo the first attempt's files. An output file the first attempt wrote that
+  the rerun never opens (the rerun stops before its first shipout, say) stays as the first attempt
+  left it; pdfTeX leaves it as it was before the compile. The command-line engine's first attempt
+  has also printed on the terminal, and what it ran through `\write18` stays done.
+- `FLASHTEX_MEM_RERUN=0` turns pieces 2 and 3 off; verify mode is not covered (it reports the
+  drift).

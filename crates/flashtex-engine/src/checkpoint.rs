@@ -2957,6 +2957,11 @@ impl Globals {
         l.timed_held_at = None;
         l.shipout_times.clear();
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| f(self)));
+        // (#2309: a run that replayed and ended near main memory's end is
+        // made again by its host; not a run the host paused)
+        if !matches!(&r, Err(p) if p.is::<StopRun>()) {
+            self.flashtex_cap_run_end();
+        }
         match r {
             Ok(()) => Ok(self.exit_status()),
             Err(p) if p.is::<StopRun>() => Ok(STOPPED),

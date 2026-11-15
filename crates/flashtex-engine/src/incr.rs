@@ -5003,9 +5003,11 @@ impl Session {
     /// After a compile's runs ended (`rep`): a run that replayed calls and
     /// then stopped with `main memory size` did not stop where pdfTeX
     /// does, since a replay takes less of main memory than the call
-    /// (`crate::capacity`, #2309). The document is compiled again from the
-    /// format with replays off, and that compile is the result. Replays
-    /// come back with the first compile that ends without that overflow.
+    /// (`crate::capacity`, #2309); one that ended within an eighth of main
+    /// memory's end may not have stopped where pdfTeX does. The document is
+    /// compiled again from the format with replays off, and that compile is
+    /// the result. Replays come back with the first compile that ends below
+    /// 7/8 of main memory.
     fn mem_rerun(
         &mut self,
         rep: &Report,
@@ -5015,10 +5017,12 @@ impl Session {
             return None;
         }
         if self.opts.debug {
-            eprintln!("[incr] main memory ran out after replayed calls: again without replays");
+            eprintln!("[incr] main memory ran out, or nearly, after replayed calls: again without replays");
         }
-        self.force_cold =
-            Some("main memory ran out after replayed calls: again without replays (#2309)".into());
+        self.force_cold = Some(
+            "main memory ran out, or nearly, after replayed calls: again without replays (#2309)"
+                .into(),
+        );
         Some(self.compile(stop_at))
     }
 
