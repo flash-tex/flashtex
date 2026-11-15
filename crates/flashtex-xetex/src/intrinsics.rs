@@ -230,8 +230,12 @@ pub(crate) enum Val {
 enum Read {
     /// `eqtb[p]` held `eq_type` `t` and this `equiv`.
     Meaning(i32, i32, Equiv),
-    /// `eqtb[p]` was neither `\outer` nor a parameter character.
-    Plain(i32),
+    /// `eqtb[p]`, read where its caller looks only at the token, was of
+    /// this [`let_class`]: neither `\outer` nor a parameter character (or
+    /// the read abandons the recording), and an alignment's `&` or `\cr`
+    /// or not (`get_next` ends an alignment entry at one, whatever its
+    /// caller).
+    Plain(i32, i32),
     /// `eqtb[p].int`.
     Word(i32, i32),
     /// The name at location `p` (`None`: none), which `id_lookup` finds
@@ -247,13 +251,16 @@ enum Read {
     Defined(i32, bool),
 }
 
-/// What a `\let` looks at in its source's meaning (`prefixed_command`):
+/// What `get_next` and a `\let` look at in a meaning they do not keep:
 /// whether it is a space (skipped before the source), a parameter
-/// character or `\outer` (what weak reads of the copy look at), or a
-/// sparse register (`add_sa_ref`, which a recording refuses).
+/// character, `\outer` or the end of a template (`check_outer_validity`),
+/// an alignment's `&` or `\cr` (`get_next` inserts the entry's v-part at
+/// one when `align_state` is 0, which a replay's `\let` or a stored token
+/// does not), or a sparse register (`add_sa_ref`, which a recording
+/// refuses).
 fn let_class(t: i32, e: i32) -> i32 {
     match t {
-        spacer | mac_param | outer_call | long_outer_call => t,
+        spacer | mac_param | outer_call | long_outer_call | tab_mark | car_ret | end_template => t,
         register | toks_register if !(mem_bot..=lo_mem_stat_max).contains(&e) => -1,
         _ => 0,
     }
@@ -308,7 +315,7 @@ impl Entry {
             .iter()
             .filter_map(|r| match r {
                 Read::Meaning(p, ..)
-                | Read::Plain(p)
+                | Read::Plain(p, _)
                 | Read::Word(p, _)
                 | Read::Class(p, _)
                 | Read::Defined(p, _) => Some(*p),
@@ -681,9 +688,9 @@ impl Globals {
                         return Err(("Meaning", *p));
                     }
                 }
-                Read::Plain(p) => {
-                    let t = self.eqtb[(p - 1) as usize].hh_b0();
-                    if t == mac_param || t == outer_call || t == long_outer_call {
+                Read::Plain(p, k) => {
+                    let w = self.eqtb[(p - 1) as usize];
+                    if let_class(w.hh_b0(), w.hh_rh()) != *k {
                         return Err(("Meaning", *p));
                     }
                 }
@@ -1014,13 +1021,14 @@ impl Globals {
         if !region_ok(p) {
             return self.intr_rec_abort("Region");
         }
-        let t = self.eqtb[(p - 1) as usize].hh_b0();
+        let w = self.eqtb[(p - 1) as usize];
+        let t = w.hh_b0();
         if t == mac_param || t == outer_call || t == long_outer_call {
             return self.intr_rec_abort("Command");
         }
         let rec = self.host.intrinsics.rec.as_mut().expect("checked");
         rec.seen.insert(p, Seen::Weak);
-        rec.reads.push(Read::Plain(p));
+        rec.reads.push(Read::Plain(p, let_class(t, w.hh_rh())));
     }
 
     /// The recorded run is about to change `eqtb[p]`. What it held is not a
@@ -1158,6 +1166,12 @@ impl Globals {
                 }
                 if t == glue_ref || t == shape_ref || t == box_ref {
                     return self.intr_rec_abort("PointerType");
+                }
+                // a `\let` of the end of a template takes a reference to
+                // its list (`cur_cmd>=call`), which nothing gives back and
+                // a replay of the value would not take
+                if t == end_template {
+                    return self.intr_rec_abort("Template");
                 }
                 if (t == register || t == toks_register)
                     && !(mem_bot..=lo_mem_stat_max).contains(&e)
@@ -1499,7 +1513,7 @@ impl Globals {
             let kinds = rec.reads.iter().fold([0usize; 5], |mut k, r| {
                 k[match r {
                     Read::Meaning(..) => 0,
-                    Read::Plain(_) => 1,
+                    Read::Plain(..) => 1,
                     Read::Word(..) => 2,
                     Read::Name(..) => 3,
                     Read::Class(..) | Read::Defined(..) => 4,
@@ -1618,10 +1632,13 @@ impl Globals {
         (call..=long_outer_call).contains(&t) && e >= 0 && (e as usize) < self.mem.len()
     }
 
-    /// The tokens of the list starting at `p` (after its reference count).
+    /// The tokens of the list starting at `p` (after its reference count),
+    /// to its end: a list has fewer nodes than `mem` has words, so that
+    /// bound stops only a cycle (#2258: a value cut at a fixed length would
+    /// be recorded and compared by its beginning).
     pub(crate) fn intr_tokens(&self, mut p: i32) -> Vec<i32> {
         let mut v = vec![];
-        while p >= 0 && (p as usize) < self.mem.len() && v.len() < MAX_TOKENS {
+        while p >= 0 && (p as usize) < self.mem.len() && v.len() < self.mem.len() {
             let w = self.mem[p as usize].hh();
             v.push(w.lh());
             p = w.rh();
@@ -1785,5 +1802,26 @@ mod tests {
         // C is gone, the inner checkpoint stays
         assert_eq!(g.arena.checkpoint_ids(), &[inner][..]);
         assert_eq!(n, 0);
+    }
+
+    /// `nest` from `nest_ptr` on is dead (the top of the stack is
+    /// `cur_list`; `push_nest`, `alter_prev_graf` and reading `\prevgraf`
+    /// leave a copy at `nest[nest_ptr]`): a write there is not a
+    /// difference, a write below it is. (#2176's
+    /// `the_dead_top_of_the_nest_is_not_compared`, here as a unit test: a
+    /// call that reads `\prevgraf` is never admitted, `abandoned.Internal`.)
+    #[test]
+    fn the_dead_top_of_the_nest_is_not_compared() {
+        let mut g = Globals::new();
+        g.set_intrinsics(Mode::Verify);
+        g.nest_ptr = 1;
+        let p = g.intr_verify_begin(&[], vec![]);
+        g.nest[1].pg_field += 5;
+        assert!(g.intr_verify_end(p).is_ok());
+        assert_eq!(g.host.intrinsics.stats.identical, 1);
+        let p = g.intr_verify_begin(&[], vec![]);
+        g.nest[0].pg_field += 5;
+        let (classes, details) = g.intr_verify_end(p).expect_err("nest[0] is live");
+        assert_eq!(classes, ["nest"], "{details:?}");
     }
 }

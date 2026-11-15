@@ -636,3 +636,225 @@ fn an_sfcode_keeps_the_class_it_reads() {
     assert!(count(&on, "missed.Meaning") > 0, "{on}");
     assert!(count(&verify, "verify.checked") > 0, "{verify}");
 }
+
+/// `ctx` (where `@H@` calls the hook) with the hook's body `body`: off, on
+/// and verify agree, and no call is kept, replayed or checked, for `why`.
+fn never_replayed_in(pre: &str, body: &str, ctx: &str, why: &str) {
+    let doc = format!(
+        "\\documentclass{{article}}{pre}\n\\def\\pdfstringdefPreHook{{{body}}}\n\
+         \\begin{{document}}\\relax\n{}\n\\end{{document}}\n",
+        ctx.replace("@H@", "\\pdfstringdefPreHook ")
+    );
+    let Some((on, verify)) = modes_agree(&doc) else {
+        return;
+    };
+    for s in [&on, &verify] {
+        assert!(count(s, "offers") > 0, "{body}: {s}");
+        assert_eq!(count(s, "recordings.committed"), 0, "{body}: {s}");
+        assert_eq!(count(s, "replayed"), 0, "{body}: {s}");
+        assert_eq!(count(s, "verify.checked"), 0, "{body}: {s}");
+        assert!(
+            count(s, &format!("abandoned.{why}")) > 0,
+            "{body}: {why}: {s}"
+        );
+    }
+}
+
+/// The holes found in the verify-only recorder (slice 2), each a write it
+/// did not see or a node it changed in place: slice 3's allowlist refuses
+/// every one. #2452 (`\prevdepth`, `\spacefactor`, `\prevgraf`, a script,
+/// `\nolimits`, `\over` on an empty list, `\deadcycles`, `\pagegoal`,
+/// `\batchmode`, `\fontdimen`, `\hyphenchar`, `\hyphenation`,
+/// `\uniformdeviate`), #2259 (`\font`), #2369 (`\XeTeXlinebreaklocale`,
+/// `\XeTeXdefaultencoding`), #2176's question 2 (`\XeTeXinputencoding`),
+/// #2261 (an empty paragraph resets `\prevgraf`), and reading `\prevgraf`
+/// (#2176's dead top of `nest`).
+#[test]
+fn the_verify_recorders_holes_are_never_replayed() {
+    let vbox = "\\setbox2\\vbox{\\hbox{}@H@\\hbox{}@H@\\hbox{}@H@}";
+    let hbox = "\\setbox2\\hbox{x\\relax@H@x\\relax@H@x\\relax@H@}";
+    let para = "x\\relax@H@y\\relax@H@z\\relax@H@\\par";
+    let vmode = "\\relax@H@\\relax@H@\\relax@H@";
+    let empty_par = "\\setbox2\\vbox{x\\par\\setbox3\\lastbox@H@\\relax}";
+    let empty_par = empty_par.repeat(3);
+    for (body, ctx, why) in [
+        ("\\prevdepth=7pt\\relax", vbox, "Command"),
+        ("\\spacefactor=2000\\relax", hbox, "Command"),
+        ("\\prevgraf=5\\relax", para, "Command"),
+        ("\\ifnum\\prevgraf<0 \\fi\\relax", para, "Internal"),
+        ("^2\\relax", "\\setbox2\\hbox{$x@H@x@H@x@H@$}", "Command"),
+        (
+            "\\nolimits\\relax",
+            "\\setbox2\\hbox{$\\sum@H@\\sum@H@\\sum@H@$}",
+            "Command",
+        ),
+        ("\\over\\relax", "$@H@x$ $@H@x$ $@H@x$\\par", "Command"),
+        ("\\deadcycles=0\\relax", vmode, "Command"),
+        ("\\pagegoal=500pt\\relax", vmode, "Command"),
+        ("\\batchmode\\relax", vmode, "Command"),
+        (
+            "\\fontdimen2\\font=\\fontdimen2\\font\\relax",
+            vmode,
+            "Command",
+        ),
+        ("\\hyphenchar\\font=45\\relax", vmode, "Command"),
+        ("\\hyphenation{ab-cd}\\relax", vmode, "Command"),
+        (
+            "\\edef\\IntrU{\\uniformdeviate 10}\\relax",
+            vmode,
+            "Expandable",
+        ),
+        ("\\font\\IntrF=cmr10\\relax", vmode, "Command"),
+        ("\\XeTeXlinebreaklocale \"zh\"\\relax", vmode, "Command"),
+        ("\\XeTeXdefaultencoding \"utf8\"\\relax", vmode, "Command"),
+        ("\\XeTeXinputencoding \"utf8\"\\relax", vmode, "Command"),
+        (
+            "\\begingroup\\noindent\\par\\endgroup",
+            &empty_par,
+            "Command",
+        ),
+    ] {
+        never_replayed_in("", body, ctx, why);
+    }
+}
+
+/// A meaning read only for its token (`\def`'s parameter text) or to be
+/// copied (`\let`'s source) is kept by its class, and the class tells an
+/// alignment's `&` apart: at `align_state` 0 `get_next` ends the entry
+/// there (it inserts the v-part), whoever reads the token. Recorded with
+/// `\IntrB` a `\relax`, the call must not replay in a cell once `\IntrB`
+/// is `&`: a replay would make the definition, the real path ends the
+/// cell.
+#[test]
+fn an_ampersand_read_only_for_its_token_is_seen_by_the_guard() {
+    for body in [
+        "\\let\\IntrA=\\IntrB\\relax",
+        "\\def\\IntrD\\IntrB{}\\relax",
+    ] {
+        let Some((on, verify)) = modes_agree(&format!(
+            "\\documentclass{{article}}\\let\\IntrB=\\relax\n\
+             \\def\\pdfstringdefPreHook{{{body}}}\n\
+             \\begin{{document}}\\relax\n\
+             \\setbox0\\hbox{{\\relax\\pdfstringdefPreHook\\relax\\pdfstringdefPreHook}}\n\
+             \\let\\IntrB=&\n\
+             \\halign{{#\\cr\\relax\\pdfstringdefPreHook x\\cr}}\n\
+             \\end{{document}}\n"
+        )) else {
+            return;
+        };
+        assert_eq!(count(&on, "replayed"), 1, "{body}: {on}");
+        assert_eq!(count(&on, "missed.Meaning"), 1, "{body}: {on}");
+        assert_eq!(count(&verify, "verify.checked"), 1, "{body}: {verify}");
+    }
+}
+
+/// A value of more than a million tokens is recorded, replayed and
+/// compared to its end (#2258: both were cut at the millionth token, so
+/// the check of a correct replay differed, and two lists alike in their
+/// first million compared equal).
+#[test]
+fn a_value_longer_than_a_million_tokens_is_compared_to_its_end() {
+    // 4 * 2^18 = 1,048,576 tokens
+    let double =
+        "\\edef\\IntrA{\\unexpanded\\expandafter{\\IntrA}\\unexpanded\\expandafter{\\IntrA}}\n";
+    let Some((on, verify)) = modes_agree(&format!(
+        "\\documentclass{{article}}\\def\\IntrA{{aaaa}}\n{}\
+         \\def\\pdfstringdefPreHook{{\\edef\\IntrX{{\\unexpanded\\expandafter{{\\IntrA}}}}}}\n\
+         \\begin{{document}}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\edef\\IntrA{{\\unexpanded\\expandafter{{\\IntrA}}b}}\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\end{{document}}\n",
+        double.repeat(18)
+    )) else {
+        return;
+    };
+    assert_eq!(count(&on, "replayed"), 2, "{on}");
+    assert_eq!(count(&on, "missed.Meaning"), 1, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 2, "{verify}");
+}
+
+/// A body whose last tokens only expand (`\fi`) is used up inside
+/// `big_switch`'s own `get_x_token`, which then reads the token after the
+/// call: the recording reads past the body (`Level`) and is not kept, so
+/// no check compares a call after that token (#2210).
+#[test]
+fn a_body_ending_in_an_expansion_is_not_kept() {
+    never_replayed_in(
+        "",
+        "\\ifx aa\\fi",
+        "@H@\\relax\n@H@\\relax\n@H@\\relax",
+        "Level",
+    );
+}
+
+/// A call that reads a token from below its body's input level reads past
+/// itself (here `scan_int` looks for the end of `1` and finds the caller's
+/// `\relax`, which it backs up): a replay would not, so the call is not
+/// kept (#2176's rule, `not_replayable.ReadPast` there, here the
+/// recording's `Level` abort at `get_next`'s exit). The same body with its
+/// own `\relax` reads nothing past it, and replays and checks identical.
+#[test]
+fn a_call_that_reads_past_its_body_is_not_replayable() {
+    never_replayed_in(
+        "",
+        "\\count255=1",
+        "@H@\\relax\n@H@\\relax\n@H@\\relax\nx",
+        "Level",
+    );
+    let Some((on, verify)) = modes_agree(&hook_doc("", "\\count255=1\\relax", "x")) else {
+        return;
+    };
+    assert_eq!(count(&on, "replayed"), 2, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 2, "{verify}");
+}
+
+/// A check whose real path is not pure (here `\immediate\write`, which a
+/// recording refuses) is a difference, not a pass (#2203). The guard
+/// admits such a call only when it is wrong: `skip-read` leaves `\IntrSel`
+/// out of the read set, so the third call is admitted after `\IntrSel`
+/// changed, and its check finds the real path impure.
+#[test]
+fn a_check_whose_real_path_is_not_pure_is_a_difference() {
+    let Some((exe, dir, format)) = setup(
+        "\\documentclass{article}\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.w\n\
+         \\def\\IntrSel{\\relax}\\def\\pdfstringdefPreHook{\\IntrSel}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\def\\IntrSel{\\immediate\\write\\IntrW{x}\\relax}\n\\pdfstringdefPreHook\n\
+         x\\end{document}\n",
+    ) else {
+        return;
+    };
+    let off = run(exe, &dir, &format, Some("off"));
+    let o = |fault| Opts {
+        mode: Some("verify"),
+        fault,
+        ..Opts::default()
+    };
+    let v = run_with(exe, &dir, &format, o(None));
+    assert_same_output(&off, &v);
+    assert_verified(&v.stats);
+    assert_eq!(count(&v.stats, "verify.checked"), 1, "{}", v.stats);
+    let f = run_with(exe, &dir, &format, o(Some("skip-read")));
+    assert_same_output(&off, &f);
+    assert_eq!(count(&f.stats, "verify.differing"), 1, "{}", f.stats);
+    assert_eq!(
+        count(&f.stats, "verify.differing.impure.Command"),
+        1,
+        "{}",
+        f.stats
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `\let` of the end of a template (here `\IntrE`, which a `\futurelet`
+/// in a template's v-part made) adds a reference to its list, as `\let`
+/// does for every meaning from `call` on: a replay of the value would not,
+/// so such a call is not kept.
+#[test]
+fn a_let_of_the_end_of_a_template_is_never_replayed() {
+    never_replayed_in(
+        "",
+        "\\let\\IntrA=\\IntrE\\relax",
+        "\\halign{#\\futurelet\\IntrE\\relax\\cr x\\cr}\n\\relax@H@\\relax@H@\\relax@H@x",
+        "Template",
+    );
+}

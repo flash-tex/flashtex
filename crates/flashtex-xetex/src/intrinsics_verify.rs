@@ -13,8 +13,9 @@
 //! * every word of the word space either path wrote since C (the arena's
 //!   open log), region by region, bit for bit, except the allocation and
 //!   scratch regions `EXCLUDED_REGIONS`; `buffer` beyond `first`,
-//!   `str_pool` beyond `pool_ptr`, `str_start` beyond `str_ptr` and
-//!   `save_stack` beyond `save_ptr` are dead and skipped;
+//!   `str_pool` beyond `pool_ptr`, `str_start` beyond `str_ptr`,
+//!   `save_stack` beyond `save_ptr` and `nest` from `nest_ptr` on (the top
+//!   is `cur_list`) are dead and skipped;
 //! * every `eqtb` entry in those chunks, a macro or token-list value by its
 //!   tokens (the two paths' lists are different nodes, or the same address
 //!   holding other tokens), any other value bit for bit;
@@ -45,8 +46,8 @@
 //! the chunks compared: such a call counts as `unverified.checkpoint`.
 
 use crate::generated::consts::{
-    backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value,
-    token_list, v_template,
+    backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value, token_list,
+    v_template,
 };
 use crate::generated::types::memory_word;
 use crate::intrinsics::{Op, NULL};
@@ -384,7 +385,7 @@ impl Globals {
     fn intr_cond_snap(&self) -> Vec<String> {
         let mut v = vec![];
         let mut p = self.cond_ptr;
-        while p >= 0 && (p as usize) < self.mem.len() && v.len() < 100_000 {
+        while p >= 0 && (p as usize) < self.mem.len() && v.len() < self.mem.len() {
             let w = self.mem[p as usize].hh();
             let line = self.mem[(p + 1) as usize].int();
             v.push(format!("{:?}", (w.b0(), w.b1(), line)));
@@ -449,7 +450,8 @@ impl Globals {
         let itokens = |e: i32| -> Vec<i32> {
             let mut v = vec![];
             let mut q = memory_word::from_bits(iword(mem0 + 8 * e as usize)).hh_rh();
-            while q >= 0 && (q as usize) < self.mem.len() && v.len() < 1_000_000 {
+            // (to the end, as `intr_tokens`: #2258)
+            while q >= 0 && (q as usize) < self.mem.len() && v.len() < self.mem.len() {
                 let w = memory_word::from_bits(iword(mem0 + 8 * q as usize));
                 v.push(w.hh_lh());
                 q = w.hh_rh();
@@ -469,7 +471,13 @@ impl Globals {
         };
         let free_i = self.intr_free(&|k| iword(mem0 + 8 * k), &isc);
         let live_mem = |k: usize| self.mem[k].to_bits();
-        let (av, ro, lo, hi, me) = (self.avail, self.rover, self.lo_mem_max, self.hi_mem_min, self.mem_end);
+        let (av, ro, lo, hi, me) = (
+            self.avail,
+            self.rover,
+            self.lo_mem_max,
+            self.hi_mem_min,
+            self.mem_end,
+        );
         let nsc = |name: &str| match name {
             "avail" => av,
             "rover" => ro,
@@ -479,7 +487,9 @@ impl Globals {
         };
         let free_n = self.intr_free(&live_mem, &nsc);
         let is_free = |f: &[u64], k: i32| {
-            k >= 0 && f.get(k as usize >> 6).is_some_and(|b| b >> (k & 63) & 1 == 1)
+            k >= 0
+                && f.get(k as usize >> 6)
+                    .is_some_and(|b| b >> (k & 63) & 1 == 1)
         };
         let churn = &self.host.intrinsics.churn;
         // (scratch heads, set before they are read in the command that
@@ -495,8 +505,13 @@ impl Globals {
         };
         let mut all: BTreeSet<u32> = n.touched.iter().copied().collect();
         all.extend(i.touched.iter().copied());
-        let (first, pool_ptr, str_ptr, save_ptr) =
-            (self.first, self.pool_ptr, self.str_ptr, self.save_ptr);
+        let (first, pool_ptr, str_ptr, save_ptr, nest_ptr) = (
+            self.first,
+            self.pool_ptr,
+            self.str_ptr,
+            self.save_ptr,
+            self.nest_ptr,
+        );
         // every `eqtb` entry in a written chunk: a list both paths allocated
         // may sit at the same address with other tokens
         let mut eqtb_locs = vec![];
@@ -533,6 +548,10 @@ impl Globals {
                             "str_pool" => idx >= pool_ptr,
                             "str_start" => idx > str_ptr - 65536,
                             "save_stack" => idx >= p.save_ptr0 || idx >= save_ptr,
+                            // (`cur_list` is the top: `nest[nest_ptr]` is
+                            // the copy `push_nest`, `alter_prev_graf` and
+                            // reading `\prevgraf` leave there)
+                            "nest" => idx >= nest_ptr,
                             "mem" => mem_dead(idx),
                             _ => false,
                         };
