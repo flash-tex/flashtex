@@ -38,20 +38,20 @@
      "engine_kind": "tex",
      "engine_sha256": "710fd486900c81c923ea1cd20b3471a8087706374d69c48bc29e2c68d05068f8",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
-     "host": "ip-10-0-128-52",
+     "host": "ip-10-0-138-99",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
      "platform": "Linux 7.0.0-1016-aws x86_64",
      "source": "parity"
     },
     {
-     "date": "2026-11-15T11:05:32Z",
+     "date": "2026-11-15T15:43:04Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "710fd486900c81c923ea1cd20b3471a8087706374d69c48bc29e2c68d05068f8",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "git_sha": "28cb0d7b80a8f01bf60e196112663d5a0be744e7",
-     "host": "ip-10-0-131-243",
+     "host": "runnervmccnms",
      "host_label": "linux-da64c3ac8273",
      "identity_problem": null,
      "ignored_tiers": [],
@@ -61,22 +61,22 @@
       "texlive_root": "/home/runner/work/_temp/texlive/2026",
       "tlpdb_sha256": "50f564d8438549d29274e29cd9cfb4cdad2caa65d32517a2390c6d6f4472ab00"
      },
-     "platform": "Linux 7.0.0-1016-aws x86_64",
+     "platform": "Linux 7.0.0-1019-azure x86_64",
      "records_git_sha": true,
      "source": "nightly"
     },
     {
-     "host": "ip-10-0-131-243",
+     "host": "runnervmccnms",
      "identity_problem": null,
      "source": "latex-suites"
     },
     {
-     "host": "ip-10-0-131-243",
+     "host": "runnervmccnms",
      "identity_problem": null,
      "source": "package-smoke"
     },
     {
-     "host": "ip-10-0-131-243",
+     "host": "runnervmccnms",
      "identity_problem": null,
      "source": "fonts"
     }
@@ -727,7 +727,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -764,7 +764,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -807,7 +807,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -850,7 +850,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -893,7 +893,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -936,7 +936,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -979,7 +979,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1016,7 +1016,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1059,7 +1059,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1102,7 +1102,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1145,7 +1145,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1188,7 +1188,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "ip-10-0-128-52",
+    "host": "ip-10-0-138-99",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1232,7 +1232,7 @@
      "P-T1 outside the --pt1-sample (by rule)": 3597,
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 193,
@@ -1269,7 +1269,7 @@
     "excluded": {
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 3790,
@@ -1312,7 +1312,7 @@
     "excluded": {
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 3790,
@@ -1355,7 +1355,7 @@
     "excluded": {
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 3790,
@@ -1398,7 +1398,7 @@
     "excluded": {
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 3790,
@@ -1441,7 +1441,7 @@
     "excluded": {
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 3790,
@@ -1484,7 +1484,7 @@
     "excluded": {
      "oracle": 1210
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": null,
     "of": 3790,
@@ -1519,7 +1519,7 @@
    "metric": "tests",
    "new": {
     "excluded": {},
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": "22 failed, 0 unexpected against this host's pdfTeX (reference run); dirs: latex2e/base 799/800, latex2e/required/amsmath 39/39, latex2e/required/cyrillic 1/1, latex2e/required/firstaid 23/23, latex2e/required/graphics@etex 31/31, latex2e/required/latex-lab 316/330, latex2e/required/tools 129/132, latex3/l3kernel 202/206, latex3/l3kernel[config-backend]@etex-dvips 14/14, latex3/l3kernel[config-backend]@etex-dvisvgm 14/14",
     "of": 1590,
@@ -1557,7 +1557,7 @@
     "excluded": {
      "the reference does not compile it on this TeX Live; the candidate fails identically": 3
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": "excluded: tabls, tabu, thmtools",
     "of": 481,
@@ -1594,7 +1594,7 @@
     "excluded": {
      "oracle fails too": 17
     },
-    "host": "ip-10-0-131-243",
+    "host": "runnervmccnms",
     "invalid": null,
     "note": "per kind: opentype 0/0, pk 70/70, truetype 3/3, type1 294/294, vf 74/74",
     "of": 441,
