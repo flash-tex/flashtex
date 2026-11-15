@@ -425,22 +425,84 @@ fn the_dead_top_of_the_nest_is_not_compared() {
     assert_eq!(count(&s, "semantic.differing.nest"), 0, "{s}");
 }
 
-/// `\limits` changes the noad at the list's tail in place
-/// (`math_limit_switch`: `subtype(tail)`): no definition, no group, the
-/// same `tail`. A replay would leave the second and third `\sum` with
-/// their scripts at the side; the check compares the `mem` words either
-/// path wrote outside the cells it allocated or freed, and finds it
-/// (REVIEW-B on #2140).
+/// Writes outside `eqtb` that append nothing and leave the list's tail
+/// alone (#2452): `\prevdepth` and `\spacefactor` write `cur_list`,
+/// `\prevgraf` inside a paragraph the enclosing vertical list's `nest`
+/// entry; `^2` after a noad fills its script field, and `\limits` and
+/// `\nolimits` set an op noad's subtype, in place; `\over` on an empty
+/// math list sets `incompleat_noad`; the page builder's values, the
+/// interaction mode, a font's parameters, the hyphenation tables and the
+/// random generator live outside `eqtb` too. A replay of the definitions
+/// makes none of them. Before this rule the recorder kept every one of
+/// these calls, and its checks found the difference (`cur_list`, `nest`,
+/// `mem`: REVIEW-B on #2140 for `\limits`) or, where the verifier did not
+/// look, passed. Each hook runs three times; none is kept or checked. (The
+/// verifier's own `mem` compare has a unit test in `src/intrinsics.rs`.)
 #[test]
-fn an_in_place_change_of_the_list_is_a_semantic_difference() {
-    let Some(s) = verify_matches_off(
-        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\limits}\n\
-         \\begin{document}\\relax\n$\\sum\\pdfstringdefPreHook_1^2 \\sum\\pdfstringdefPreHook_1^2 \
-         \\sum\\pdfstringdefPreHook_1^2$\n\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
-    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
-    assert_eq!(count(&s, "semantic.differing.mem"), 2, "{s}");
+fn writes_outside_eqtb_that_keep_the_tail_are_not_replayable() {
+    const THRICE: &str = "\\pdfstringdefPreHook\\pdfstringdefPreHook\\pdfstringdefPreHook";
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "\\prevdepth=7pt\\relax",
+            "\\setbox2\\vbox{\\hbox{}\\pdfstringdefPreHook\\hbox{}\\pdfstringdefPreHook\
+             \\hbox{}\\pdfstringdefPreHook}",
+            "Aux",
+        ),
+        (
+            "\\spacefactor=2000\\relax",
+            "\\setbox2\\hbox{x\\pdfstringdefPreHook x\\pdfstringdefPreHook x\\pdfstringdefPreHook}",
+            "Aux",
+        ),
+        (
+            "\\prevgraf=5\\relax",
+            "\\setbox2\\vbox{x\\pdfstringdefPreHook x\\pdfstringdefPreHook \
+             x\\pdfstringdefPreHook\\par}",
+            "PrevGraf",
+        ),
+        (
+            "^2\\relax",
+            "\\setbox2\\hbox{$x\\pdfstringdefPreHook x\\pdfstringdefPreHook x\\pdfstringdefPreHook$}",
+            "MathTail",
+        ),
+        (
+            "\\nolimits\\relax",
+            "\\setbox2\\hbox{$\\sum\\pdfstringdefPreHook_1 \\sum\\pdfstringdefPreHook_1 \
+             \\sum\\pdfstringdefPreHook_1$}",
+            "MathTail",
+        ),
+        (
+            "\\limits",
+            "$\\sum\\pdfstringdefPreHook_1^2 \\sum\\pdfstringdefPreHook_1^2 \
+             \\sum\\pdfstringdefPreHook_1^2$",
+            "MathTail",
+        ),
+        (
+            "\\over\\relax",
+            "$\\pdfstringdefPreHook x$ $\\pdfstringdefPreHook x$ $\\pdfstringdefPreHook x$",
+            "MathTail",
+        ),
+        ("\\deadcycles=0\\relax", THRICE, "PageState"),
+        ("\\pagegoal=\\pagegoal\\relax", THRICE, "PageState"),
+        ("\\nonstopmode\\relax", THRICE, "Interaction"),
+        (
+            "\\fontdimen2\\font=\\fontdimen2\\font\\relax",
+            THRICE,
+            "FontInfo",
+        ),
+        ("\\hyphenchar\\font=`-\\relax", THRICE, "FontInfo"),
+        ("\\hyphenation{intr-hook}", THRICE, "Hyphenation"),
+        ("\\edef\\IntrR{\\uniformdeviate 10}", THRICE, "Random"),
+    ];
+    for &(hook, body, reason) in cases {
+        let Some(s) = verify_matches_off(&format!(
+            "\\documentclass{{article}}\\def\\pdfstringdefPreHook{{{hook}}}\n\
+             \\begin{{document}}\\relax\n{body}\nx\\end{{document}}\n"
+        )) else {
+            return;
+        };
+        let key = format!("not_replayable.{reason}");
+        assert_eq!(count(&s, &key), 3, "{hook}: {s}");
+        assert_eq!(count(&s, "recordings_kept"), 0, "{hook}: {s}");
+        assert_eq!(count(&s, "semantic.checked"), 0, "{hook}: {s}");
+    }
 }
