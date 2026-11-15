@@ -56,6 +56,10 @@ pub struct Job {
     pub have_fonts: HashSet<[u8; 32]>,
     pub font_formats: HashSet<String>,
     pub export: bool,
+    /// Where an export runs (spec §6.3 `export_dir`,
+    /// `flashtex_engine::host::export_dir`); None: beside the connection's
+    /// scratch directory.
+    pub export_dir: Option<PathBuf>,
     pub external_tools: Option<String>,
     pub buffers: Vec<(String, String)>,
     pub edits: Vec<(String, u64, u64, String)>,
@@ -159,6 +163,7 @@ impl Job {
                 .collect(),
             font_formats: strs("font_formats").into_iter().collect(),
             export: j.get("export").and_then(Json::as_bool).unwrap_or(false),
+            export_dir: j.str_field("export_dir").map(PathBuf::from),
             external_tools: j.str_field("external_tools").map(String::from),
             buffers,
             edits,

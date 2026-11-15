@@ -688,6 +688,9 @@ const HOST_LOST: &str = "lost the host: ";
 struct Outcome {
     status: String,
     pdf: Option<PathBuf>,
+    /// `DONE.log`: an export's is in its own directory (spec §6.3
+    /// `export_dir`), not the session's.
+    log: Option<PathBuf>,
     /// `DONE.pages`.
     pages: Option<usize>,
     diags: Vec<Diag>,
@@ -697,6 +700,12 @@ struct Outcome {
     tool_failures: Vec<String>,
     /// Tools the host did not run, and why: "bibtex not run: not found: refs".
     tool_notes: Vec<String>,
+}
+
+/// The export's log (`DONE.log`) asks for another run.
+fn rerun_warned(log: Option<&Path>) -> bool {
+    log.and_then(|f| std::fs::read_to_string(f).ok())
+        .is_some_and(|l| l.contains("Rerun to get") || l.contains("Rerun LaTeX"))
 }
 
 /// Sends `req` and reads to its `DONE`; with external tools, on to the
@@ -742,6 +751,7 @@ fn compile(c: &mut Client, req: &CompileRequest, p: &Progress) -> Result<Outcome
                 p.done(j.int_field("pages").map(|n| n.max(0) as usize));
                 out.status = j.str_field("status").unwrap_or("?").into();
                 out.pdf = j.str_field("pdf").map(PathBuf::from);
+                out.log = j.str_field("log").map(PathBuf::from);
                 out.pages = j.int_field("pages").map(|n| n.max(0) as usize);
             }
             Event::Tool(j) if j.int_field("id") == Some(req.id) => match j.str_field("event") {
@@ -879,7 +889,10 @@ impl Session {
         r.jobname = Some(p.jobname());
         r.format = self.mode.format.to_string();
         r.export = export;
-        if !export {
+        if export {
+            // (removed with the work directory)
+            r.export_dir = Some(self.work.0.join("export").to_string_lossy().into_owned());
+        } else {
             r.external_tools = Some(if tools { "auto" } else { "off" }.into());
         }
         r
@@ -929,7 +942,7 @@ impl Session {
         match export.pdf.filter(|f| wrote && f.is_file()) {
             Some(pdf) => {
                 std::fs::copy(&pdf, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-                if self.rerun_warned() {
+                if rerun_warned(export.log.as_deref()) {
                     eprintln!("flashtex: warning: LaTeX asks for another run (\"Rerun\" in the log); cross-references may be off");
                 }
                 if let (true, Some(n)) = (p.on(), export.pages.filter(|&n| n > 0)) {
@@ -984,12 +997,6 @@ impl Session {
                 Ok(ExitCode::from(1))
             }
         }
-    }
-
-    /// The export's log asks for another run.
-    fn rerun_warned(&self) -> bool {
-        std::fs::read_to_string(self.work.0.join(format!("{}.log", self.project.jobname())))
-            .is_ok_and(|l| l.contains("Rerun to get") || l.contains("Rerun LaTeX"))
     }
 
     /// `check`: one resident compile, its diagnostics and tool failures printed.

@@ -117,6 +117,9 @@ pub struct CompileRequest {
     pub edits: Vec<Edit>,
     /// A one-shot export run (the compressed PDF as pdflatex writes it).
     pub export: bool,
+    /// With `export`: the directory in which the host makes the export's
+    /// own output directory (spec §6.3 `export_dir`); `None`: the host's.
+    pub export_dir: Option<String>,
     /// 3.2: `"auto"` lets the host run bibtex, biber and makeindex when the
     /// document needs them, as latexmk would (a trusted project); `"off"`
     /// never; `None`: the host's default (`--external-tools`, off unless
@@ -157,6 +160,7 @@ impl CompileRequest {
             buffers: vec![],
             edits: vec![],
             export: false,
+            export_dir: None,
             external_tools: None,
             includeonly: None,
             font_formats: vec![],
@@ -235,6 +239,9 @@ impl CompileRequest {
         }
         if self.export {
             kv.push(("export".into(), Json::Bool(true)));
+        }
+        if let Some(d) = &self.export_dir {
+            kv.push(("export_dir".into(), s(d.as_str())));
         }
         Json::Obj(kv)
     }

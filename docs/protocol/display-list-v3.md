@@ -784,6 +784,7 @@ demand later) the host prints progress lines
 | `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`, `/`-separated, §1); the host writes each to its file, as saving would, before compiling |
 | `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root` (path relative to `root`, `/`-separated, §1), applied in order, before compiling |
 | `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
+| `export_dir` | no | with `export`: an absolute directory of the client's (the app's cache, never next to the sources) in which the host makes `ftx-export`, the export's output directory, removed and made again for each export and seeded with the session's files in `output_dir` (all but the PDF, the log and SyncTeX's; when `output_dir` is `root`, only the `.aux` files and the job's own `JOB.*` that are not sources). Every file the export writes lands there, so the session's `.aux`, log and PDF, which the resident engine's checkpoints hold, are never touched; `DONE.pdf` and `DONE.log` name the export's. The host removes nothing else there. Default: a temporary directory of the host's |
 | `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex when latexmk would (`HELLO.texmf.tools`), then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
 
 The engine runs as pdflatex would:
@@ -865,7 +866,9 @@ macro trace, the help and a stable code.
 `status`: `ok` (exit 0), `error` (TeX reported errors; pages that shipped
 out are valid), `cancelled`, `failed` (the engine died). For `export`,
 `pdf` is the exported PDF, byte-identical to pdflatex's for the parity
-fixtures (P-T2); for the resident engine, the preview's PDF. 3.1 adds, for
+fixtures (P-T2) when pdflatex writes it to the same directory (pdfTeX's
+`/ID` depends on the output file's path), in `export_dir`'s `ftx-export`,
+and `log` its log there; for the resident engine, the preview's PDF. 3.1 adds, for
 the resident engine: `mode` (`cold`, `incremental`, `unchanged`, `open`:
 from a persisted S₀), `restart_page` (pages before the restart point),
 `converged_at` (the page after which the previous run's pages were kept, or
