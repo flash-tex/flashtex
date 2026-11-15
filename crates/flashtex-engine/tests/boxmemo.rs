@@ -759,3 +759,32 @@ fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
     // this the test passes with nothing replayed
     assert_eq!(stat(&s, "hits"), 2, "{s}");
 }
+
+#[test]
+fn a_display_on_an_empty_paragraph_is_never_left_out() {
+    // (#2495, found by REVIEW-1) on an empty paragraph `init_math` pops the
+    // call's level and `push_math` pushes the display at the same level;
+    // `after_math` appends the display to the list below and `resume_par`
+    // pushes the paragraph again (tex.web §1145, §1199, §1200). The end saw
+    // the level, the mode and the tail as at the start, so the call was
+    // committed without its display: on replay `[ht 0.0pt]` and
+    // `\\prevgraf` 1. TeX Live 2026 pdfTeX 1.40.29 (`pdftex -ini -etex`,
+    // macOS arm64) gives `[ht 5.0pt]` and `[4]` every time
+    let src = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+         \\fontdimen22\\nullfont=0pt \\abovedisplayskip=3pt \\belowdisplayskip=4pt\n\
+         \\def\\measure#1{$$\\hbox{\\vrule height 5pt width #1}$$ }\n\
+         \\def\\one{\\setbox2\\vbox{\\hsize=100pt \\noindent\\measure{2pt}\\par}\\message{[ht \\the\\ht2]}}\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{$$ $$ }\n\
+         \\def\\two{\\setbox2\\vbox{\\hsize=100pt \\noindent\\prevgraf=1 \\measure{}\\par\\message{[\\the\\prevgraf]}}}\n\
+         \\two\\two\\two\\end\n";
+    let s = check("display-empty-par", src);
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    let d = scratch("display-empty-par-oracle");
+    std::fs::write(d.join("t.tex"), src).unwrap();
+    let log = run(&d, "on", "measure").log.replace('\n', "");
+    assert!(
+        log.contains("[ht 5.0pt] [ht 5.0pt] [ht 5.0pt] [4] [4] [4]"),
+        "{log}"
+    );
+}
