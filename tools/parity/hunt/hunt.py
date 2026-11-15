@@ -10,6 +10,11 @@ script over a slice of a corpus manifest (`tools/parity/corpus/*.json`), fetched
     hunt.py xelatex SELECT [-- latex.py arguments]      the documents under xelatex: box dumps at every \\shipout,
                                                         the log and the XDV of the XeTeX port against TeX Live's
                                                         (tools/xetex-lockstep/latex.py, trace `boxes`)
+    hunt.py suite --pins REPO:TAG:SHA[,REPO:TAG:SHA] --suite base|required|l3kernel|all
+                                                        the LaTeX team's suites at other pins than PINS.txt's (a newer
+                                                        LaTeX release): tools/latex-suites/run.py through pdfTeX and
+                                                        through the engine, then compare_failures.py (a test only the
+                                                        engine fails is a finding; the reference run is the baseline)
 
     SELECT:  --manifest FILE.json [--start I --end J] [--ids ID,ID] [--grep REGEX] [--max-kb N]
 
@@ -195,6 +200,46 @@ def cmd_xelatex(a, rest):
         return p.wait()
 
 
+def cmd_suite(a, rest):
+    """tools/latex-suites at the pins of --pins, in a copy of the directory (its .cache holds the checkouts)."""
+    tools = os.path.join(HOME, "tools")
+    suites = os.path.join(tools, "latex-suites")
+    if not os.path.isdir(suites):
+        os.makedirs(tools, exist_ok=True)
+        shutil.copytree(os.path.join(ROOT, "tools/latex-suites"), suites, ignore=shutil.ignore_patterns(".cache", "__pycache__"))
+        os.symlink(os.path.join(ROOT, "tools/parity"), os.path.join(tools, "parity"))
+    pins = {}
+    for line in open(os.path.join(ROOT, "tools/latex-suites/PINS.txt")):
+        if line.strip() and not line.lstrip().startswith("#"):
+            repo, tag, sha = line.split()
+            pins[repo] = (tag, sha)
+    for pin in (a.pins or "").split(","):
+        if pin.strip():
+            repo, tag, sha = pin.replace(":", " ").split()
+            pins[repo] = (tag, sha)
+    with open(os.path.join(suites, "PINS.txt"), "w") as f:
+        for repo, (tag, sha) in pins.items():
+            f.write("%s %s %s\n" % (repo, tag, sha))
+    log("pins:", pins)
+    subprocess.run(["sh", os.path.join(suites, "fetch.sh")], check=True)
+    fmt = pdftex_formats()
+    out = os.path.join(HOME, "out", a.name)
+    os.makedirs(out, exist_ok=True)
+    run = [sys.executable, os.path.join(suites, "run.py"), "--suite", a.suite, "--allow-stale"] + rest
+    sides = (("reference", ["--engine", os.path.join(texbin(), "pdftex")]),
+             ("new", ["--engine", os.path.join(BIN, "flashtex-initex"), "--allow-any-engine",
+                      "--engine-env", "FLASHTEX_FORMATS=" + fmt,
+                      "--engine-env", "FLASHTEX_POOL=" + os.path.join(BIN, "pdftex.pool")]))
+    for side, eng in sides:
+        with open(os.path.join(out, "t2-%s.txt" % side), "w") as f:
+            r = subprocess.run(run + eng + ["--keep-diffs", os.path.join(out, "diffs-" + side)], stdout=f, stderr=subprocess.STDOUT)
+        tail = open(os.path.join(out, "t2-%s.txt" % side), errors="replace").read().splitlines()[-12:]
+        log("%s: run.py exit %d" % (side, r.returncode))
+        log("\n".join(line[:300] for line in tail))
+    return subprocess.run([sys.executable, os.path.join(suites, "compare_failures.py"),
+                           os.path.join(out, "t2-reference.txt"), os.path.join(out, "t2-new.txt")]).returncode
+
+
 def main():
     argv = sys.argv[1:]
     rest = []
@@ -202,9 +247,11 @@ def main():
         k = argv.index("--")
         argv, rest = argv[:k], argv[k + 1:]
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("parity", "sound", "xelatex"))
+    ap.add_argument("mode", choices=("parity", "sound", "xelatex", "suite"))
     ap.add_argument("--name", help="the unit's name: its output is HUNT_HOME/out/NAME (default: the mode)")
-    ap.add_argument("--manifest", required=True, help="a file under tools/parity/corpus/, or a path")
+    ap.add_argument("--manifest", help="a file under tools/parity/corpus/, or a path")
+    ap.add_argument("--pins", help="suite: pins that replace PINS.txt's, as REPO:TAG:SHA, comma separated")
+    ap.add_argument("--suite", default="all", choices=("base", "required", "l3kernel", "all"))
     ap.add_argument("--tier", help="the tier, for a manifest that names none")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int)
@@ -213,8 +260,10 @@ def main():
     ap.add_argument("--max-kb", type=int, help="only documents whose tree is at most this large")
     a = ap.parse_args(argv)
     a.name = a.name or a.mode
+    if a.mode != "suite" and not a.manifest:
+        ap.error("--manifest is required")
     os.makedirs(CACHE, exist_ok=True)
-    return {"parity": cmd_parity, "sound": cmd_sound, "xelatex": cmd_xelatex}[a.mode](a, rest)
+    return {"parity": cmd_parity, "sound": cmd_sound, "xelatex": cmd_xelatex, "suite": cmd_suite}[a.mode](a, rest)
 
 
 if __name__ == "__main__":
