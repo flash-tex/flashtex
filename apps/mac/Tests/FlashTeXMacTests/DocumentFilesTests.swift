@@ -490,6 +490,133 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertFalse(model.isDirty)
     }
 
+    /// Autosave never restarts the helper under a save still unanswered: a
+    /// restart (the helper is rebound when requests are outstanding) dropped
+    /// the late receipt, so the user's own write later read as "modified on
+    /// disk". The pass is deferred instead and runs once the reply landed.
+    func testAutosaveWaitsForAnUnansweredSaveInsteadOfRestartingTheHelper() async throws {
+        let dir = try tempDir("autosave-busy")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let autosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        defer { EditorPreferences.shared.autosave = autosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 0.4
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop() // as in the late-receipt test: the watcher is not what this pins
+        model.files.policy = fake(["--mode", "late", "--delay", "1.2"])
+
+        model.updateActiveText("first\n")
+        model.flushPendingAutosave() // times out: the reply is outstanding
+        XCTAssertTrue(model.files.helperBusy)
+        let restarts = model.files.helperRestarts // (the policy change above restarted it once)
+        model.updateActiveText("second\n")
+        model.flushPendingAutosave() // the helper is busy: deferred, not restarted
+        XCTAssertEqual(model.files.helperRestarts, restarts, "no restart under an unanswered save")
+        try await waitUntil("the late receipt for 'first' to be reconciled",
+                            state: { "savedText=\(model.savedText ?? "nil") late=\(model.files.lateReplies) restarts=\(model.files.helperRestarts)" }) {
+            model.savedText == "first\n"
+        }
+        XCTAssertNil(model.files.conflict)
+        // The deferred pass runs now and is no conflict: its expectation is the reconciled text.
+        model.files.policy = fake([])
+        model.flushPendingAutosave()
+        XCTAssertNil(model.files.conflict, model.captureNote ?? "")
+        XCTAssertEqual(try disk(url), "second\n")
+        XCTAssertFalse(model.isDirty)
+    }
+
+    /// The same deferral with no quiet time (`FLASHTEX_AUTOSAVE_MS=0`, the
+    /// synchronous setting): the deferred pass is re-armed on a timer. It
+    /// went through `scheduleAutosave()`, which performs the pass at once at
+    /// 0, so the busy helper deferred it again, recursively, on the main
+    /// thread, until the stack overflowed (the test process crashes there).
+    func testAutosaveDeferralWithNoQuietTimeIsATimerNotRecursion() async throws {
+        let dir = try tempDir("autosave-busy-zero")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let autosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        defer { EditorPreferences.shared.autosave = autosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 0.4
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "1.2"])
+        model.autosaveSuppressed = false // the live path, as in the app
+        model.autosaveDelay = 0          // FLASHTEX_AUTOSAVE_MS=0
+        model.autosaveRetryDelay = 600   // the retry stays armed for the test to run by hand
+
+        model.updateActiveText("first\n") // saved at once; times out: the reply is outstanding
+        XCTAssertTrue(model.files.helperBusy)
+        let restarts = model.files.helperRestarts
+        model.updateActiveText("second\n") // the helper is busy: deferred to a timer, and this returns
+        XCTAssertTrue(model.autosavePending, "the deferred pass is armed again")
+        XCTAssertEqual(model.files.helperRestarts, restarts, "no restart under an unanswered save")
+        try await waitUntil("the late receipt for 'first' to be reconciled",
+                            state: { "savedText=\(model.savedText ?? "nil") late=\(model.files.lateReplies)" }) {
+            model.savedText == "first\n"
+        }
+        model.files.policy = fake([])
+        model.flushPendingAutosave() // the armed retry, now
+        XCTAssertNil(model.files.conflict, model.captureNote ?? "")
+        XCTAssertEqual(try disk(url), "second\n")
+        XCTAssertFalse(model.isDirty)
+    }
+
+    /// A deferral that ended without a pass going ahead (here: the retry ran
+    /// with autosave switched off) leaves no start behind. Before, the start
+    /// was cleared only when a pass saved, so the next busy spell measured
+    /// from it, counted as past the limit at once, and restarted the helper
+    /// under an unanswered save: the late receipt was dropped (S-REVIEW
+    /// MINOR on #2443).
+    func testADeferralThatEndedLeavesNoStartBehind() async throws {
+        let dir = try tempDir("autosave-busy-stale")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let autosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        defer { EditorPreferences.shared.autosave = autosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 0.4 // the restart limit is max(2 x 0.4, 1) = 1 s
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "4"])
+
+        model.updateActiveText("first\n")
+        model.flushPendingAutosave() // times out: the reply is outstanding
+        XCTAssertTrue(model.files.helperBusy)
+        let restarts = model.files.helperRestarts
+        model.updateActiveText("second\n")
+        model.flushPendingAutosave() // deferred: the deferral starts now
+        XCTAssertTrue(model.autosavePending)
+        EditorPreferences.shared.autosave = false
+        model.flushPendingAutosave() // the retry runs with autosave off: the deferral is over
+        XCTAssertFalse(model.autosavePending)
+
+        try await pump(1.2) // past the 1 s limit, measured from that old start
+        XCTAssertTrue(model.files.helperBusy, "the first save's reply is still outstanding")
+        EditorPreferences.shared.autosave = true
+        model.updateActiveText("third\n")
+        model.flushPendingAutosave() // a new busy spell: deferred again, not a restart
+        XCTAssertEqual(model.files.helperRestarts, restarts, "no restart under an unanswered save")
+        XCTAssertTrue(model.autosavePending, "the deferred pass is armed again")
+        try await waitUntil("the late receipt for 'first' to be reconciled",
+                            state: { "savedText=\(model.savedText ?? "nil") late=\(model.files.lateReplies) restarts=\(model.files.helperRestarts)" }) {
+            model.savedText == "first\n"
+        }
+        model.files.policy = fake([])
+        model.flushPendingAutosave()
+        XCTAssertEqual(try disk(url), "third\n")
+    }
+
     func testLateSaveReceiptIsReconciledWithoutLosingLaterEdits() async throws {
         let dir = try tempDir("late")
         let url = dir.appendingPathComponent("paper.tex")
