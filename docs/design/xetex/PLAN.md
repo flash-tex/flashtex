@@ -187,7 +187,7 @@ shared runtime library crate; neither is `xetex` or xdvipdfmx.
   binary the document's mode names (the engine-modes proposal, #1520, owns the
   manifest key, detection and the switch); **a mode switch starts the other
   binary**. This also keeps kpathsea's process-wide configuration
-  (`crates/flashtex-engine/src/resolver.rs`: one resolver per process) to one
+  (`crates/flashtex-runtime/src/resolver.rs`: one resolver per process) to one
   program name per binary (`xetex` for Unicode: `TEXINPUTS.xetex`,
   `OPENTYPEFONTS` etc.).
 - **Measured for each binary at S3:** the binary's size, its cold start-up

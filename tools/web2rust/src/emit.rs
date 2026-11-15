@@ -143,6 +143,8 @@ struct E<'a> {
     /// `--total-division` (main.rs): `div` and `mod` by a divisor that may
     /// be 0 or -1 never panic (`int_div`).
     total_division: bool,
+    /// `--exact-abs` (main.rs): see `exact_abs`.
+    exact_abs_on: bool,
 }
 
 /// How a global is stored.
@@ -770,12 +772,23 @@ impl<'a> E<'a> {
                 self.ex(x)
             }
         };
+        // `--exact-abs`: an integer `abs` compared, or divided, as its exact
+        // value (see `exact_abs`).
+        let wide = |x: &Expr| match self.exact_abs(x) {
+            Some(s) => s,
+            None => format!("(({}) as i64)", self.ex(x)),
+        };
+        let exact = !real && (self.exact_abs(a).is_some() || self.exact_abs(b).is_some());
         match o {
             "=" => format!("({} == {})", ca(a), ca(b)),
             "<>" => format!("({} != {})", ca(a), ca(b)),
+            "<" | ">" | "<=" | ">=" if exact => format!("({} {o} {})", wide(a), wide(b)),
             "<" | ">" | "<=" | ">=" => format!("({} {o} {})", ca(a), ca(b)),
             "and" => format!("({} && {})", self.cond(a), self.cond(b)),
             "or" => format!("({} || {})", self.cond(a), self.cond(b)),
+            "div" | "mod" if self.exact_abs(a).is_some() => {
+                format!("({} as i32)", self.int_div(o, wide(a), b, wide(b)))
+            }
             "div" | "mod" => self.int_div(o, self.ex(a), b, self.ex(b)),
             // Pascal's `/` is real division whatever the operands are.
             "/" => {
@@ -1902,6 +1915,7 @@ pub fn emit(
     array_views: &[String],
     translate: &[String],
     total_division: bool,
+    exact_abs: bool,
 ) -> Result<(), String> {
     for (n, _) in inline {
         if !p.routines.iter().any(|r| r.name == *n) {
@@ -1979,6 +1993,7 @@ pub fn emit(
         view_on: false,
         used_views: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         total_division,
+        exact_abs_on: exact_abs,
     };
 
     // Array type aliases become `[T; N]`, so that an array of them can live
@@ -2406,6 +2421,27 @@ impl<'a> E<'a> {
         }
         let m = if o == "div" { "total_div" } else { "total_mod" };
         format!("({x}).{m}({y})")
+    }
+
+    /// With `--exact-abs`, `abs(x)` of a 32-bit integer `x` as an `i64`
+    /// expression of its exact value. web2c's C `abs` negates a negative
+    /// `x`, which is undefined for the most negative value; clang, which
+    /// builds TeX Live's macOS binaries, assumes it does not happen, so a
+    /// comparison or a division of the result behaves as if it were exact
+    /// (`\dimen0=\count0 sp` with `\count0` at -2^31 is "Dimension too
+    /// large", where `wrapping_abs` would let it through).
+    fn exact_abs(&self, e: &Expr) -> Option<String> {
+        match e {
+            Expr::Call(f, args) if self.exact_abs_on && f == "abs" && args.len() == 1 => {
+                match resolve(&self.ty_of(&args[0]), self.p) {
+                    Ty::Int | Ty::Sub(..) => {
+                        Some(format!("((({}) as i64).abs())", self.ex(&args[0])))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Whether `e` is made of literals and outer-block constants only.
