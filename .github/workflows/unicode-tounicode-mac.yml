@@ -1,0 +1,119 @@
+# ToUnicode of macOS's AAT Arabic font against xdvipdfmx's (#1787), on a
+# GitHub-hosted Mac: crates/flashtex-xetex/tests/tounicode_oracle.rs typesets
+# Geeza Pro and Times New Roman (system fonts, so only here) in FlashTeX
+# and in the oracle. The oracle is BasicTeX's xetex -ini with xdvipdfmx
+# (TeX Live 2026, from CTAN). It is never in the product path. The test is
+# #[ignore]d everywhere else and runs here with --ignored. A missing font,
+# oracle or glyph list fails it; it never passes by skipping.
+name: unicode-tounicode-mac
+
+#
+# WHEN (as unicode-m3.yml since #2157): a pull request that touches these
+# paths, main after such a change lands, and a merge-queue entry whose
+# change touches them. There is no push run on feature branches; run one by
+# hand with `gh workflow run unicode-tounicode-mac.yml --ref <branch>`.
+# merge_group has no paths filter, so the `paths` job below compares the
+# entry with its base and the Mac job runs only when one of these paths
+# changed. Keep the three lists equal.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/unicode-tounicode-mac.yml"
+      - "crates/flashtex-xetex/src/out/**"
+      - "crates/flashtex-xetex/tests/tounicode_oracle.rs"
+      - "crates/pdf/src/**"
+  pull_request:
+    paths:
+      - ".github/workflows/unicode-tounicode-mac.yml"
+      - "crates/flashtex-xetex/src/out/**"
+      - "crates/flashtex-xetex/tests/tounicode_oracle.rs"
+      - "crates/pdf/src/**"
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicode-tounicode-mac-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+jobs:
+  # Whether the Mac job runs: always, except for a merge-queue entry that
+  # changes none of the paths above (GitHub's compare of its base and head;
+  # with 300 files or more, the API's limit, it runs).
+  paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.p.outputs.run }}
+    steps:
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != merge_group ]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq '.files[].filename')
+          n=$(printf '%s\n' "$files" | grep -c . || true)
+          if [ "$n" -ge 300 ] || printf '%s\n' "$files" | grep -qE \
+              '^(\.github/workflows/unicode-tounicode-mac\.yml|crates/flashtex-xetex/src/out/|crates/flashtex-xetex/tests/tounicode_oracle\.rs|crates/pdf/src/)'; then
+            echo run=true >> "$GITHUB_OUTPUT"
+          else
+            echo "no ToUnicode path among the entry's $n changed files: the Mac job is skipped"
+            echo run=false >> "$GITHUB_OUTPUT"
+          fi
+
+  tounicode:
+    name: "ToUnicode: Geeza Pro against xdvipdfmx (macOS)"
+    needs: paths
+    if: needs.paths.outputs.run == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: the fonts
+        run: |
+          set -euo pipefail
+          sw_vers -productVersion
+          shasum -a 256 /System/Library/Fonts/GeezaPro.ttc "/System/Library/Fonts/Supplemental/Times New Roman.ttf"
+      - name: BasicTeX (the oracle) and the glyph lists
+        # Each tlmgr call picks a CTAN mirror: retry on mirror skew, as
+        # ci.yml's mac-v3-host does.
+        run: |
+          set -euo pipefail
+          brew install --cask basictex
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH="/Library/TeX/texbin:$PATH"
+          if ! kpsewhich texglyphlist.txt pdfglyphlist.txt glyphlist.txt | grep -c . | grep -qx 3; then
+            for attempt in 1 2 3 4; do
+              sudo tlmgr update --self && sudo tlmgr install glyphlist && break
+              [ "$attempt" = 4 ] && exit 1
+              echo "tlmgr attempt $attempt failed (mirror skew?): again"; sleep 5
+            done
+          fi
+          kpsewhich texglyphlist.txt pdfglyphlist.txt glyphlist.txt
+          xetex --version | head -n 1
+          xdvipdfmx --version 2>&1 | head -n 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: tounicode-mac
+          workspaces: crates/flashtex-xetex -> target
+      - name: cargo test --test tounicode_oracle -- --ignored
+        working-directory: crates/flashtex-xetex
+        env:
+          FLASHTEX_XETEX_ORACLE: /Library/TeX/texbin/xetex
+        run: cargo test --release --locked --test tounicode_oracle -- --ignored --nocapture

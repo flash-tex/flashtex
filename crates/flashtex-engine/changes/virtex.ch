@@ -7,7 +7,12 @@
 % named after the program (`-fmt', else the program name). Re-specified
 % here, with the switches in system.rs (set by the driver, src/main.rs):
 %
-%   * |ini_version|: INITEX, or a production run;
+%   * |ini_version|: INITEX, or a production run, tex.ch's |Init|...|Tini|:
+%     a production run neither initializes the tables nor starts the string
+%     pool (tex.ch [1.8], [51.1332]: the format supplies both, and nothing
+%     before the load prints from the pool), loads no patterns (`Patterns
+%     can be loaded only by INITEX', tex.ch [49.1252]) and dumps no format
+%     (`(\dump is performed only by INITEX)', tex.ch [51.1335]);
 %   * |etex_p|: `-etex', extended mode without a `*' (pdftex.ch);
 %   * the default format, |dump_name| with `.fmt', which a production run
 %     loads when the first line does not start with `&', and which its
@@ -21,6 +26,14 @@
 % web2c's version string after the banner is in web2c-run.ch.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
+
+@x pdftex.web l.463 - tex.ch [1.8]: only INITEX initializes the tables, a run-time test
+@!init @<Initialize table entries (done by \.{INITEX} only)@>@;@+tini
+@y
+@!init if ini_version then begin
+  @<Initialize table entries (done by \.{INITEX} only)@>@;
+  end;@+tini
+@z
 
 @x pdftex.web l.1711 - tex.ch [5.61]: a production run names its default format
 if format_ident=0 then wterm_ln(' (no format preloaded)')
@@ -65,10 +78,42 @@ pack_default_format_name; {|dump_name| with \.{.fmt} (system.rs)}
   wterm_ln ('''!');
 @z
 
+@x pdftex.web l.32263 - tex.ch [49.1252]: only INITEX loads patterns, a run-time test
+    begin @!init new_patterns; goto done;@;@+tini@/
+@y
+    begin @!init if ini_version then begin new_patterns; goto done; end;@;@+tini@/
+@z
+
 @x pdftex.web l.32774 - tex.ch [50.1301]: INITEX is a run-time switch
 format_ident:=" (INITEX)";
 @y
 if ini_version then format_ident:=" (INITEX)";
+@z
+
+@x pdftex.web l.33395 - tex.ch [51.1332]: only INITEX starts the string pool, a run-time test
+@!init if not get_strings_started then goto final_end;
+init_prim; {call |primitive| for each primitive}
+init_str_ptr:=str_ptr; init_pool_ptr:=pool_ptr; fix_date_and_time;
+tini@/
+@y
+@!init if ini_version then begin
+  if not get_strings_started then goto final_end;
+  init_prim; {call |primitive| for each primitive}
+  init_str_ptr:=str_ptr; init_pool_ptr:=pool_ptr; fix_date_and_time;
+  end;
+tini@/
+@z
+
+@x pdftex.web l.33552 - tex.ch [51.1335]: only INITEX dumps, a run-time test
+  begin @!init for c:=top_mark_code to split_bot_mark_code do
+@y
+  begin @!init if ini_version then begin for c:=top_mark_code to split_bot_mark_code do
+@z
+
+@x pdftex.web l.33557 - tex.ch [51.1335]: only INITEX dumps, a run-time test
+  store_fmt_file; return;@+tini@/
+@y
+  store_fmt_file; return; end;@+tini@/
 @z
 
 @x pdftex.web l.37174 - pdftex.ch: `-etex' enters extended mode without `*'
