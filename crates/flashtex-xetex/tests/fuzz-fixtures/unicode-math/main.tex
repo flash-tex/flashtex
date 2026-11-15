@@ -1,0 +1,49 @@
+% The edit fuzz's (tests/edit_fuzz.rs): tools/displaylist/unicode-cases/u05-unicode-math.tex's
+% math fonts (Latin Modern Math, STIX Two, Pagella, Libertinus as math versions), with
+% numbered equations, references to them and text, over two pages.
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\setmathfont{latinmodern-math.otf}
+\setmathfont{STIXTwoMath-Regular.otf}[version=stix]
+\setmathfont{texgyrepagella-math.otf}[version=pagella]
+\setmathfont{LibertinusMath-Regular.otf}[version=libertinus]
+\newcommand\sample{%
+\[ \sum_{n=1}^{\infty}\frac{1}{n^2}=\frac{\pi^2}{6},\quad \int_0^1\!\!\int_0^1 f(x,y)\,dx\,dy,\quad
+   \prod_{k} \bigcup_{i} A_i ,\quad \oint_{\partial\Omega}\omega \]
+\[ \left( \frac{a}{b} \right) \left[ \frac{\frac{1}{2}}{\frac{3}{4}} \right] \left\{ \begin{matrix} a & b \\ c & d \\ e & f \end{matrix} \right\}
+   \left\| \sum_{i=1}^{N} x_i \right\| \quad \sqrt{\frac{x^2+y^2}{z}} \quad \sqrt[3]{\int_a^b g} \]
+\[ \hat{a}\ \widehat{xyz}\ \tilde{b}\ \widetilde{abc}\ \bar{c}\ \overline{x+y}\ \vec{v}\ \dot{x}\ \ddot{y}\
+   \overbrace{a+b+c}^{3}\ \underbrace{x+y}_{2}\ \mathbb{R}\ \mathcal{F}\ \mathfrak{g}\ \symbf{\alpha} \]}
+\begin{document}
+\section{Latin Modern Math}\label{sec:lm}
+The default math font, with the text's Latin Modern: \sample
+Unicode input works in math as in text: $α + β = γ$, $∀x ∈ ℝ, ∃y ≥ x$, and $∑_{i=1}^n i = n(n+1)/2$.
+\begin{equation}\label{eq:gauss}
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+\end{equation}
+Equation~\eqref{eq:gauss} is Gauss's integral; equation~\eqref{eq:basel} on
+page~\pageref{eq:basel} is Euler's sum.
+
+\section{STIX Two}\label{sec:stix}
+{\mathversion{stix}\sample
+\begin{equation}\label{eq:basel}
+  \sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}
+\end{equation}}
+A paragraph between the samples: the math versions change the fonts of formulas only,
+and the text keeps Latin Modern. A change in one version's formula changes its pages,
+not the others'.
+
+\section{Pagella}\label{sec:pagella}
+{\mathversion{pagella}\sample
+\begin{equation}\label{eq:euler}
+  e^{i\pi} + 1 = 0
+\end{equation}}
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+incididunt ut labore et dolore magna aliqua, with $x_1, x_2, \dots, x_n$ in it.
+
+\section{Libertinus}\label{sec:libertinus}
+{\mathversion{libertinus}\sample}
+Equations~\eqref{eq:gauss}, \eqref{eq:basel} and~\eqref{eq:euler}, in Sections~\ref{sec:lm},
+\ref{sec:stix} and~\ref{sec:pagella}, end on page~\pageref{sec:libertinus}.
+\end{document}

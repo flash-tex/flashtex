@@ -1,0 +1,44 @@
+% The edit fuzz's (tests/edit_fuzz.rs): the scripts of tools/displaylist/unicode-cases
+% (u07-devanagari, u08-cjk) in TeX Live's fonts instead of the system's -- GNU FreeSerif
+% for Latin, Greek, Cyrillic and Devanagari, Fandol Song for Chinese, with XeTeX's line
+% breaking for it -- over two pages and an \input file.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{FreeSerif}[Extension=.otf, UprightFont=*, BoldFont=*Bold, ItalicFont=*Italic,
+  BoldItalicFont=*BoldItalic, Ligatures=TeX]
+\newfontfamily\deva{FreeSerif.otf}[Script=Devanagari]
+\newfontfamily\greek{FreeSerif.otf}[Script=Greek]
+\newfontfamily\russian{FreeSerif.otf}[Script=Cyrillic]
+\newfontfamily\zh{FandolSong-Regular.otf}
+\newcommand\zhtext[1]{{\zh\XeTeXlinebreaklocale "zh"\XeTeXlinebreakskip=0pt plus 1pt #1}}
+\begin{document}
+\section{Latin}\label{sec:latin}
+FreeSerif covers Latin with every accent: àáâãäå çèéêë ìíîï ñòóôõö ùúûü ýÿ, ąćęłńśźż,
+čďěňřšťůž, ăâîșț, and ligatures ``fi'' and ``fl'' -- with en and em dashes --- in text.
+\textbf{Bold}, \textit{italic} and \textbf{\textit{bold italic}} faces come with it.
+Section~\ref{sec:scripts} on page~\pageref{sec:scripts} has the other scripts.
+
+The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump! Sphinx of black quartz, judge my vow. The five
+boxing wizards jump quickly, and the jay, pig, fox, zebra and my wolves quack.
+
+\section{Scripts}\label{sec:scripts}
+{\greek Ἐν ἀρχῇ ἦν ὁ λόγος, καὶ ὁ λόγος ἦν πρὸς τὸν θεόν. Ελληνικά γράμματα: αβγδεζηθ
+ικλμνξοπρστυφχψω.}
+
+{\russian Съешь же ещё этих мягких французских булок, да выпей чаю. Широкая электрификация
+южных губерний даст мощный толчок подъёму сельского хозяйства.}
+
+{\deva नमस्ते दुनिया। क्षत्रिय ज्ञान श्री द्वार हिन्दी किताब। यह एक परीक्षण वाक्य है, जिसमें
+संयुक्ताक्षर और मात्राएँ हैं।}
+
+\zhtext{中文排版测试：这是一段用于测试的中文文本，包含标点符号“引号”、（括号）和《书名号》。
+中文与English混排，数字123也在其中。这一段需要足够长才能换行，所以我们继续写下去，直到超过一行的宽度为止，
+再看看行末的标点处理是否正确。}
+
+\input{part}
+
+\section{End}\label{sec:end}
+Sections~\ref{sec:latin}, \ref{sec:scripts} and~\ref{sec:part} are on
+pages~\pageref{sec:latin}, \pageref{sec:scripts} and~\pageref{sec:part}.
+\end{document}
