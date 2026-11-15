@@ -2232,6 +2232,7 @@ pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
 /// `FileResolver::find_pk`). The file found is recorded as read
 /// (`recorder_record_input`); a file mktexpk made is an external effect.
 pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    recorder_fontmaps();
     let g = with_resolver(|r| r.find_pk(name, dpi, true));
     let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
     read_set_lookup(
@@ -2314,19 +2315,79 @@ static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
 /// file opened is listed in `<program><pid>.fls` (renamed to
 /// `<jobname>.fls` when the log file opens), after a `PWD` line.
 fn record_file(prefix: &str, name: &str) {
+    record_file_as(prefix, name, name)
+}
+
+/// [`record_file`] of the file at `path`, listed in the `.fls` as `listed`.
+/// The incremental journal (and so S₀'s and S₁'s keys, `host::make_key_from`)
+/// notes `path`, the path found; the `.fls` gets what pdfTeX records, which
+/// for `open_input` is `nameoffile + 1` after the open: without the `./` a
+/// lookup puts in front of a file in the current directory (`INPUT sub.tex`
+/// for `\input sub`, `INPUT ./sub.tex` for `\input ./sub`).
+fn record_file_as(prefix: &str, path: &str, listed: &str) {
     if prefix == "INPUT" {
         // a file the run wrote, read back: as a cut would have left it
-        if logical_len(name).is_some() {
-            cut_to_logical(name);
+        if logical_len(path).is_some() {
+            cut_to_logical(path);
         }
-        note_file(name);
+        note_file(path);
     } else {
-        note_output(name);
+        note_output(path);
     }
+    recorder_line(prefix, listed);
+}
+
+/// lib/openclose.c's `recorder_record_input` alone, for the C parts that
+/// call it after a lookup of their own (texmfmp.c's `getfilesize`,
+/// `getfilemoddate`, `getfiledump`, `getmd5sum`, writeimg.c's `readimage`,
+/// writet1.c's `t1_open_fontfile`): an `INPUT` line in the `.fls`, the path
+/// spelled as the lookup returned it (`./sub.tex` for a file in the
+/// current directory). The incremental journal is not touched: the caller
+/// notes its read where it reads.
+pub fn recorder_record_input(name: &str) {
+    recorder_line("INPUT", name);
+}
+
+/// kpathsea's own reads, which it lists through `kpse_record_input`: the
+/// first lookup of a TFM, PK, GF or OFM file reads every `texfonts.map` on
+/// the font map path (fontmap.c's `read_all_maps`, from tex-file.c's
+/// `target_fontmaps`), once per process.
+fn recorder_fontmaps() {
+    static LISTED: AtomicBool = AtomicBool::new(false);
+    if !fontmaps_due(&LISTED, run().recorder) {
+        return;
+    }
+    for p in with_resolver(|r| r.find_all("texfonts.map", Format::Map)) {
+        recorder_line("INPUT", &p.to_string_lossy());
+    }
+}
+
+/// Whether the `texfonts.map` lines are due now. They are latched only once
+/// a `-recorder` run lists them: in a process whose sessions differ in
+/// `-recorder` (the resident host's warm-up compile has none), a TFM that a
+/// session without it loads first must not keep them out of a later
+/// session's `.fls`; pdfTeX, one run per process, lists them before the
+/// first TFM (`INPUT .../texfonts.map`, then `INPUT .../cmr10.tfm`).
+fn fontmaps_due(listed: &AtomicBool, recorder: bool) -> bool {
+    recorder && !listed.swap(true, Ordering::SeqCst)
+}
+
+/// One line of the `.fls`, which the first one starts (lib/openclose.c's
+/// `recorder_start`): its `PWD` line, then the `texmf.cnf` files kpathsea
+/// read when it started, which it lists through `kpse_record_input`
+/// (cnf.c's `read_all_cnf`; texmfmp.c lists the same files itself where
+/// kpathsea starts before the options are parsed).
+fn recorder_line(prefix: &str, listed: &str) {
     let r = run();
     if !r.recorder {
         return;
     }
+    let fresh = RECORDER.lock().unwrap().is_none();
+    let cnf = if fresh {
+        with_resolver(|res| res.find_all("texmf.cnf", Format::Cnf))
+    } else {
+        vec![]
+    };
     let mut g = RECORDER.lock().unwrap();
     if g.is_none() {
         let mut fname = format!("{}{}.fls", r.program_name, std::process::id());
@@ -2341,10 +2402,13 @@ fn record_file(prefix: &str, name: &str) {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let _ = writeln!(file, "PWD {cwd}");
+        for c in &cnf {
+            let _ = writeln!(file, "INPUT {}", c.to_string_lossy());
+        }
         *g = Some(Recorder { name: fname, file });
     }
     if let Some(rec) = g.as_mut() {
-        let _ = writeln!(rec.file, "{prefix} {name}");
+        let _ = writeln!(rec.file, "{prefix} {listed}");
         let _ = rec.file.flush();
     }
 }
@@ -2576,6 +2640,14 @@ fn popen_command(cmd: &str, win32: bool) -> std::borrow::Cow<'_, str> {
 /// texmfmp.c's `runpopen`: the command behind `\input|cmd` (reading) or
 /// `\openout` to `|cmd` (writing), subject to the same restrictions as
 /// `\write18`.
+/// `run_popen(cmd, true)`, for the XeTeX engine's `u_open_in`
+/// (`\input|cmd` there is texmfmp.c's `open_in_or_pipe` too): the same
+/// restricted-shell check against `shell_escape_commands`, the same
+/// quoting, and the same external effect recorded.
+pub fn run_popen_in(cmd: &str) -> Option<std::process::Child> {
+    run_popen(cmd, true)
+}
+
 fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
     // Every message below shows the command as rewritten, as texmfmp.c's do.
     let cmd = &*popen_command(cmd, crate::os::POPEN_QUOTES_TO_DOUBLE);
@@ -2696,7 +2768,12 @@ impl Globals {
         let (found, searched) = match found {
             Some(p) => (p, false),
             None if format == Format::Fmt => (find_format(base)?, true),
-            None => (resolve_ex(base, format, must_exist)?, true),
+            None => {
+                if format == Format::Tfm {
+                    recorder_fontmaps();
+                }
+                (resolve_ex(base, format, must_exist)?, true)
+            }
         };
         // openclose.c: `fullnameoffile` is the path found; `nameoffile`
         // loses the `./` kpathsea puts in front of a file in the current
@@ -2707,7 +2784,8 @@ impl Globals {
             _ => found.as_str(),
         };
         self.set_name_of_file(shown);
-        record_file("INPUT", &found);
+        // (openclose.c: `recorder_record_input (nameoffile + 1)`)
+        record_file_as("INPUT", &found, shown);
         read_set_open(&found);
         Some(found)
     }
@@ -2762,7 +2840,8 @@ impl Globals {
         };
         let absolute = name.starts_with('/');
         let mut fname = name.clone();
-        if let Some(dir) = run().output_directory {
+        let out_dir = run().output_directory;
+        if let Some(dir) = &out_dir {
             if !absolute {
                 fname = format!("{dir}/{name}");
             }
@@ -2771,6 +2850,14 @@ impl Globals {
         keep_instance(&fname, &out_key(&fname));
         before_truncate(&fname);
         let mut f = File::create(&fname).ok();
+        if f.is_none() && !absolute {
+            // (the hosts: `chapters/one.aux` under the output directory, #1654)
+            if let Some(dir) = &out_dir {
+                if make_output_subdir(dir, &name) {
+                    f = File::create(&fname).ok();
+                }
+            }
+        }
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");
@@ -3477,11 +3564,13 @@ impl Globals {
             name.push_str(".tcx");
         }
         let Some(found) = resolve(&name, Format::Web2c) else {
-            with_run(|r| r.translate_filename = Some(name.clone()));
-            eprintln!(
-                "{}: warning: Could not open char translation file `{name}'.",
-                invocation_name()
-            );
+            // `translate_filename` is now kpse_find_file's NULL: no TCX file
+            // after the banner or in the log, and the format's `xord`,
+            // `xchr` and `xprn` stand (tex.ch [50.1308]). kpathsea's
+            // WARNING1 names no program.
+            with_run(|r| r.translate_filename = None);
+            self.translate_filename_p = false;
+            eprintln!("warning: Could not open char translation file `{name}'.");
             return;
         };
         with_run(|r| r.translate_filename = Some(found.clone()));
@@ -3572,14 +3661,20 @@ impl Globals {
         TEX_INPUT_TYPE.store(input, Ordering::SeqCst);
     }
 
+    /// kpathsea's `kpse_in_name_ok`; a refusal names `argv[0]` as given.
     pub fn kpse_in_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok(&n, false))
+        let inv = invocation_name();
+        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok_as(&n, false, &inv))
     }
 
+    /// kpathsea's `kpse_out_name_ok`: `Not writing to NAME (openout_any =
+    /// p; no extended check).` on stderr after `argv[0]` as given, as
+    /// pdfTeX's own kpathsea says it (#2274).
     pub fn kpse_out_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        with_resolver(|r| r.name_ok(&n, true))
+        let inv = invocation_name();
+        with_resolver(|r| r.name_ok_as(&n, true, &inv))
     }
 
     /// texmfmp.c's `runsystem` on `str_pool[s..s+l-1]`.
@@ -3951,6 +4046,11 @@ pub fn opens_len() -> usize {
     OPENS.with(|o| o.borrow().len())
 }
 
+/// Whether one of the first `n` output opens is of `k` (an `out_key`).
+pub fn opened_before(n: usize, k: &str) -> bool {
+    OPENS.with(|o| o.borrow().iter().take(n).any(|p| p == k))
+}
+
 /// The files opened for output after the first `n`.
 pub fn opens_since(n: usize) -> Vec<String> {
     OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
@@ -4075,6 +4175,14 @@ fn keep_instance(path: &str, k: &str) {
     let Some(i) = OPENS.with(|o| o.borrow().iter().rposition(|p| p == k)) else {
         return;
     };
+    keep_instance_at(i, path, k);
+}
+
+/// `keep_instance` for the instance of open `i` (of key `k`).
+fn keep_instance_at(i: usize, path: &str, k: &str) {
+    if OPENS.with(|o| o.borrow().get(i).is_none_or(|p| p != k)) {
+        return;
+    }
     if INSTANCES.with(|v| v.borrow().get(i).is_none_or(|x| x.is_some())) {
         return;
     }
@@ -4093,6 +4201,35 @@ fn keep_instance(path: &str, k: &str) {
             *slot = Some(std::sync::Arc::new(data));
         }
     });
+}
+
+/// A convergence jump is about to append `later`, the old run's output
+/// opens after the convergence point, to the new run's first `n` (lane
+/// BEAMER, #2006). A file the new run opened last before `n` and the old run
+/// opens again in `later` would have that instance kept at the reopen
+/// (`keep_instance`), which the jump appends as done: keep it now, from the
+/// file as the new run left it, before the jump writes the old run's bytes
+/// there. Without it every checkpoint between the new run's open and the
+/// old run's next one was unrestorable. Not for a file open for output at
+/// the jump (`open_out`, by `out_key`): its instance is not done with.
+pub fn keep_instances_before_jump(n: usize, later: &[String], open_out: &[String]) {
+    let todo: Vec<(usize, String)> = OPENS.with(|o| {
+        let o = o.borrow();
+        let n = n.min(o.len());
+        let mut v: Vec<(usize, String)> = vec![];
+        for k in later {
+            if k.is_empty() || open_out.contains(k) || v.iter().any(|(_, p)| p == k) {
+                continue;
+            }
+            if let Some(i) = o[..n].iter().rposition(|p| p == k) {
+                v.push((i, k.clone()));
+            }
+        }
+        v
+    });
+    for (i, k) in todo {
+        keep_instance_at(i, &k, &k);
+    }
 }
 
 /// A restore put back the files open for output at its target
@@ -4649,6 +4786,15 @@ fn terminal_captured() -> bool {
     TERMINAL.with(|t| t.borrow().is_some())
 }
 
+/// The terminal's pending bytes out to stdout now (nothing when a host
+/// captures the terminal): what C's `fflush(stdout)` does for pdfTeX before
+/// a library writes to stderr (xpdf's `libxpdf:` messages, `pdftex/xpdf.rs`).
+pub fn flush_terminal() {
+    if !terminal_captured() {
+        let _ = std::io::stdout().flush();
+    }
+}
+
 fn terminal_capture_byte(b: u8) -> bool {
     TERMINAL.with(|t| match t.borrow_mut().as_mut() {
         Some(v) => {
@@ -4709,6 +4855,22 @@ pub fn external_effects_len() -> usize {
 /// Forget the external effects after the first `n` (restoring).
 pub fn truncate_external_effects(n: usize) {
     EXTERNAL_EFFECTS.lock().unwrap().truncate(n);
+}
+
+/// The external effects after the first `n` (a restore keeps the old
+/// run's, `checkpoint::Pending`).
+pub fn external_effects_since(n: usize) -> Vec<ExternalEffect> {
+    EXTERNAL_EFFECTS
+        .lock()
+        .unwrap()
+        .get(n..)
+        .unwrap_or(&[])
+        .to_vec()
+}
+
+/// Put back external effects a restore cut (`Globals::reattach_pending`).
+pub fn append_external_effects(e: &[ExternalEffect]) {
+    EXTERNAL_EFFECTS.lock().unwrap().extend_from_slice(e);
 }
 
 pub fn tex_input_type() -> bool {
@@ -5312,6 +5474,55 @@ pub fn mtime_secs(path: &str) -> Option<i64> {
         .ok()
         .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
+}
+
+/// The environment variable that turns [`make_output_subdir`] on in an
+/// engine process the host starts (an export, a Unicode-mode run).
+pub const OUTPUT_SUBDIRS_ENV: &str = "FLASHTEX_OUTPUT_SUBDIRS";
+
+static OUTPUT_SUBDIRS: AtomicBool = AtomicBool::new(false);
+
+/// Turn [`make_output_subdir`] on for this process (the engine hosts).
+pub fn set_output_subdirs(on: bool) {
+    OUTPUT_SUBDIRS.store(on, Ordering::Relaxed);
+}
+
+/// A relative output name with a directory part (`chapters/one.aux`, which
+/// `\include{chapters/one}` opens) could not be created under the output
+/// directory `dir` because `dir/chapters` does not exist: make it, so the
+/// caller can try once more. pdfTeX with `-output-directory` stops there
+/// ("I can't write on file"), and a front end makes the directory and runs
+/// again (latexmk's `$allow_subdir_creation`); the hosts' output directory
+/// is their own, so they make it at once and the run is the one pdflatex
+/// makes in the project directory, where `chapters/` exists (#1654).
+///
+/// Only in the hosts ([`set_output_subdirs`] or [`OUTPUT_SUBDIRS_ENV`]=1):
+/// the engine run as `pdftex` keeps web2c's behaviour. Only below `dir`:
+/// a name with `..`, a root or a prefix makes nothing. Returns whether a
+/// directory was made.
+pub fn make_output_subdir(dir: &str, name: &str) -> bool {
+    if !OUTPUT_SUBDIRS.load(Ordering::Relaxed)
+        && std::env::var_os(OUTPUT_SUBDIRS_ENV).is_none_or(|v| v != "1")
+    {
+        return false;
+    }
+    output_subdir(dir, name)
+        .is_some_and(|sub| !sub.is_dir() && std::fs::create_dir_all(&sub).is_ok())
+}
+
+/// The directory below `dir` that the relative output name `name` needs,
+/// if it has one and stays below `dir`.
+fn output_subdir(dir: &str, name: &str) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let parent = Path::new(name).parent()?;
+    let below = parent
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    (below
+        && parent
+            .components()
+            .any(|c| matches!(c, Component::Normal(_))))
+    .then(|| Path::new(dir).join(parent))
 }
 
 /// The run opened `path` for output (the read journal's `outputs`).
@@ -6013,6 +6224,31 @@ mod statsig_tests {
 }
 
 #[cfg(test)]
+mod output_subdir_tests {
+    use super::output_subdir;
+    use std::path::PathBuf;
+
+    /// Only a directory part that stays below the output directory.
+    #[test]
+    fn only_subdirectories_below_the_output_directory() {
+        let d = |s: &str| Some(PathBuf::from(s));
+        assert_eq!(output_subdir("/o", "chapters/one.aux"), d("/o/chapters"));
+        assert_eq!(output_subdir("/o", "a/b/c.aux"), d("/o/a/b"));
+        assert_eq!(output_subdir("/o", "./a/c.aux"), d("/o/./a"));
+        for name in [
+            "one.aux",
+            "./one.aux",
+            "../one.aux",
+            "a/../../x.aux",
+            "/abs/x.aux",
+            "",
+        ] {
+            assert_eq!(output_subdir("/o", name), None, "{name}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod known_content_tests {
     use super::*;
 
@@ -6046,5 +6282,22 @@ mod known_content_tests {
         clear_known_content();
         assert!(known_content(&path).is_none());
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod recorder_tests {
+    use super::*;
+
+    /// A TFM loaded without `-recorder` does not use up the `texfonts.map`
+    /// lines; the first `-recorder` run lists them once (#2083's review).
+    #[test]
+    fn fontmaps_wait_for_a_recorder_run() {
+        let listed = AtomicBool::new(false);
+        assert!(!fontmaps_due(&listed, false));
+        assert!(!fontmaps_due(&listed, false));
+        assert!(fontmaps_due(&listed, true));
+        assert!(!fontmaps_due(&listed, true));
+        assert!(!fontmaps_due(&listed, false));
     }
 }
