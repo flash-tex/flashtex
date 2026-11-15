@@ -152,6 +152,10 @@ final class ProjectWindowsHostedTests: XCTestCase {
         let windows = makeWindows()
         let id1 = ProjectWindowID()
         let a = windows.model(for: id1)
+        // DIAG3 #2151: every bridgeStatus change of every window from creation on, with the new value and stack.
+        let early = MutationLog()
+        MutationLog.arm(early, label: "w1 bridgeStatus", model: a, read: { _ = $0.bridgeStatus }, describe: { $0.bridgeStatus })
+        print("MultiWindowDiag3: FLASHTEX_BRIDGE=\(ProcessInfo.processInfo.environment["FLASHTEX_BRIDGE"] ?? "-") located=\(BridgeClient.locateBridge()?.path ?? "-") store=\(BridgeClient.defaultStoreDirectory().path) autoAttach=\(CaptureInboxFeature.autoAttachBridge)")
         let body = (0 ..< 40).map { "Paragraph \($0) with some words to fill a line or two of the page." }.joined(separator: "\n\n")
         windows.open(try write("one/main.tex", "\\section{One}\nCaret here.\n\n" + body), from: a)
         let tv = try show(id1, of: windows)
@@ -187,6 +191,7 @@ final class ProjectWindowsHostedTests: XCTestCase {
         for name in ["two", "three"] {
             guard case .openedNew(let id) = windows.open(try write("\(name)/main.tex", "\\section{\(name)}\n" + body), from: a).result else { return XCTFail(name) }
             others.append(windows.model(for: id))
+            MutationLog.arm(early, label: "w\(others.count + 1) bridgeStatus", model: others.last!, read: { _ = $0.bridgeStatus }, describe: { $0.bridgeStatus })
             _ = try show(id, of: windows)
         }
         tv.window?.makeFirstResponder(tv)
@@ -202,6 +207,18 @@ final class ProjectWindowsHostedTests: XCTestCase {
             quiet = ViewBodyProbe.counts.isEmpty ? quiet + 1 : 0
         }
         print("MultiWindowDiag: quiet after \(quietRounds) rounds (quiet=\(quiet)); key window \(String(describing: NSApp.keyWindow)); tv window key \(tv.window?.isKeyWindow ?? false) main \(tv.window?.isMainWindow ?? false); first responder is tv \(tv.window?.firstResponder === tv); policy \(NSApp.activationPolicy().rawValue) active \(NSApp.isActive)")
+        do {
+            for (n, m) in [("w1", a), ("w2", others[0]), ("w3", others[1])] {
+                print("MultiWindowDiag3: \(n) now bridge=\(m.bridge != nil) status=\(m.bridgeStatus) captureInboxVisible=\(m.captureInboxVisible) captureNote=\(m.captureNote ?? "-")")
+            }
+            for v in early.values { print("MultiWindowDiag3: VALUE \(v)") }
+            var seen = Set<String>()
+            for e in early.events where !seen.contains(e.label) {
+                seen.insert(e.label)
+                print("MultiWindowDiag3: FIRST \(e.label)")
+                for f in e.stack.prefix(40) { print("MultiWindowDiag3:     \(f)") }
+            }
+        }
         // Which observed property of the OTHER windows' models changes while
         // window 1 is typed into: one tracker per property EditorPane reads,
         // re-armed after each change, keeping the mutation's call stack
@@ -240,6 +257,8 @@ final class ProjectWindowsHostedTests: XCTestCase {
         let three = measure(8)
         ViewBodyProbe.recordsStacks = false
         log.stop()
+        early.stop()
+        for v in early.values { print("MultiWindowDiag3: VALUE-AFTER \(v)") }
         do {
             let t0 = keyTimes[0]
             for e in log.events {
@@ -432,6 +451,9 @@ final class MutationLog: @unchecked Sendable {
     private var _events: [Event] = []
     private var stopped = false
     var events: [Event] { lock.lock(); defer { lock.unlock() }; return _events }
+    private var _values: [String] = []
+    var values: [String] { lock.lock(); defer { lock.unlock() }; return _values }
+    func addValue(_ v: String) { lock.lock(); _values.append(v); lock.unlock() }
     func stop() { lock.lock(); stopped = true; lock.unlock() }
     var isStopped: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
     func add(_ label: String) {
@@ -440,13 +462,17 @@ final class MutationLog: @unchecked Sendable {
     }
 
     @MainActor
-    static func arm(_ log: MutationLog, label: String, model: ShellModel, read: @escaping (ShellModel) -> Void) {
+    static func arm(_ log: MutationLog, label: String, model: ShellModel, read: @escaping (ShellModel) -> Void, describe: ((ShellModel) -> String)? = nil) {
         guard !log.isStopped else { return }
         nonisolated(unsafe) let m = model
         nonisolated(unsafe) let r = read
+        nonisolated(unsafe) let d = describe
         withObservationTracking { read(model) } onChange: {
             log.add(label)
-            DispatchQueue.main.async { MainActor.assumeIsolated { arm(log, label: label, model: m, read: r) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                if let d { log.addValue("\(label) at \(MonotonicClock.nowNs() / 1_000_000) ms: \(d(m))") }
+                arm(log, label: label, model: m, read: r, describe: d)
+            } }
         }
     }
 }
