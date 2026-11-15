@@ -284,6 +284,8 @@ pub struct Host {
     pub brk_locale_str_num: i32,
     /// READ-TRACK (`crate::dormant`): the run's counts, never restored.
     pub dorm: flashtex_engine::dormant::Counts,
+    /// Verification-only macro observations; never affects TeX execution.
+    pub intrinsics: crate::intrinsics::Report,
     /// The iterator's text, as the boundaries `ubrk_next` returns for it, and
     /// how many it has returned. `do_locale_linebreaks` reads them all
     /// within one command, so a checkpoint does not save them.
@@ -401,6 +403,35 @@ impl Globals {
     /// Put checkpoint `id` back: the word space, the scalar globals and the
     /// host state saved with it. Later checkpoints are dropped.
     pub fn restore(&mut self, id: flashtex_engine::arena::CheckpointId) -> Result<(), String> {
+        self.restore_with(id, true)
+    }
+
+    /// [`restore`](Self::restore) within one command: the intrinsics
+    /// verifier undoing its replay (`crate::intrinsics_verify`), which
+    /// starts no other READ-TRACK epoch and keeps the call's observation.
+    pub(crate) fn restore_in_call(
+        &mut self,
+        id: flashtex_engine::arena::CheckpointId,
+    ) -> Result<(), String> {
+        self.restore_with(id, false)
+    }
+
+    /// Drop checkpoint `id` (the verifier's), keeping the others. The
+    /// newest goes as if never taken (`Arena::retain` keeps the newest).
+    pub(crate) fn drop_checkpoint(&mut self, id: flashtex_engine::arena::CheckpointId) {
+        if self.arena.checkpoint_ids().last() == Some(&id) {
+            self.arena.drop_newest();
+        } else {
+            self.arena.retain(&|k| k != id);
+        }
+        self.host.checkpoints.remove(&id);
+    }
+
+    fn restore_with(
+        &mut self,
+        id: flashtex_engine::arena::CheckpointId,
+        another_run: bool,
+    ) -> Result<(), String> {
         let saved = self
             .host
             .checkpoints
@@ -410,7 +441,10 @@ impl Globals {
         self.arena.restore_discard(id)?;
         self.fill_scalars();
         // (another run from here on: `crate::dormant`)
-        self.host.dorm.new_epoch();
+        if another_run {
+            self.intr_after_restore();
+            self.host.dorm.new_epoch();
+        }
         let kept: Vec<_> = self.arena.checkpoint_ids().to_vec();
         self.host.checkpoints.retain(|k, _| kept.contains(k));
         self.host.font_mgr = saved.font_mgr;
@@ -440,6 +474,7 @@ impl Globals {
             .ok_or_else(|| format!("no host state saved with checkpoint {id:?}"))?;
         let b = self.arena.restore_branch(id)?;
         self.fill_scalars();
+        self.intr_after_restore();
         self.host.dorm.new_epoch();
         self.host.font_mgr = saved.font_mgr;
         self.host.full_name_of_file = saved.full_name_of_file;

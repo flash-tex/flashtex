@@ -23,7 +23,9 @@ into a chapter (docspec.py) and whose preamble edits into the main file. The pha
                                             (edits.py's `newline`: only later input lines move)
   split@middle                              that space becomes a blank line (edits.py's `split`), and
                                             the blank line a space again (edits.py's `join` of it)
-  typing@50ms … typing@150ms               letter@middle's edit typed on a clock (dl3-keys --interval-ms:
+  typing@50ms … typing@150ms               letter@middle's place typed on a clock (dl3-keys --interval-ms:
+                                            two letters typed and deleted in turn, "x", "xy", "y", none, so
+                                            that no keystroke's text is that of the three before it;
                                             keystroke k sent at k x 50, 60, 80, 100 or 150 ms, whatever the
                                             host is doing; 50 ms is about 240 words per minute, 60 ms 200:
                                             the owner's 2026-10-06 requirement that typing below 240 wpm
@@ -83,8 +85,8 @@ peak (`wait4` ru_maxrss) of each host.
 
 Samples: the first keystroke of every phase (and the first reopen) is a warm-up and is dropped
 from the statistics (kept in raw). `--keys`, `--typing-keys` and `--preamble` are the keystrokes
-sent, forced even (every edit is undone, so the next phase sees the document unchanged): 20 keys
-give 19 samples, 40 typing keys 39, 14 preamble edits 13. `--reopen 13` gives 12. A row with fewer than 12 samples is gated on its
+sent, forced even (every edit is undone, so the next phase sees the document unchanged; typing keys
+to a multiple of 4, the typist's cycle): 20 keys give 19 samples, 40 typing keys 39, 14 preamble edits 13. `--reopen 13` gives 12. A row with fewer than 12 samples is gated on its
 maximum, not its p95.
 
 Gate (§1.2):
@@ -895,7 +897,7 @@ def main():
     ap.add_argument('--docs')
     ap.add_argument('--phases', help='comma list of ' + ','.join(PHASE_NAMES) + '; default all')
     ap.add_argument('--keys', type=int, help='keystrokes per in-body phase, forced even (default 20)')
-    ap.add_argument('--typing-keys', type=int, help='keystrokes per typing@ phase, forced even (default 40)')
+    ap.add_argument('--typing-keys', type=int, help='keystrokes per typing@ phase, forced to a multiple of 4 (default 40)')
     ap.add_argument('--preamble', type=int, help='preamble edits, forced even (default 14)')
     ap.add_argument('--reopen', type=int, help='reopens (default 13)')
     ap.add_argument('--gap-ms', type=int, default=300)
@@ -933,7 +935,7 @@ def main():
         if getattr(a, k) is None:
             setattr(a, k, v)
     a.keys += a.keys % 2  # every edit undone: the next phase sees the document unchanged
-    a.typing_keys += a.typing_keys % 2
+    a.typing_keys += -a.typing_keys % 4  # (the typist's cycle: dl3-keys --interval-ms)
     a.preamble += a.preamble % 2  # and the S0 left behind is the document's own
     eng = f'{IB}/{a.engine}'
     out = a.out or f'{IB}/t7/{time.strftime("%Y%m%dT%H%M%S")}'
