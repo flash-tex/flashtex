@@ -68,8 +68,42 @@ fn each(files: &[&str]) -> String {
         .collect()
 }
 
+/// Each file at its natural size (no `width`, so the size comes from the
+/// file's resolution: pHYs, JFIF or Exif density, JBIG2 page information,
+/// or `\pdfimageresolution` without one), with the box's dimensions in the
+/// log; then a height alone, a depth alone, and width with height.
+fn natural(files: &[&str]) -> String {
+    let mut s: String = files
+        .iter()
+        .map(|f| {
+            format!(
+                "\\setbox0\\hbox{{\\pdfximage{{{f}}}\\pdfrefximage\\pdflastximage}}\
+                 \\message{{[{f}: \\the\\wd0 x \\the\\ht0 x \\the\\dp0]}}\\box0\n"
+            )
+        })
+        .collect();
+    for (keys, f) in [
+        ("height 2cm", "png-rgb8.png"),
+        ("depth 1cm", "jpg-rgb.jpg"),
+        ("width 3cm height 1cm", "jpg-exif.jpg"),
+    ] {
+        s.push_str(&format!(
+            "\\setbox0\\hbox{{\\pdfximage {keys} {{{f}}}\\pdfrefximage\\pdflastximage}}\
+             \\message{{[{keys}: \\the\\wd0 x \\the\\ht0 x \\the\\dp0]}}\\box0\n"
+        ));
+    }
+    s
+}
+
 /// (name, document) pairs.
 fn cases() -> Vec<(&'static str, String)> {
+    // every PNG, JPEG and JBIG2 at its natural size
+    let raster: Vec<&str> = PNGS
+        .iter()
+        .chain(JPEGS)
+        .copied()
+        .chain(["jbig2-sequential.jb2", "jbig2-random.jbig2"])
+        .collect();
     let hand = "pdf-hand.pdf";
     vec![
         ("png", format!("{}{}\\bye\n", setup(7, "\\pdfimagehicolor=1"), each(PNGS))),
@@ -104,6 +138,18 @@ fn cases() -> Vec<(&'static str, String)> {
             ),
         ),
         ("jpeg", format!("{}{}\\bye\n", setup(7, ""), each(JPEGS))),
+        (
+            "natural-size",
+            format!("{}{}\\bye\n", setup(7, ""), natural(&raster)),
+        ),
+        (
+            "natural-size-300",
+            format!(
+                "{}{}\\bye\n",
+                setup(7, "\\pdfimageresolution=300"),
+                natural(&raster)
+            ),
+        ),
         (
             "jbig2",
             format!(
