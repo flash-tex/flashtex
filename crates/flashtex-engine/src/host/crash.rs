@@ -157,6 +157,19 @@ extern "C" fn on_signal(sig: i32) {
     put(last_request(&mut copy), &mut k);
     put(b"\n", &mut k);
     emit(&buf[..k]);
+    // A coverage build (cargo-llvm-cov) writes its profile first, as an
+    // exit would: the tests end their hosts with `SIGTERM` there.
+    #[cfg(coverage)]
+    if sig == SIGTERM {
+        extern "C" {
+            fn __llvm_profile_write_file() -> c_int;
+        }
+        // SAFETY: the profiler runtime's own writer (not async-signal-safe;
+        // coverage builds only).
+        unsafe {
+            __llvm_profile_write_file();
+        }
+    }
     // SAFETY: back to the default action, then the signal again.
     unsafe {
         signal(sig, SIG_DFL);

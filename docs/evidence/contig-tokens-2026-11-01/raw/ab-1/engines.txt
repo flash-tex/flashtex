@@ -1,0 +1,12 @@
+main 6e66beddf
+d1c514989ad829598818aa83ea253f34686ee8b8313d58fe7b6df475cd27bc25  /home/kubar/.cache/flashtex-agents/contig/bin-main/flashtex-initex
+707f8acfb4bfa6e53f238315ab989dab4f3449a82eb749451bc770574b8d3421  /home/kubar/.cache/flashtex-agents/contig/bin-main/flashtex-host
+47b8b5dcf7975fe1c13b5c864be09b25a39a7a4e93b1723019fa1ea243a9ec7f  /home/kubar/.cache/flashtex-agents/contig/bin-main/fmt/pdflatex.fmt
+mainB 6e66beddf
+d1c514989ad829598818aa83ea253f34686ee8b8313d58fe7b6df475cd27bc25  /home/kubar/.cache/flashtex-agents/contig/bin-mainB/flashtex-initex
+707f8acfb4bfa6e53f238315ab989dab4f3449a82eb749451bc770574b8d3421  /home/kubar/.cache/flashtex-agents/contig/bin-mainB/flashtex-host
+47b8b5dcf7975fe1c13b5c864be09b25a39a7a4e93b1723019fa1ea243a9ec7f  /home/kubar/.cache/flashtex-agents/contig/bin-mainB/fmt/pdflatex.fmt
+lazy e0d4f2485
+9b6c559357a55852f2740151456047877d576ff717a7a7bafd92f3f61fc7ec29  /home/kubar/.cache/flashtex-agents/contig/bin-lazy/flashtex-initex
+bbe8c57791388355283249ea287182a5f7174e0224b67baead07004fd865843b  /home/kubar/.cache/flashtex-agents/contig/bin-lazy/flashtex-host
+47b8b5dcf7975fe1c13b5c864be09b25a39a7a4e93b1723019fa1ea243a9ec7f  /home/kubar/.cache/flashtex-agents/contig/bin-lazy/fmt/pdflatex.fmt
