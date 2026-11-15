@@ -29,8 +29,10 @@
 //! | `-recorder` | list every file opened in `JOBNAME.fls` |
 //! | `-version`, `-help` | print and exit |
 //!
+//! | `-mltex`, `-enc` | with `-ini`: ML\TeX's character substitution (`\charsubdef`), encTeX (`\mubyte`, `\xordcode`, ...), in the format made |
+//!
 //! Options pdfTeX has that this engine does not implement yet (`-synctex`,
-//! `-src-specials`, `-mltex`, `-enc`, `-ipc`, `-ipc-start`, `-mktex`,
+//! `-src-specials`, `-ipc`, `-ipc-start`, `-mktex`,
 //! `-no-mktex`, `-kpathsea-debug`, `-debug-format`) are refused with an
 //! error instead of being ignored, so that no run silently differs from
 //! pdfTeX's.
@@ -91,8 +93,6 @@ const NOT_IMPLEMENTED: &[&str] = &[
     "kpathsea-debug",
     "ipc",
     "ipc-start",
-    "mltex",
-    "enc",
     "debug-format",
     "src-specials",
     "synctex",
@@ -207,6 +207,8 @@ pub fn parse(argv: &[String]) -> RunOptions {
                 std::process::exit(0);
             }
             "etex" => o.etex = true,
+            "mltex" => o.mltex = true,
+            "enc" => o.enctex = true,
             "output-comment" => {
                 // texmfmp.c truncates to 255 bytes (`strncpy`, which may
                 // split a UTF-8 character) with kpathsea's WARNING2

@@ -357,7 +357,6 @@ var old_setting:0..max_selector; {holds print |selector|}
 @!old_mode:integer; {saved |mode|}
 @!j:small_number; {write stream number}
 @!q,@!r:pointer; {temporary variables for list manipulation}
-begin @<Expand macros in the token list
 @y
 procedure write_out(@!p:pointer);
 var old_setting:0..max_selector; {holds print |selector|}
@@ -367,7 +366,6 @@ var old_setting:0..max_selector; {holds print |selector|}
 @!d:integer; {number of characters in incomplete current string}
 @!clobbered:boolean; {system string is ok?}
 @!runsystem_ret:integer; {return value from |runsystem|}
-begin @<Expand macros in the token list
 @z
 
 @x pdftex.web l.36102 - tex.ch [53.1370]: \.{\\write18}{\it command} runs the command
@@ -464,6 +462,8 @@ parse_first_line_p:=web2c_parse_first_line_p;
 dump_line:=web2c_dump_line;
 eight_bit_p:=web2c_eight_bit_p;
 translate_filename_p:=web2c_translate_filename_p;
+mltex_p:=web2c_mltex_p; {`\.{-mltex}' (tex.ch [54/ML\TeX])}
+enctex_p:=web2c_enctex_p; {`\.{-enc}' (enctex2.ch [54/enc\TeX])}
 shellenabledp:=web2c_shellenabledp; restrictedshell:=web2c_restrictedshell;
 web2c_pdf_options(pdf_output_option, pdf_output_value,
   pdf_draftmode_option, pdf_draftmode_value)
@@ -484,6 +484,8 @@ function web2c_parse_first_line_p:boolean; external;
 function web2c_dump_line:boolean; external;
 function web2c_eight_bit_p:boolean; external;
 function web2c_translate_filename_p:boolean; external;
+function web2c_mltex_p:boolean; external;
+function web2c_enctex_p:boolean; external;
 function web2c_shellenabledp:boolean; external;
 function web2c_restrictedshell:boolean; external;
 procedure web2c_pdf_options(var @!o_opt,@!o_val,@!d_opt,@!d_val:integer); external;
@@ -567,7 +569,7 @@ default for users of the format.
 @<Dump |xord|, |xchr|, and |xprn|@>=
 for k:=0 to 255 do dump_int(xord[k]);
 for k:=0 to 255 do dump_int(xchr[k]);
-for k:=0 to 255 do if xprn[k] then dump_int(1)@+else dump_int(0);
+for k:=0 to 255 do dump_int(xprn[k]);
 
 @ Undumping the |xord|, |xchr|, and |xprn| arrays.  This code is more
 complicated, because we want to ensure that a TCX file specified on
@@ -583,10 +585,10 @@ if translate_filename_p then begin
 else begin
   for k:=0 to 255 do begin undump_int(x); xord[k]:=x; end;
   for k:=0 to 255 do begin undump_int(x); xchr[k]:=x; end;
-  for k:=0 to 255 do begin undump_int(x); xprn[k]:=(x<>0); end;
+  for k:=0 to 255 do begin undump_int(x); xprn[k]:=x; end;
   if eight_bit_p then
     for k:=0 to 255 do
-      xprn[k]:=true;
+      xprn[k]:=1;
 end
 
 @* \[55] Index.

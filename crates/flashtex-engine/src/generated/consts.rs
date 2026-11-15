@@ -43,59 +43,59 @@ pub const dvi_buf_size: i32 = 16384i32;
 pub const file_name_size: i32 = 1024i32;
 // §11
 pub const pool_name: &str = "TeXformats:TEX.POOL                     ";
-// §675
+// §676
 pub const inf_pdf_mem_size: i32 = 10000i32;
-// §675
+// §676
 pub const sup_pdf_mem_size: i32 = 10000000i32;
-// §679
+// §680
 pub const pdf_op_buf_size: i32 = 16384i32;
-// §679
+// §680
 pub const inf_pdf_os_buf_size: i32 = 1i32;
-// §679
+// §680
 pub const sup_pdf_os_buf_size: i32 = 5000000i32;
-// §679
+// §680
 pub const pdf_os_max_objs: i32 = 100i32;
-// §695
+// §696
 pub const inf_obj_tab_size: i32 = 1000i32;
-// §695
+// §696
 pub const sup_obj_tab_size: i32 = 8388607i32;
-// §695
+// §696
 pub const inf_dest_names_size: i32 = 1000i32;
-// §695
+// §696
 pub const sup_dest_names_size: i32 = 500000i32;
-// §695
+// §696
 pub const inf_pk_dpi: i32 = 72i32;
-// §695
+// §696
 pub const sup_pk_dpi: i32 = 8000i32;
-// §695
+// §696
 pub const pdf_objtype_max: i32 = head_tab_max;
-// §721
+// §722
 pub const vf_max_recursion: i32 = 10i32;
-// §721
+// §722
 pub const vf_stack_size: i32 = 100i32;
-// §1631
+// §1632
 pub const pdf_max_link_level: i32 = 10i32;
-// §1869
+// §1879
 pub const layout_frozen_control_sequence: i32 = frozen_control_sequence;
-// §1869
+// §1879
 pub const layout_undefined_control_sequence: i32 = undefined_control_sequence;
-// §1869
+// §1879
 pub const layout_glue_base: i32 = glue_base;
-// §1869
+// §1879
 pub const layout_local_base: i32 = local_base;
-// §1869
+// §1879
 pub const layout_int_base: i32 = int_base;
-// §1869
+// §1879
 pub const layout_count_base: i32 = count_base;
-// §1869
+// §1879
 pub const layout_mag_loc: i32 = 29294i32;
-// §1869
+// §1879
 pub const layout_eqtb_size: i32 = eqtb_size;
-// §1869
+// §1879
 pub const layout_eqtb_top: i32 = eqtb_top;
-// §1869
+// §1879
 pub const layout_hash_prime: i32 = hash_prime;
-// §1869
+// §1879
 pub const layout_etex_int_base: i32 = etex_int_base;
 
 // WEB macros whose expansion is an integer constant.
@@ -736,6 +736,8 @@ pub const box_base: i32 = 27433i32;
 // §248
 pub const cat_code_base: i32 = 27741i32;
 // §248
+pub const char_sub_code_base: i32 = 29021i32;
+// §248
 pub const club_penalties_loc: i32 = 27430i32;
 // §248
 pub const cur_font_loc: i32 = 27689i32;
@@ -793,6 +795,12 @@ pub const toks_base: i32 = 27173i32;
 pub const uc_code_base: i32 = 28253i32;
 // §248
 pub const widow_penalties_loc: i32 = 27431i32;
+// §248
+pub const xchr_code_base: i32 = 27691i32;
+// §248
+pub const xord_code_base: i32 = 27690i32;
+// §248
+pub const xprn_code_base: i32 = 27692i32;
 // §250
 pub const null_font: i32 = 0i32;
 // §250
@@ -1223,891 +1231,895 @@ pub const u_template: i32 = 1i32;
 pub const v_template: i32 = 2i32;
 // §329
 pub const write_text: i32 = 20i32;
-// §380
+// §381
 pub const no_expand_flag: i32 = 257i32;
-// §408
+// §409
 pub const bot_mark_code: i32 = 2i32;
-// §408
+// §409
 pub const first_mark_code: i32 = 1i32;
-// §408
+// §409
 pub const marks_code: i32 = 5i32;
-// §408
+// §409
 pub const split_bot_mark_code: i32 = 4i32;
-// §408
+// §409
 pub const split_first_mark_code: i32 = 3i32;
-// §408
+// §409
 pub const top_mark_code: i32 = 0i32;
-// §436
+// §437
 pub const dimen_val: i32 = 1i32;
-// §436
+// §437
 pub const glue_val: i32 = 2i32;
-// §436
+// §437
 pub const ident_val: i32 = 4i32;
-// §436
+// §437
 pub const int_val: i32 = 0i32;
-// §436
+// §437
 pub const mu_val: i32 = 3i32;
-// §436
+// §437
 pub const tok_val: i32 = 5i32;
-// §442
+// §443
 pub const badness_code: i32 = 5i32;
-// §442
+// §443
 pub const eTeX_dim: i32 = 28i32;
-// §442
+// §443
 pub const eTeX_expr: i32 = 39i32;
-// §442
+// §443
 pub const eTeX_glue: i32 = 37i32;
-// §442
+// §443
 pub const eTeX_mu: i32 = 38i32;
-// §442
+// §443
 pub const elapsed_time_code: i32 = 16i32;
-// §442
+// §443
 pub const input_line_no_code: i32 = 4i32;
-// §442
+// §443
 pub const last_node_type_code: i32 = 3i32;
-// §442
+// §443
 pub const pdf_last_annot_code: i32 = 11i32;
-// §442
+// §443
 pub const pdf_last_link_code: i32 = 19i32;
-// §442
+// §443
 pub const pdf_last_obj_code: i32 = 7i32;
-// §442
+// §443
 pub const pdf_last_x_pos_code: i32 = 12i32;
-// §442
+// §443
 pub const pdf_last_xform_code: i32 = 8i32;
-// §442
+// §443
 pub const pdf_last_ximage_code: i32 = 9i32;
-// §442
+// §443
 pub const pdf_last_ximage_colordepth_code: i32 = 15i32;
-// §442
+// §443
 pub const pdf_last_ximage_pages_code: i32 = 10i32;
-// §442
+// §443
 pub const pdf_last_y_pos_code: i32 = 13i32;
-// §442
+// §443
 pub const pdf_retval_code: i32 = 14i32;
-// §442
+// §443
 pub const pdf_shell_escape_code: i32 = 17i32;
-// §442
+// §443
 pub const pdftex_version_code: i32 = 6i32;
-// §442
+// §443
 pub const random_seed_code: i32 = 18i32;
-// §447
+// §448
 pub const max_dimen: i32 = 1073741823i32;
-// §464
+// §465
 pub const alpha_token: i32 = 3168i32;
-// §464
+// §465
 pub const continental_point_token: i32 = 3116i32;
-// §464
+// §465
 pub const hex_token: i32 = 3106i32;
-// §464
+// §465
 pub const octal_token: i32 = 3111i32;
-// §464
+// §465
 pub const point_token: i32 = 3118i32;
-// §471
+// §472
 pub const A_token: i32 = 2881i32;
-// §471
+// §472
 pub const infinity: i32 = 2147483647i32;
-// §471
+// §472
 pub const other_A_token: i32 = 3137i32;
-// §471
+// §472
 pub const zero_token: i32 = 3120i32;
-// §489
+// §490
 pub const default_rule: i32 = 26214i32;
-// §494
+// §495
 pub const eTeX_revision_code: i32 = 5i32;
-// §494
+// §495
 pub const expanded_code: i32 = 6i32;
-// §494
+// §495
 pub const font_name_code: i32 = 4i32;
-// §494
+// §495
 pub const job_name_code: i32 = 33i32;
-// §494
+// §495
 pub const left_margin_kern_code: i32 = 16i32;
-// §494
+// §495
 pub const meaning_code: i32 = 3i32;
-// §494
+// §495
 pub const normal_deviate_code: i32 = 30i32;
-// §494
+// §495
 pub const number_code: i32 = 0i32;
-// §494
+// §495
 pub const pdf_colorstack_init_code: i32 = 19i32;
-// §494
+// §495
 pub const pdf_creation_date_code: i32 = 22i32;
-// §494
+// §495
 pub const pdf_escape_hex_code: i32 = 20i32;
-// §494
+// §495
 pub const pdf_escape_name_code: i32 = 15i32;
-// §494
+// §495
 pub const pdf_escape_string_code: i32 = 14i32;
-// §494
+// §495
 pub const pdf_file_dump_code: i32 = 26i32;
-// §494
+// §495
 pub const pdf_file_mod_date_code: i32 = 23i32;
-// §494
+// §495
 pub const pdf_file_size_code: i32 = 24i32;
-// §494
+// §495
 pub const pdf_font_name_code: i32 = 9i32;
-// §494
+// §495
 pub const pdf_font_objnum_code: i32 = 10i32;
-// §494
+// §495
 pub const pdf_font_size_code: i32 = 11i32;
-// §494
+// §495
 pub const pdf_insert_ht_code: i32 = 31i32;
-// §494
+// §495
 pub const pdf_last_match_code: i32 = 28i32;
-// §494
+// §495
 pub const pdf_match_code: i32 = 27i32;
-// §494
+// §495
 pub const pdf_mdfive_sum_code: i32 = 25i32;
-// §494
+// §495
 pub const pdf_page_ref_code: i32 = 12i32;
-// §494
+// §495
 pub const pdf_strcmp_code: i32 = 18i32;
-// §494
+// §495
 pub const pdf_unescape_hex_code: i32 = 21i32;
-// §494
+// §495
 pub const pdf_xform_name_code: i32 = 13i32;
-// §494
+// §495
 pub const pdf_ximage_bbox_code: i32 = 32i32;
-// §494
+// §495
 pub const pdftex_banner_code: i32 = 8i32;
-// §494
+// §495
 pub const pdftex_revision_code: i32 = 7i32;
-// §494
+// §495
 pub const right_margin_kern_code: i32 = 17i32;
-// §494
+// §495
 pub const roman_numeral_code: i32 = 1i32;
-// §494
+// §495
 pub const string_code: i32 = 2i32;
-// §494
+// §495
 pub const uniform_deviate_code: i32 = 29i32;
-// §506
+// §507
 pub const closed: i32 = 2i32;
-// §506
+// §507
 pub const just_open: i32 = 1i32;
-// §513
+// §514
 pub const if_case_code: i32 = 16i32;
-// §513
+// §514
 pub const if_cat_code: i32 = 1i32;
-// §513
+// §514
 pub const if_char_code: i32 = 0i32;
-// §513
+// §514
 pub const if_dim_code: i32 = 3i32;
-// §513
+// §514
 pub const if_eof_code: i32 = 13i32;
-// §513
+// §514
 pub const if_false_code: i32 = 15i32;
-// §513
+// §514
 pub const if_hbox_code: i32 = 10i32;
-// §513
+// §514
 pub const if_hmode_code: i32 = 6i32;
-// §513
+// §514
 pub const if_inner_code: i32 = 8i32;
-// §513
+// §514
 pub const if_int_code: i32 = 2i32;
-// §513
+// §514
 pub const if_mmode_code: i32 = 7i32;
-// §513
+// §514
 pub const if_odd_code: i32 = 4i32;
-// §513
+// §514
 pub const if_pdfprimitive_code: i32 = 21i32;
-// §513
+// §514
 pub const if_true_code: i32 = 14i32;
-// §513
+// §514
 pub const if_vbox_code: i32 = 11i32;
-// §513
+// §514
 pub const if_vmode_code: i32 = 5i32;
-// §513
+// §514
 pub const if_void_code: i32 = 9i32;
-// §513
+// §514
 pub const ifx_code: i32 = 12i32;
-// §513
+// §514
 pub const unless_code: i32 = 32i32;
-// §515
+// §516
 pub const else_code: i32 = 3i32;
-// §515
+// §516
 pub const fi_code: i32 = 2i32;
-// §515
+// §516
 pub const if_code: i32 = 1i32;
-// §515
+// §516
 pub const if_node_size: i32 = 2i32;
-// §515
+// §516
 pub const or_code: i32 = 4i32;
-// §546
+// §547
 pub const format_default_length: i32 = 20i32;
-// §546
-pub const format_extension: i32 = 950i32;
-// §570
+// §547
+pub const format_extension: i32 = 951i32;
+// §571
 pub const ext_tag: i32 = 3i32;
-// §570
+// §571
 pub const lig_tag: i32 = 1i32;
-// §570
+// §571
 pub const list_tag: i32 = 2i32;
-// §571
+// §572
 pub const kern_flag: i32 = 128i32;
-// §571
+// §572
 pub const stop_flag: i32 = 128i32;
-// §573
+// §574
 pub const extra_space_code: i32 = 7i32;
-// §573
+// §574
 pub const quad_code: i32 = 6i32;
-// §573
+// §574
 pub const slant_code: i32 = 1i32;
-// §573
+// §574
 pub const space_code: i32 = 2i32;
-// §573
+// §574
 pub const space_shrink_code: i32 = 4i32;
-// §573
+// §574
 pub const x_height_code: i32 = 5i32;
-// §575
+// §576
 pub const non_address: i32 = 0i32;
-// §575
+// §576
 pub const non_char: i32 = 256i32;
-// §613
-pub const bop: i32 = 139i32;
-// §613
-pub const down1: i32 = 157i32;
-// §613
-pub const eop: i32 = 140i32;
-// §613
-pub const fnt1: i32 = 235i32;
-// §613
-pub const fnt_def1: i32 = 243i32;
-// §613
-pub const fnt_num_0: i32 = 171i32;
-// §613
-pub const nop: i32 = 138i32;
-// §613
-pub const pop: i32 = 142i32;
-// §613
-pub const post: i32 = 248i32;
-// §613
-pub const post_post: i32 = 249i32;
-// §613
-pub const pre: i32 = 247i32;
-// §613
-pub const push: i32 = 141i32;
-// §613
-pub const put_rule: i32 = 137i32;
-// §613
-pub const right1: i32 = 143i32;
-// §613
-pub const set1: i32 = 128i32;
-// §613
-pub const set_char_0: i32 = 0i32;
-// §613
-pub const set_rule: i32 = 132i32;
-// §613
-pub const w0: i32 = 147i32;
-// §613
-pub const w1: i32 = 148i32;
-// §613
-pub const x0: i32 = 152i32;
-// §613
-pub const x1: i32 = 153i32;
-// §613
-pub const xxx1: i32 = 239i32;
-// §613
-pub const xxx4: i32 = 242i32;
-// §613
-pub const y0: i32 = 161i32;
-// §613
-pub const y1: i32 = 162i32;
-// §613
-pub const z0: i32 = 166i32;
-// §613
-pub const z1: i32 = 167i32;
 // §614
+pub const bop: i32 = 139i32;
+// §614
+pub const down1: i32 = 157i32;
+// §614
+pub const eop: i32 = 140i32;
+// §614
+pub const fnt1: i32 = 235i32;
+// §614
+pub const fnt_def1: i32 = 243i32;
+// §614
+pub const fnt_num_0: i32 = 171i32;
+// §614
+pub const nop: i32 = 138i32;
+// §614
+pub const pop: i32 = 142i32;
+// §614
+pub const post: i32 = 248i32;
+// §614
+pub const post_post: i32 = 249i32;
+// §614
+pub const pre: i32 = 247i32;
+// §614
+pub const push: i32 = 141i32;
+// §614
+pub const put_rule: i32 = 137i32;
+// §614
+pub const right1: i32 = 143i32;
+// §614
+pub const set1: i32 = 128i32;
+// §614
+pub const set_char_0: i32 = 0i32;
+// §614
+pub const set_rule: i32 = 132i32;
+// §614
+pub const w0: i32 = 147i32;
+// §614
+pub const w1: i32 = 148i32;
+// §614
+pub const x0: i32 = 152i32;
+// §614
+pub const x1: i32 = 153i32;
+// §614
+pub const xxx1: i32 = 239i32;
+// §614
+pub const xxx4: i32 = 242i32;
+// §614
+pub const y0: i32 = 161i32;
+// §614
+pub const y1: i32 = 162i32;
+// §614
+pub const z0: i32 = 166i32;
+// §614
+pub const z1: i32 = 167i32;
+// §615
 pub const id_byte: i32 = 2i32;
-// §632
+// §633
 pub const movement_node_size: i32 = 3i32;
-// §635
+// §636
 pub const d_fixed: i32 = 6i32;
-// §635
+// §636
 pub const y_OK: i32 = 4i32;
-// §635
+// §636
 pub const y_here: i32 = 1i32;
-// §635
+// §636
 pub const yz_OK: i32 = 3i32;
-// §635
+// §636
 pub const z_OK: i32 = 5i32;
-// §635
+// §636
 pub const z_here: i32 = 2i32;
-// §638
+// §639
 pub const none_seen: i32 = 0i32;
-// §638
+// §639
 pub const y_seen: i32 = 6i32;
-// §638
+// §639
 pub const z_seen: i32 = 12i32;
-// §643
+// §644
 pub const dlist: i32 = 2i32;
-// §643
+// §644
 pub const left_to_right: i32 = 0i32;
-// §643
+// §644
 pub const reversed: i32 = 1i32;
-// §643
+// §644
 pub const right_to_left: i32 = 1i32;
-// §680
+// §681
 pub const no_zip: i32 = 0i32;
-// §680
+// §681
 pub const zip_finish: i32 = 2i32;
-// §680
+// §681
 pub const zip_writing: i32 = 1i32;
-// §686
-pub const pdf_new_line_char: i32 = 10i32;
 // §687
+pub const pdf_new_line_char: i32 = 10i32;
+// §688
 pub const max_integer: i32 = 2147483647i32;
-// §695
+// §696
 pub const colorstack_current: i32 = 3i32;
-// §695
+// §696
 pub const colorstack_data: i32 = 1i32;
-// §695
+// §696
 pub const colorstack_pop: i32 = 2i32;
-// §695
+// §696
 pub const colorstack_push: i32 = 1i32;
-// §695
+// §696
 pub const colorstack_set: i32 = 0i32;
-// §695
+// §696
 pub const direct_always: i32 = 2i32;
-// §695
+// §696
 pub const direct_page: i32 = 1i32;
-// §695
+// §696
 pub const head_tab_max: i32 = 10i32;
-// §695
+// §696
 pub const name_tree_kids_max: i32 = 6i32;
-// §695
+// §696
 pub const obj_type_dest: i32 = 5i32;
-// §695
+// §696
 pub const obj_type_font: i32 = 3i32;
-// §695
+// §696
 pub const obj_type_obj: i32 = 7i32;
-// §695
+// §696
 pub const obj_type_others: i32 = 0i32;
-// §695
+// §696
 pub const obj_type_outline: i32 = 4i32;
-// §695
+// §696
 pub const obj_type_page: i32 = 1i32;
-// §695
+// §696
 pub const obj_type_pages: i32 = 2i32;
-// §695
+// §696
 pub const obj_type_struct_dest: i32 = 6i32;
-// §695
+// §696
 pub const obj_type_thread: i32 = 10i32;
-// §695
+// §696
 pub const obj_type_xform: i32 = 8i32;
-// §695
+// §696
 pub const obj_type_ximage: i32 = 9i32;
-// §695
+// §696
 pub const pages_tree_kids_max: i32 = 6i32;
-// §695
+// §696
 pub const pdf_action_goto: i32 = 1i32;
-// §695
+// §696
 pub const pdf_action_page: i32 = 0i32;
-// §695
+// §696
 pub const pdf_action_size: i32 = 4i32;
-// §695
+// §696
 pub const pdf_action_thread: i32 = 2i32;
-// §695
+// §696
 pub const pdf_action_user: i32 = 3i32;
-// §695
+// §696
 pub const pdf_annot_node_size: i32 = 7i32;
-// §695
+// §696
 pub const pdf_colorstack_getter_node_size: i32 = 2i32;
-// §695
+// §696
 pub const pdf_colorstack_setter_node_size: i32 = 3i32;
-// §695
+// §696
 pub const pdf_dest_fit: i32 = 1i32;
-// §695
+// §696
 pub const pdf_dest_fitb: i32 = 4i32;
-// §695
+// §696
 pub const pdf_dest_fitbh: i32 = 5i32;
-// §695
+// §696
 pub const pdf_dest_fitbv: i32 = 6i32;
-// §695
+// §696
 pub const pdf_dest_fith: i32 = 2i32;
-// §695
+// §696
 pub const pdf_dest_fitr: i32 = 7i32;
-// §695
+// §696
 pub const pdf_dest_fitv: i32 = 3i32;
-// §695
+// §696
 pub const pdf_dest_node_size: i32 = 7i32;
-// §695
+// §696
 pub const pdf_dest_xyz: i32 = 0i32;
-// §695
+// §696
 pub const pdf_refobj_node_size: i32 = 2i32;
-// §695
+// §696
 pub const pdf_refxform_node_size: i32 = 5i32;
-// §695
+// §696
 pub const pdf_refximage_node_size: i32 = 5i32;
-// §695
+// §696
 pub const pdf_restore_node_size: i32 = 2i32;
-// §695
+// §696
 pub const pdf_save_node_size: i32 = 2i32;
-// §695
+// §696
 pub const pdf_setmatrix_node_size: i32 = 2i32;
-// §695
+// §696
 pub const pdf_thread_node_size: i32 = 7i32;
-// §695
+// §696
 pub const pdfmem_bead_size: i32 = 5i32;
-// §695
+// §696
 pub const pdfmem_obj_size: i32 = 4i32;
-// §695
+// §696
 pub const pdfmem_outline_size: i32 = 8i32;
-// §695
+// §696
 pub const pdfmem_xform_size: i32 = 6i32;
-// §695
+// §696
 pub const pdfmem_ximage_size: i32 = 5i32;
-// §695
+// §696
 pub const scan_special: i32 = 3i32;
-// §695
+// §696
 pub const set_origin: i32 = 0i32;
-// §695
+// §696
 pub const snap_node_size: i32 = 3i32;
-// §703
+// §704
 pub const new_font_type: i32 = 0i32;
-// §703
+// §704
 pub const real_font_type: i32 = 2i32;
-// §703
+// §704
 pub const virtual_font_type: i32 = 1i32;
-// §705
-pub const non_existent_path: i32 = 1088i32;
-// §710
+// §706
+pub const non_existent_path: i32 = 1089i32;
+// §711
 pub const long_char: i32 = 242i32;
-// §710
+// §711
 pub const put1: i32 = 133i32;
-// §710
+// §711
 pub const vf_id: i32 = 202i32;
-// §710
+// §711
 pub const vf_max_packet_length: i32 = 10000i32;
-// §816
+// §817
 pub const additional: i32 = 1i32;
-// §816
+// §817
 pub const exactly: i32 = 0i32;
-// §823
+// §824
 pub const cal_expand_ratio: i32 = 2i32;
-// §823
+// §824
 pub const subst_ex_font: i32 = 3i32;
-// §857
+// §858
 pub const math_char: i32 = 1i32;
-// §857
+// §858
 pub const math_text_char: i32 = 4i32;
-// §857
+// §858
 pub const noad_size: i32 = 4i32;
-// §857
+// §858
 pub const sub_box: i32 = 2i32;
-// §857
+// §858
 pub const sub_mlist: i32 = 3i32;
-// §858
+// §859
 pub const bin_noad: i32 = 18i32;
-// §858
+// §859
 pub const close_noad: i32 = 21i32;
-// §858
+// §859
 pub const inner_noad: i32 = 23i32;
-// §858
+// §859
 pub const limits: i32 = 1i32;
-// §858
+// §859
 pub const no_limits: i32 = 2i32;
-// §858
+// §859
 pub const op_noad: i32 = 17i32;
-// §858
+// §859
 pub const open_noad: i32 = 20i32;
-// §858
+// §859
 pub const ord_noad: i32 = 16i32;
-// §858
+// §859
 pub const punct_noad: i32 = 22i32;
-// §858
+// §859
 pub const rel_noad: i32 = 19i32;
-// §859
+// §860
 pub const default_code: i32 = 1073741824i32;
-// §859
+// §860
 pub const fraction_noad: i32 = 25i32;
-// §859
+// §860
 pub const fraction_noad_size: i32 = 6i32;
-// §859
+// §860
 pub const radical_noad: i32 = 24i32;
-// §859
+// §860
 pub const radical_noad_size: i32 = 5i32;
-// §863
+// §864
 pub const accent_noad: i32 = 28i32;
-// §863
+// §864
 pub const accent_noad_size: i32 = 5i32;
-// §863
+// §864
 pub const left_noad: i32 = 30i32;
-// §863
+// §864
 pub const middle_noad: i32 = 1i32;
-// §863
+// §864
 pub const over_noad: i32 = 27i32;
-// §863
+// §864
 pub const right_noad: i32 = 31i32;
-// §863
+// §864
 pub const under_noad: i32 = 26i32;
-// §863
+// §864
 pub const vcenter_noad: i32 = 29i32;
-// §864
-pub const display_style: i32 = 0i32;
-// §864
-pub const script_script_style: i32 = 6i32;
-// §864
-pub const script_style: i32 = 4i32;
-// §864
-pub const style_node: i32 = 14i32;
-// §864
-pub const style_node_size: i32 = 3i32;
-// §864
-pub const text_style: i32 = 2i32;
 // §865
+pub const display_style: i32 = 0i32;
+// §865
+pub const script_script_style: i32 = 6i32;
+// §865
+pub const script_style: i32 = 4i32;
+// §865
+pub const style_node: i32 = 14i32;
+// §865
+pub const style_node_size: i32 = 3i32;
+// §865
+pub const text_style: i32 = 2i32;
+// §866
 pub const choice_node: i32 = 15i32;
-// §875
-pub const script_script_size: i32 = 32i32;
-// §875
-pub const script_size: i32 = 16i32;
-// §875
-pub const text_size: i32 = 0i32;
 // §876
-pub const total_mathsy_params: i32 = 22i32;
+pub const script_script_size: i32 = 32i32;
+// §876
+pub const script_size: i32 = 16i32;
+// §876
+pub const text_size: i32 = 0i32;
 // §877
+pub const total_mathsy_params: i32 = 22i32;
+// §878
 pub const total_mathex_params: i32 = 13i32;
-// §940
-pub const math_spacing: i32 = 1314i32;
-// §946
+// §941
+pub const math_spacing: i32 = 1315i32;
+// §947
 pub const align_stack_node_size: i32 = 6i32;
-// §956
+// §957
 pub const cr_code: i32 = 257i32;
-// §956
+// §957
 pub const cr_cr_code: i32 = 258i32;
-// §956
+// §957
 pub const end_template_token: i32 = 19614i32;
-// §956
+// §957
 pub const span_code: i32 = 256i32;
-// §973
+// §974
 pub const span_node_size: i32 = 2i32;
-// §993
+// §994
 pub const decent_fit: i32 = 2i32;
-// §993
+// §994
 pub const loose_fit: i32 = 1i32;
-// §993
+// §994
 pub const tight_fit: i32 = 3i32;
-// §993
+// §994
 pub const very_loose_fit: i32 = 0i32;
-// §995
+// §996
 pub const active_node_size_normal: i32 = 3i32;
-// §995
+// §996
 pub const hyphenated: i32 = 1i32;
-// §995
+// §996
 pub const last_active: i32 = 4999992i32;
-// §995
+// §996
 pub const unhyphenated: i32 = 0i32;
-// §997
+// §998
 pub const passive_node_size: i32 = 2i32;
-// §998
+// §999
 pub const delta_node: i32 = 2i32;
-// §998
+// §999
 pub const delta_node_size: i32 = 9i32;
-// §1009
+// §1010
 pub const awful_bad: i32 = 1073741823i32;
-// §1151
+// §1152
 pub const deplorable: i32 = 100000i32;
-// §1157
+// §1158
 pub const box_there: i32 = 2i32;
-// §1157
+// §1158
 pub const inserts_only: i32 = 1i32;
-// §1158
+// §1159
 pub const inserting: i32 = 0i32;
-// §1158
+// §1159
 pub const page_ins_node_size: i32 = 4i32;
-// §1158
+// §1159
 pub const split_up: i32 = 1i32;
-// §1236
+// §1237
 pub const fil_code: i32 = 0i32;
-// §1236
+// §1237
 pub const fil_neg_code: i32 = 3i32;
-// §1236
+// §1237
 pub const fill_code: i32 = 1i32;
-// §1236
+// §1237
 pub const mskip_code: i32 = 5i32;
-// §1236
+// §1237
 pub const skip_code: i32 = 4i32;
-// §1236
+// §1237
 pub const ss_code: i32 = 2i32;
-// §1249
+// §1250
 pub const box_code: i32 = 0i32;
-// §1249
+// §1250
 pub const box_flag: i32 = 1073741824i32;
-// §1249
+// §1250
 pub const copy_code: i32 = 1i32;
-// §1249
+// §1250
 pub const global_box_flag: i32 = 1073774592i32;
-// §1249
+// §1250
 pub const last_box_code: i32 = 2i32;
-// §1249
+// §1250
 pub const leader_flag: i32 = 1073807361i32;
-// §1249
+// §1250
 pub const ship_out_flag: i32 = 1073807360i32;
-// §1249
+// §1250
 pub const vsplit_code: i32 = 3i32;
-// §1249
+// §1250
 pub const vtop_code: i32 = 4i32;
-// §1356
+// §1357
 pub const above_code: i32 = 0i32;
-// §1356
+// §1357
 pub const atop_code: i32 = 2i32;
-// §1356
+// §1357
 pub const delimited_code: i32 = 3i32;
-// §1356
+// §1357
 pub const over_code: i32 = 1i32;
-// §1400
+// §1401
 pub const char_def_code: i32 = 0i32;
-// §1400
+// §1401
+pub const char_sub_def_code: i32 = 7i32;
+// §1401
 pub const count_def_code: i32 = 2i32;
-// §1400
+// §1401
 pub const dimen_def_code: i32 = 3i32;
-// §1400
+// §1401
 pub const math_char_def_code: i32 = 1i32;
-// §1400
+// §1401
 pub const mu_skip_def_code: i32 = 5i32;
-// §1400
+// §1401
 pub const skip_def_code: i32 = 4i32;
-// §1400
+// §1401
 pub const toks_def_code: i32 = 6i32;
-// §1469
+// §1470
 pub const show_box_code: i32 = 1i32;
-// §1469
+// §1470
 pub const show_code: i32 = 0i32;
-// §1469
+// §1470
 pub const show_lists_code: i32 = 3i32;
-// §1469
+// §1470
 pub const show_the_code: i32 = 2i32;
-// §1521
+// §1522
 pub const close_node: i32 = 2i32;
-// §1521
+// §1522
 pub const language_node: i32 = 5i32;
-// §1521
+// §1522
 pub const latespecial_node: i32 = 4i32;
-// §1521
+// §1522
+pub const mubyte_zero: i32 = 64i32;
+// §1522
 pub const open_node: i32 = 0i32;
-// §1521
+// §1522
 pub const open_node_size: i32 = 3i32;
-// §1521
+// §1522
 pub const special_node: i32 = 3i32;
-// §1521
+// §1522
 pub const write_node: i32 = 1i32;
-// §1521
+// §1522
 pub const write_node_size: i32 = 2i32;
-// §1524
+// §1525
 pub const immediate_code: i32 = 5i32;
-// §1524
+// §1525
 pub const pdf_annot_node: i32 = 15i32;
-// §1524
+// §1525
 pub const pdf_catalog_code: i32 = 25i32;
-// §1524
+// §1525
 pub const pdf_colorstack_node: i32 = 40i32;
-// §1524
+// §1525
 pub const pdf_dest_node: i32 = 19i32;
-// §1524
+// §1525
 pub const pdf_end_link_node: i32 = 17i32;
-// §1524
+// §1525
 pub const pdf_end_thread_node: i32 = 22i32;
-// §1524
+// §1525
 pub const pdf_fake_space_node: i32 = 47i32;
-// §1524
+// §1525
 pub const pdf_font_attr_code: i32 = 27i32;
-// §1524
+// §1525
 pub const pdf_font_expand_code: i32 = 34i32;
-// §1524
+// §1525
 pub const pdf_glyph_to_unicode_code: i32 = 39i32;
-// §1524
+// §1525
 pub const pdf_include_chars_code: i32 = 28i32;
-// §1524
+// §1525
 pub const pdf_info_code: i32 = 24i32;
-// §1524
+// §1525
 pub const pdf_interword_space_off_node: i32 = 46i32;
-// §1524
+// §1525
 pub const pdf_interword_space_on_node: i32 = 45i32;
-// §1524
+// §1525
 pub const pdf_lateliteral_node: i32 = 8i32;
-// §1524
+// §1525
 pub const pdf_literal_node: i32 = 7i32;
-// §1524
+// §1525
 pub const pdf_map_file_code: i32 = 29i32;
-// §1524
+// §1525
 pub const pdf_map_line_code: i32 = 30i32;
-// §1524
+// §1525
 pub const pdf_names_code: i32 = 26i32;
-// §1524
+// §1525
 pub const pdf_nobuiltin_tounicode_code: i32 = 44i32;
-// §1524
+// §1525
 pub const pdf_obj_code: i32 = 9i32;
-// §1524
+// §1525
 pub const pdf_outline_code: i32 = 18i32;
-// §1524
+// §1525
 pub const pdf_refobj_node: i32 = 10i32;
-// §1524
+// §1525
 pub const pdf_refxform_node: i32 = 12i32;
-// §1524
+// §1525
 pub const pdf_refximage_node: i32 = 14i32;
-// §1524
+// §1525
 pub const pdf_restore_node: i32 = 43i32;
-// §1524
+// §1525
 pub const pdf_running_link_off_node: i32 = 48i32;
-// §1524
+// §1525
 pub const pdf_running_link_on_node: i32 = 49i32;
-// §1524
+// §1525
 pub const pdf_save_node: i32 = 42i32;
-// §1524
+// §1525
 pub const pdf_save_pos_node: i32 = 23i32;
-// §1524
+// §1525
 pub const pdf_setmatrix_node: i32 = 41i32;
-// §1524
+// §1525
 pub const pdf_snap_ref_point_node: i32 = 36i32;
-// §1524
+// §1525
 pub const pdf_snapy_comp_node: i32 = 38i32;
-// §1524
+// §1525
 pub const pdf_snapy_node: i32 = 37i32;
-// §1524
+// §1525
 pub const pdf_space_font_code: i32 = 50i32;
-// §1524
+// §1525
 pub const pdf_start_link_node: i32 = 16i32;
-// §1524
+// §1525
 pub const pdf_start_thread_node: i32 = 21i32;
-// §1524
+// §1525
 pub const pdf_thread_node: i32 = 20i32;
-// §1524
+// §1525
 pub const pdf_trailer_code: i32 = 31i32;
-// §1524
+// §1525
 pub const pdf_trailer_id_code: i32 = 32i32;
-// §1524
+// §1525
 pub const pdf_xform_code: i32 = 11i32;
-// §1524
+// §1525
 pub const pdf_ximage_code: i32 = 13i32;
-// §1524
+// §1525
 pub const pdftex_first_extension_code: i32 = 7i32;
-// §1524
+// §1525
 pub const pdftex_last_extension_code: i32 = 50i32;
-// §1524
+// §1525
 pub const reset_timer_code: i32 = 33i32;
-// §1524
+// §1525
 pub const set_language_code: i32 = 6i32;
-// §1524
+// §1525
 pub const set_random_seed_code: i32 = 35i32;
-// §1618
+// §1619
 pub const end_write_token: i32 = 19617i32;
-// §1649
+// §1650
 pub const eTeX_state_base: i32 = 29389i32;
-// §1649
+// §1650
 pub const eTeX_version_code: i32 = 20i32;
-// §1663
+// §1664
 pub const current_group_level_code: i32 = 21i32;
-// §1663
+// §1664
 pub const current_group_type_code: i32 = 22i32;
-// §1666
+// §1667
 pub const current_if_branch_code: i32 = 25i32;
-// §1666
+// §1667
 pub const current_if_level_code: i32 = 23i32;
-// §1666
+// §1667
 pub const current_if_type_code: i32 = 24i32;
-// §1669
+// §1670
 pub const font_char_dp_code: i32 = 30i32;
-// §1669
+// §1670
 pub const font_char_ht_code: i32 = 29i32;
-// §1669
+// §1670
 pub const font_char_ic_code: i32 = 31i32;
-// §1669
+// §1670
 pub const font_char_wd_code: i32 = 28i32;
-// §1672
+// §1673
 pub const par_shape_dimen_code: i32 = 34i32;
-// §1672
+// §1673
 pub const par_shape_indent_code: i32 = 33i32;
-// §1672
+// §1673
 pub const par_shape_length_code: i32 = 32i32;
-// §1675
+// §1676
 pub const show_groups: i32 = 4i32;
-// §1684
+// §1685
 pub const show_tokens: i32 = 5i32;
-// §1689
+// §1690
 pub const show_ifs: i32 = 6i32;
-// §1719
+// §1720
 pub const edge_node: i32 = 14i32;
-// §1719
+// §1720
 pub const edge_node_size: i32 = 3i32;
-// §1762
+// §1763
 pub const if_cs_code: i32 = 18i32;
-// §1762
+// §1763
 pub const if_def_code: i32 = 17i32;
-// §1762
+// §1763
 pub const if_font_char_code: i32 = 19i32;
-// §1762
+// §1763
 pub const if_in_csname_code: i32 = 20i32;
-// §1762
+// §1763
 pub const if_pdfabs_dim_code: i32 = 23i32;
-// §1762
+// §1763
 pub const if_pdfabs_num_code: i32 = 22i32;
-// §1783
+// §1784
 pub const expr_add: i32 = 1i32;
-// §1783
+// §1784
 pub const expr_div: i32 = 4i32;
-// §1783
+// §1784
 pub const expr_mult: i32 = 3i32;
-// §1783
+// §1784
 pub const expr_none: i32 = 0i32;
-// §1783
+// §1784
 pub const expr_scale: i32 = 5i32;
-// §1783
+// §1784
 pub const expr_sub: i32 = 2i32;
-// §1788
+// §1789
 pub const expr_node_size: i32 = 4i32;
-// §1801
+// §1802
 pub const glue_shrink_code: i32 = 36i32;
-// §1801
+// §1802
 pub const glue_shrink_order_code: i32 = 27i32;
-// §1801
+// §1802
 pub const glue_stretch_code: i32 = 35i32;
-// §1801
+// §1802
 pub const glue_stretch_order_code: i32 = 26i32;
-// §1805
+// §1806
 pub const glue_to_mu_code: i32 = 38i32;
-// §1805
+// §1806
 pub const mu_to_glue_code: i32 = 37i32;
-// §1815
+// §1816
 pub const box_val: i32 = 4i32;
-// §1815
+// §1816
 pub const box_val_limit: i32 = 80i32;
-// §1815
+// §1816
 pub const dimen_val_limit: i32 = 32i32;
-// §1815
+// §1816
 pub const index_node_size: i32 = 9i32;
-// §1815
+// §1816
 pub const mark_val: i32 = 6i32;
-// §1815
+// §1816
 pub const mu_val_limit: i32 = 64i32;
-// §1815
+// §1816
 pub const tok_val_limit: i32 = 96i32;
-// §1820
+// §1821
 pub const mark_class_node_size: i32 = 4i32;
-// §1820
+// §1821
 pub const pointer_node_size: i32 = 2i32;
-// §1820
+// §1821
 pub const word_node_size: i32 = 3i32;
-// §1825
+// §1826
 pub const destroy_marks: i32 = 3i32;
-// §1825
+// §1826
 pub const fire_up_done: i32 = 2i32;
-// §1825
+// §1826
 pub const fire_up_init: i32 = 1i32;
-// §1825
+// §1826
 pub const vsplit_init: i32 = 0i32;
-// §1842
+// §1843
 pub const active_node_size_extended: i32 = 5i32;
-// §1868
+// §1878
 pub const eqtb_top: i32 = 630192i32;
-// §1868
+// §1878
 pub const hash_extra: i32 = 600000i32;
-// §1868
+// §1878
 pub const hash_top: i32 = 630192i32;
-// §1870
+// §1880
 pub const max_trie_op: i32 = 65535i32;
-// §1900
+// §1922
 pub const ssup_error_line: i32 = 255i32;
-// §1920
+// §1942
 pub const ls_cond_size: i32 = 1000i32;
-// §1920
+// §1942
 pub const ls_tag_size: i32 = 65535i32;

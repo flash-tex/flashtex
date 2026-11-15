@@ -170,18 +170,20 @@ exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @z
 
 @x changes/throughput.ch [5] - a recording reads a delimited argument's tokens through |get_next|
-  begin if not intr_rec_on then
+  begin if not intr_rec_on then if not write_noexpanding then
     begin d:=info(r);
 @y
-  begin if not(intr_rec_on or bm_rec_on) then
+  begin if not(intr_rec_on or bm_rec_on) then if not write_noexpanding then
     begin d:=info(r);
 @z
 
 @x changes/throughput.ch [6] - ... and a group's
   if state=token_list then if loc<>null then if not intr_rec_on then
+    if not wn then
     begin ft:=info(loc);
 @y
   if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
+    if not wn then
     begin ft:=info(loc);
 @z
 
@@ -241,18 +243,20 @@ else  begin scan_register_num; cur_val_level:=m-mem_bot;
 @z
 
 @x changes/throughput.ch [7] - ... and a body's
-  else begin if not intr_rec_on then
+  else begin if not intr_rec_on then if not write_noexpanding then
       loop@+  begin if state<>token_list then goto done3;
 @y
-  else begin if not(intr_rec_on or bm_rec_on) then
+  else begin if not(intr_rec_on or bm_rec_on) then if not write_noexpanding then
       loop@+  begin if state<>token_list then goto done3;
 @z
 
 @x changes/throughput.ch [4] - ... and the skipped text of a conditional
   if state=token_list then if loc<>null then if not intr_rec_on then
+    if not wn then
     begin t:=info(loc);
 @y
   if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
+    if not wn then
     begin t:=info(loc);
 @z
 

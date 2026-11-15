@@ -22,8 +22,8 @@
 @y
 @!xchr: array [ASCII_code] of text_char;
   {specifies conversion of output characters}
-@!xprn: array [ASCII_code] of boolean;
-  {is the character printable? (tex.ch)}
+xprn: array [ASCII_code] of ASCII_code;
+   { non zero iff character is printable }
 @z
 
 @x pdftex.web l.873 - tex.ch [2.23]: every character is itself, none is invalid
@@ -81,6 +81,34 @@ if font_max>font_base+256 then bad:=16;
 @y
 if (max_font_max<min_halfword)or(max_font_max>max_halfword) then bad:=15;
 if font_max>font_base+max_font_max then bad:=16;
+@z
+
+@x pdftex.web l.2961 - tex.ch [8.112]: |qi|, |qo|, |hi|, |ho| are the identity
+macros are simplified in the obvious way when |min_quarterword=0|.
+@^inner loop@>@^system dependencies@>
+
+@d qi(#)==#+min_quarterword
+  {to put an |eight_bits| item into a quarterword}
+@d qo(#)==#-min_quarterword
+  {to take an |eight_bits| item out of a quarterword}
+@d hi(#)==#+min_halfword
+  {to put a sixteen-bit item into a halfword}
+@d ho(#)==#-min_halfword
+  {to take a sixteen-bit item from a halfword}
+@y
+macros are simplified in the obvious way when |min_quarterword=0|.
+So they have been simplified here in the obvious way.
+@^inner loop@>@^system dependencies@>
+
+The \.{WEB} source for \TeX\ defines |hi(#)==#+min_halfword| which can be
+simplified when |min_halfword=0|.  The Web2C implementation of \TeX\ can use
+|hi(#)==#| together with |min_halfword<0| as long as |max_halfword| is
+sufficiently large.
+
+@d qi(#)==# {to put an |eight_bits| item into a quarterword}
+@d qo(#)==# {to take an |eight_bits| item from a quarterword}
+@d hi(#)==# {to put a sixteen-bit item into a halfword}
+@d ho(#)==# {to take a sixteen-bit item from a halfword}
 @z
 
 @x pdftex.web l.2987 - texmfmem.h: the |b0| and |b1| of a |two_halves| are C shorts
@@ -376,14 +404,6 @@ if (t>=cs_token_flag)and(t<>end_write_token) then
 @.TeXfonts@>
 @y
 In C, the default paths are specified separately.
-@z
-
-@x pdftex.web l.13015 - tex.ch's MLTeX |orig_char_info|; without MLTeX it is |char_info|
-@d char_info(#)==font_info[char_base[#]+char_info_end
-@y
-@d char_info(#)==font_info[char_base[#]+char_info_end
-@d orig_char_info_end(#)==#].qqqq
-@d orig_char_info(#)==font_info[char_base[#]+orig_char_info_end
 @z
 
 @x pdftex.web l.13096 - tex.ch [30.560]: check the lengths of a TFM name
