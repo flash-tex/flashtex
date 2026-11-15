@@ -1005,12 +1005,14 @@ fn l5_ifcsname_of_a_short_name_is_a_read() {
 /// changes/readset.ch (#2436): in a formula, a character of math code
 /// `"8000` stands for its active character, whose meaning tex.web §1152
 /// reads with `eq_type` and `equiv` directly, from `set_math_char` (the `Q`
-/// of `aQb`) and from `scan_math` (the superscript `Q`): no `get_next`
-/// delivers it, and it is a read all the same. Here the `.aux` defines the
-/// active `Q`, a formula in the middle of the document is its only reader,
-/// and an edit on the last page changes the definition the `.aux` holds: the
-/// `.aux` pass must restart before the formula (it restarted at the end,
-/// and kept the formula's old pages), and every compile equals scratch runs.
+/// of `aQb`) and from `scan_math` (the superscript `R` of `c^R`): no
+/// `get_next` delivers it, and it is a read all the same. Here the `.aux`
+/// defines the active `Q` and `R`, a formula on the first page is the only
+/// reader of each before `\end{document}` reads the `.aux` again, and an
+/// edit on the last page changes the definition the `.aux` holds: the `.aux`
+/// pass must restart before the formula (it restarted at page 2, where the
+/// second `.aux` read is, and kept the formula's page), and every compile
+/// equals scratch runs.
 #[test]
 fn l5_an_active_math_character_is_a_read() {
     let Some(e) = env() else {
@@ -1020,49 +1022,55 @@ fn l5_an_active_math_character_is_a_read() {
     let dir = e.dir.join("l5-math-active");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let doc = |def: &str| -> String {
+    let doc = |q: &str, r: &str| -> String {
         let mut s = String::from(
-            "\\documentclass{article}\n\\mathcode`\\Q=\"8000\n\
-             {\\catcode`\\Q=13 \\gdef Q{x}}\n\\begin{document}\n",
+            "\\documentclass{article}\n\\mathcode`\\Q=\"8000 \\mathcode`\\R=\"8000\n\
+             {\\catcode`\\Q=13 \\gdef Q{x}\\catcode`\\R=13 \\gdef R{y}}\n\\begin{document}\n",
         );
         for i in 0..40 {
             s.push_str(&para(i, "omicron"));
-            if i == 19 {
-                s.push_str("A formula $aQb^Q$ and more text.\n\n");
+            if i == 9 {
+                s.push_str("A formula $aQb$ and more text.\n\n");
+            }
+            if i == 14 {
+                s.push_str("Another formula $c^R$ and more text.\n\n");
             }
         }
         // (`\begingroup`, `\catcode`, `\gdef` and `\endgroup` are written
-        // as they are: the `.aux` line makes `Q` active for its `\gdef`)
+        // as they are: the `.aux` line makes `Q` and `R` active for its
+        // `\gdef`s)
         s.push_str(&format!(
             "\\makeatletter\n\\immediate\\write\\@auxout{{\\begingroup\
-             \\catcode`\\string\\Q=13 \\gdef Q{{{def}}}\\endgroup}}\n\\makeatother\n"
+             \\catcode`\\string\\Q=13 \\catcode`\\string\\R=13 \
+             \\gdef Q{{{q}}}\\gdef R{{{r}}}\\endgroup}}\n\\makeatother\n"
         ));
         s.push_str("\\end{document}\n");
         s
     };
     let mut h = Host::start(&e, &dir);
     for _ in 0..3 {
-        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("x"))], "settle");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("x", "y"))], "settle");
         if r.contains("\"mode\":\"unchanged\"") {
             break;
         }
     }
     let cases = [
-        ("the .aux gives the active character more letters", "xyzw"),
-        ("and fewer", "xy"),
-        ("and the first one again", "x"),
+        ("set_math_char's character gets more letters", "xyzw", "y"),
+        ("scan_math's character gets more letters", "xyzw", "yyy"),
+        ("both get their first meanings again", "x", "y"),
     ];
-    for (what, def) in cases {
-        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(def))], what);
+    for (what, q, r) in cases {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(q, r))], what);
         // (the pass that finds the changed `.aux` patches the entry in and
         // restarts where it was first read: without this the test would
         // pass on a host that re-reads everything from the `.aux` point)
         let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        let l5 = l5.split("\"]").next().unwrap_or("");
         assert!(
             l5.contains("restart at page") && !l5.contains("re-read from the .aux point"),
             "{what}: the .aux pass did not restart at the entry's first read: {l5}"
         );
-        eprintln!("{what}: l5 {}", l5.split("\"]").next().unwrap_or(""));
+        eprintln!("{what}: l5 {l5}");
     }
 }
 
