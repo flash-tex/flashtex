@@ -555,6 +555,8 @@ struct Frame {
     nest_ptr: i32,
     mode: i32,
     tail: i32,
+    /// pdfTeX's `save_tail` ([`Context::save_tail_null`]).
+    save_tail: i32,
     page: Vec<i64>,
     fonts: (i32, i32),
     font_glue: Vec<i32>,
@@ -568,8 +570,6 @@ struct Frame {
     outputs: (i32, i32, u64, usize, usize),
     /// The line-shift journal (`crate::lineshift::journal_mark`).
     lines: (u64, Vec<(i32, i32)>, bool),
-    /// pdfTeX's `save_tail` ([`Context::save_tail_null`]).
-    save_tail: i32,
 }
 
 /// An existing object a recording referred to: its type, its number, and
@@ -2132,6 +2132,7 @@ impl Globals {
             nest_ptr: self.nest_ptr,
             mode: self.cur_list.mode_field,
             tail: self.cur_list.tail_field,
+            save_tail: self.save_tail,
             page,
             fonts: (self.font_ptr, self.fmem_ptr),
             font_glue,
@@ -2147,21 +2148,7 @@ impl Globals {
                 crate::system::external_effects_len(),
             ),
             lines: crate::lineshift::journal_mark(),
-            save_tail: self.save_tail,
         }
-    }
-
-    /// Whether node `q` is one the call appended to its list, whose tail
-    /// at the call's start was `tail0`.
-    fn bm_appended(&self, tail0: i32, q: i32) -> bool {
-        let mut p = self.bm_link(tail0);
-        while p != 0 {
-            if p == q {
-                return true;
-            }
-            p = self.bm_link(p);
-        }
-        false
     }
 }
 
@@ -3591,7 +3578,10 @@ impl Globals {
             self.nest_ptr > outer
         } else if c == k::ital_corr
             || ((c == k::spacer || c == k::ex_space)
-                && self.bm_eq(INT_BASE + k::pdf_adjust_interword_glue_code).int() > 0)
+                && self
+                    .bm_eq(INT_BASE + k::pdf_adjust_interword_glue_code)
+                    .int()
+                    > 0)
         {
             // `\\/` reads its list's tail (tex.web §1113): before the call's
             // first node there, that is a node from before the call, which
@@ -3617,6 +3607,19 @@ impl Globals {
         if !ok {
             self.bm_abort("Command");
         }
+    }
+
+    /// Whether node `q` is one the call appended to its list, whose tail
+    /// at the call's start was `tail0`.
+    fn bm_appended(&self, tail0: i32, q: i32) -> bool {
+        let mut p = self.bm_link(tail0);
+        while p != 0 {
+            if p == q {
+                return true;
+            }
+            p = self.bm_link(p);
+        }
+        false
     }
 
     /// The save-stack entries a call left at its own level: only those of
@@ -3694,16 +3697,6 @@ impl Globals {
             // only in restricted horizontal mode may a call append: no
             // paragraph, no page builder
             Some("OuterList")
-        } else if end.save_tail != 0
-            && (end.save_tail != start.save_tail || self.bm_appended(start.tail, end.save_tail))
-        {
-            // the call's last auto kern (`\\pdfappendkern`,
-            // `\\pdfprependkern`) left `save_tail` at a node of its own,
-            // which a space after the call reads through
-            // (`adjust_interword_glue`): a replay makes that node again
-            // somewhere else. Null, the replay sets
-            // (`Entry::clear_save_tail`); as it was, the call did not set it
-            Some("SaveTail")
         } else if self
             .bm_with_rec(|r| r.pending_box.is_some())
             .unwrap_or(false)
@@ -3715,6 +3708,16 @@ impl Globals {
             Some("Fonts")
         } else if end.marks != start.marks {
             Some("Marks")
+        } else if end.save_tail != 0
+            && (end.save_tail != start.save_tail || self.bm_appended(start.tail, end.save_tail))
+        {
+            // the call's last auto kern (`\\pdfappendkern`,
+            // `\\pdfprependkern`) left `save_tail` at a node of its own,
+            // which a space after the call reads through
+            // (`adjust_interword_glue`): a replay makes that node again
+            // somewhere else. Null, the replay sets
+            // (`Entry::clear_save_tail`); as it was, the call did not set it
+            Some("SaveTail")
         } else if !self
             .bm_with_rec(|r| {
                 // only the links' objects, made one after the other: counted
@@ -3875,8 +3878,6 @@ impl Globals {
         trailer: Option<i32>,
     ) {
         let line = self.line;
-        // (`bm_finish` let it through: null, or as it was)
-        let clear_save_tail = self.save_tail == 0 && rec.start.save_tail != 0;
         let mut bytes = 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
             // (a macro's tokens are shared: `intern_tokens` counts them once)
             + 16 * rec.k3.len()
@@ -3979,7 +3980,8 @@ impl Globals {
                 holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                 frag,
                 aux,
-                clear_save_tail,
+                // (`bm_finish` let it through: null, or as it was)
+                clear_save_tail: self.save_tail == 0 && rec.start.save_tail != 0,
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
