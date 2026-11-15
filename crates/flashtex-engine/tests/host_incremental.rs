@@ -196,6 +196,8 @@ struct Outcome {
     /// `SOURCES` declared (new or moved).
     span_shifts: usize,
     declared: usize,
+    /// The 3.1 `DIAGNOSTIC`s (a client without diag-v1).
+    diagnostics: Vec<Json>,
     /// `DIAG`s (`diag-v1`, spec §6.7), for a client that accepted it.
     diags: Vec<flashtex_display_list::diag::Diag>,
 }
@@ -210,7 +212,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut progress = 0;
     let mut progress_files = vec![];
     let (mut span_shifts, mut declared) = (0, 0);
-    let mut diags = vec![];
+    let (mut diagnostics, mut diags) = (vec![], vec![]);
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -274,6 +276,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
             }
             Event::Pages(j) => pages_msgs.push(j),
             Event::Image(j) => view.images.push(j),
+            Event::Diagnostic(j) => diagnostics.push(j),
             Event::Diag(d) => diags.push(d),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
@@ -308,6 +311,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         progress_files,
         span_shifts,
         declared,
+        diagnostics,
         diags,
     }
 }
@@ -6753,6 +6757,106 @@ fn random_edit_sequences_equal_scratch_compiles() {
         "random edit sequences: a step differs from a scratch compile, or a sequence tested nothing (rerun one: FLASHTEX_FUZZ_SEED=<seed> FLASHTEX_FUZZ_SEEDS=1 FLASHTEX_FUZZ_DOCS=<doc> FLASHTEX_FUZZ_STEPS={steps_n}):\n{}",
         failures.join("\n")
     );
+}
+
+/// A run that ends without its PDF (a full disk: pdfTeX's `fwrite()
+/// failed`, then "no output PDF file produced") keeps the pages the client
+/// shows, and says why (#2218). Before, its `DONE` was `status: error,
+/// pages: 0, diagnostics: 0`: the app removed every page
+/// (`setCount(0, complete: true)`) and the Problems pane named no cause.
+/// Now `pages` is the last count, as for a compile that `failed`, and the
+/// `!pdfTeX error` line is an error `DIAGNOSTIC`, as diag-v1 reads it. A
+/// second such compile in a row keeps the count too; once the disk has
+/// room again the next compile is `ok` with the same pages. The full disk
+/// is the host's file-size limit (`prlimit`, RLIMIT_FSIZE) lowered after
+/// the first compile, with SIGXFSZ ignored, so a write past it fails
+/// (EFBIG). (Never `/dev/full` as the PDF: a restart reads the PDF back,
+/// and `/dev/full` reads as endless zeros.)
+#[cfg(target_os = "linux")]
+#[test]
+fn a_full_disk_keeps_the_pages_shown_and_says_why() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-fullkeep");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let text = article(4);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    // the host inherits the ignored SIGXFSZ (a write past the limit then
+    // fails instead of ending the process)
+    // SAFETY: signal(2) with SIG_IGN has no memory-safety preconditions.
+    unsafe { libc::signal(libc::SIGXFSZ, libc::SIG_IGN) };
+    let h = start_host("fullkeep");
+    let fsize = |bytes: u64| {
+        let l = libc::rlimit64 {
+            rlim_cur: bytes,
+            rlim_max: libc::RLIM64_INFINITY,
+        };
+        // SAFETY: prlimit64(2) on the host (our child) with a valid limit.
+        let r = unsafe {
+            libc::prlimit64(
+                h.0.id() as libc::pid_t,
+                libc::RLIMIT_FSIZE,
+                &l,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(r, 0, "prlimit: {}", std::io::Error::last_os_error());
+    };
+    let mut c = Client::connect(&h.1).unwrap();
+    c.reader()
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(300)))
+        .unwrap();
+    let mut view = View::default();
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    let d = &first.done;
+    assert_eq!(d.str_field("status"), Some("ok"), "{d:?}");
+    let pages = d.int_field("pages");
+    assert!(pages >= Some(2), "{d:?}");
+    // the disk is full: no file grows past 4 KB (the PDF is ~20 KB)
+    // (each edit is saved first: the host could not write a buffer now)
+    fsize(4096);
+    for (id, word) in [(2, "Begin"), (3, "Open")] {
+        std::fs::write(proj.join("main.tex"), text.replacen("Start", word, 1)).unwrap();
+        let full = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        let d = &full.done;
+        eprintln!("{id}: DONE {d:?}");
+        assert_eq!(d.str_field("status"), Some("error"), "{id}: {d:?}");
+        assert_eq!(d.get("pdf"), Some(&Json::Null), "{id}: {d:?}");
+        assert_eq!(
+            d.int_field("pages"),
+            pages,
+            "{id}: the pages shown stay: {d:?}"
+        );
+        assert!(
+            full.diagnostics
+                .iter()
+                .any(|j| j.str_field("severity") == Some("error")
+                    && j.str_field("message")
+                        .is_some_and(|m| m.contains("pdfTeX error"))),
+            "{id}: no error names the cause: {:?} {d:?}",
+            full.diagnostics
+        );
+        assert!(d.int_field("diagnostics") >= Some(1), "{id}: {d:?}");
+    }
+    // the disk has room again
+    fsize(libc::RLIM64_INFINITY);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let again = compile(&mut c, &mut view, &req(4, &proj, &out, "main.tex"));
+    let d = &again.done;
+    assert_eq!(d.str_field("status"), Some("ok"), "{d:?}");
+    assert_eq!(d.int_field("pages"), pages, "{d:?}");
+    assert!(std::fs::read(out.join("main.pdf"))
+        .unwrap()
+        .starts_with(b"%PDF-"));
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 /// A `COMPILE`'s buffers and edits are written only inside the project
