@@ -10,6 +10,14 @@
 #      failure, is "nothing verified" and fails;
 #   4. HOME and TMPDIR seen by the engine are inside the work directory, and
 #      contain no `//` even when the work path given does;
+#   4c-4i. engines that satisfy upstream's scripts without doing the work
+#      each FAIL the test they target: the right expanded.log then exit 2 or
+#      SIGSEGV; expanded.log linked to the expected file; an engine that does
+#      nothing and exits 0 (passes no test); partoken by argv-sniffing exits;
+#      pdfimage with a garbage format and PDF, or a PDF linked to /bin/sh;
+#      --version lines that only contain 1.40.29 (and one that is right,
+#      which passes); wcfname with empty .txt/.log/.fls (needs kpsewhich and
+#      perl). Against the runner before these checks, every one passed;
 #   with the real engine (target/release/flashtex-initex, or $FLASHTEX_ENGINE),
 #   skipped where it is not built:
 #   5. it passes every test;
@@ -115,6 +123,70 @@ env REGRESSION_WORK="$WORK//run-slashes" "$RUN" --engine "$spy" > "$WORK/slashes
 set -e
 expect "the engine sees no // in its paths" bash -c "test -s '$WORK/spy.txt' && ! grep -q '//' '$WORK/spy.txt'"
 
+# 4c-4i. Engines that satisfy upstream's scripts without doing the work
+#     (#1207 items 1, 2, 4 and 6): each must FAIL the test it targets.
+#     `verdict NAME TEST` is TEST's verdict word in run NAME's output.
+verdict() { sed -n "s|^\([A-Z]*\) *pdftexdir/$2\.test.*|\1|p" "$WORK/$1.out" | head -1; }
+# 4c. The right log, then a bad exit (2) or a death by signal.
+for how in "exit 2" "kill -SEGV \$\$"; do
+  tag="$(echo "$how" | tr -dc 'a-z0-9')"
+  forge="$(shim "forge-$tag" "case \"\$*\" in *expanded.tex*) cp \"\$srcdir/pdftexdir/tests/expanded.txt\" expanded.log; echo 'No pages of output.' >> expanded.log; $how ;; esac; exit 1")"
+  run "forge-$tag" -- --engine "$forge"
+  expect "a copied expanded.log, then '$how', fails expanded (got $(verdict "forge-$tag" expanded))" \
+    test "$(verdict "forge-$tag" expanded)" = FAIL
+  expect "... and says why" grep -q "exit statuses were '1[0-9][0-9]*'\|exit statuses were '2'" "$WORK/forge-$tag.out"
+done
+# The same forgery with pdfTeX's own exit status (1) passes expanded: the
+# engine can read upstream's expected file, a documented limit (the runner's
+# header). This keeps the probe above honest: only the exit status differs.
+forge="$(shim forge-ok "case \"\$*\" in *expanded.tex*) cp \"\$srcdir/pdftexdir/tests/expanded.txt\" expanded.log; echo 'No pages of output.' >> expanded.log ;; esac; exit 1")"
+run forge-ok -- --engine "$forge"
+expect "the forgery with exit 1 passes expanded (the control; got $(verdict forge-ok expanded))" \
+  test "$(verdict forge-ok expanded)" = PASS
+# 4d. An output linked to the expected file.
+link="$(shim link "case \"\$*\" in *expanded.tex*) ln -s \"\$srcdir/pdftexdir/tests/expanded.txt\" expanded.log ;; esac; exit 1")"
+run link -- --engine "$link"
+expect "expanded.log linked to expanded.txt fails expanded (got $(verdict link expanded))" \
+  test "$(verdict link expanded)" = FAIL
+expect "... as a symbolic link" grep -q 'symbolic links in the test directory' "$WORK/link.out"
+# 4e. An engine that does nothing and exits 0 passes no test.
+run nothing0 -- --engine "$(shim ok 'exit 0')"
+expect "a do-nothing engine passes no test ($(grep -c '^PASS' "$WORK/nothing0.out" || true) passed)" \
+  bash -c "! grep -q '^PASS' '$WORK/nothing0.out'"
+expect "a do-nothing engine fails the run (got $rc)" test "$rc" -eq 1
+# 4f. partoken: exit 0 for partoken-ok, 1 for partoken-xfail, write nothing.
+sniff="$(shim sniff "case \"\$*\" in *partoken-xfail*) exit 1 ;; esac; exit 0")"
+run sniff -- --engine "$sniff"
+expect "an argv-sniffing engine that writes nothing fails partoken (got $(verdict sniff tests/partoken))" \
+  test "$(verdict sniff tests/partoken)" = FAIL
+# 4g. pdfimage: non-empty garbage, and a PDF that is a link to /bin/sh.
+garbage="$(shim garbage "case \"\$*\" in *-ini*) echo x > pdfimage.fmt ;; *) echo x > pdfimage.pdf; echo 'Output written on pdfimage.pdf (3 pages, 2 bytes).' > pdfimage.log ;; esac; exit 0")"
+run garbage -- --engine "$garbage"
+expect "a garbage fmt and PDF fail pdfimage (got $(verdict garbage pdfimage))" test "$(verdict garbage pdfimage)" = FAIL
+shpdf="$(shim shpdf "case \"\$*\" in *-ini*) echo x > pdfimage.fmt ;; *) ln -s /bin/sh pdfimage.pdf; echo 'Output written on pdfimage.pdf (3 pages, 2 bytes).' > pdfimage.log ;; esac; exit 0")"
+run shpdf -- --engine "$shpdf"
+expect "a PDF linked to /bin/sh fails pdfimage (got $(verdict shpdf pdfimage))" test "$(verdict shpdf pdfimage)" = FAIL
+# 4h. pdftex.test's version line: a near miss fails, the whole token passes.
+vshim() { shim "$1" "case \"\$*\" in *-version*) echo '$2' ;; *) echo 'Usage: pdftex [OPTION]... [TEXNAME[.tex]] [COMMANDS]' ;; esac; exit 0"; }
+for v in 'pdfTeX 3.141592653-2.6-1.40.290 (shim)' 'pdfTeX 11.40.29 (shim)' 'pdfTeX 3.141592653-2.6-1.40.29'; do
+  tag="v$(echo "$v" | cksum | cut -d' ' -f1)"
+  run "$tag" -- --engine "$(vshim "$tag" "$v")"
+  expect "--version '$v' fails pdftex (got $(verdict "$tag" pdftex))" test "$(verdict "$tag" pdftex)" = FAIL
+done
+run vgood -- --engine "$(vshim vgood 'pdfTeX 3.141592653-2.6-1.40.29 (shim)')"
+expect "--version 'pdfTeX 3.141592653-2.6-1.40.29 (shim)' passes pdftex (got $(verdict vgood pdftex))" \
+  test "$(verdict vgood pdftex)" = PASS
+# 4i. wcfname: create the files the script moves and looks up, all empty.
+if command -v kpsewhich >/dev/null && command -v perl >/dev/null; then
+  touchy="$(shim touchy "for a; do case \$a in -jobname=*) job=\${a#-jobname=} ;; *.tex) doc=\${a%.tex} ;; esac; done
+[ -n \"\${job:-}\" ] && : > \"\$job.txt\" && : > \"\$job.log\" && : > \"\$job.fls\" && : > \"pdftests/\$doc-tmp.tex\"; exit 0")"
+  run touchy -- --engine "$touchy"
+  expect "empty job.txt/.log/.fls fail wcfname (got $(verdict touchy wcfname))" test "$(verdict touchy wcfname)" = FAIL
+  expect "... which upstream's script alone passed" grep -q "^FAIL  pdftexdir/wcfname.test: upstream's script passed" "$WORK/touchy.out"
+else
+  echo "skip  4i (wcfname's empty files): needs kpsewhich and perl"
+fi
+
 # 5-7. The real engine.
 ENGINE="${FLASHTEX_ENGINE:-$ROOT/target/release/flashtex-initex}"
 if [[ -x "$ENGINE" ]]; then
@@ -130,7 +202,8 @@ if [[ -x "$ENGINE" ]]; then
   # A PATH with everything but kpsewhich: wcfname skips.
   mkdir -p "$WORK/nokpse"
   for tool in sh cat cp mv rm mkdir grep sed tail cut dirname basename ln \
-              perl python3 diff cmp locale env sort uniq tr head wc touch ls test expr; do
+              perl python3 diff cmp locale env sort uniq tr head wc touch ls test expr \
+              chmod find; do
     p="$(command -v "$tool" 2>/dev/null || true)"
     [[ -n "$p" && "$p" == /* ]] && ln -sf "$p" "$WORK/nokpse/$tool"
   done
