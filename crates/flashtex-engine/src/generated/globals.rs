@@ -1296,6 +1296,8 @@ pub struct Globals {
     pub bm_span_cs: halfword,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
+    /// The engine's state outside the word space (`--host-state`).
+    pub host: crate::csindex::Host,
 }
 
 /// Bytes of the scalar globals' region at the start of the word space.
@@ -2644,6 +2646,7 @@ impl Globals {
             bm_hyph_version: 0,
             bm_span_cs: 0,
             arena: __arena,
+            host: Default::default(),
         })
     }
 
