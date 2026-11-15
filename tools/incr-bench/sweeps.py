@@ -167,16 +167,50 @@ def units(tree, gate):
     return out
 
 
+# BOX-MEMO's verify mode (FLASHTEX_SWEEP_BOXMEMO=verify): each cold reference compile runs the full
+# verifier on every call it replays, so a beamer fixture's unit takes 4 to 34 times its seconds in the
+# other modes (sound-a, run 41486298665: 20,082 unit-seconds against 2,748 planned; its one shard ran
+# past the job's 90 minutes, #2145). Measured units come from sweeps-costs-verify.json; any other is
+# its usual estimate times VERIFY_FACTOR (by the document's prefix, else the default).
+COSTS_VERIFY = os.path.join(HERE, 'sweeps-costs-verify.json')
+VERIFY_FACTOR = {'beamer': 15}
+VERIFY_DEFAULT = 2
+
+
+def verify_mode():
+    return os.environ.get('FLASHTEX_SWEEP_BOXMEMO', '') == 'verify'
+
+
+def verify_factor(doc):
+    return next((f for p, f in VERIFY_FACTOR.items() if doc.startswith(p)), VERIFY_DEFAULT)
+
+
 def load_costs():
+    """Measured seconds per unit key; in verify mode the verify measurements, and every other key
+    scaled by verify_factor (a key is `gate|tag|doc`)."""
     try:
-        return json.load(open(COSTS))['seconds']
+        costs = json.load(open(COSTS))['seconds']
     except (OSError, ValueError, KeyError):
-        return {}
+        costs = {}
+    if verify_mode():
+        try:
+            measured = json.load(open(COSTS_VERIFY))['seconds']
+        except (OSError, ValueError, KeyError):
+            measured = {}
+        costs = {k: v * verify_factor(k.split('|')[-1]) for k, v in costs.items()}
+        costs.update(measured)
+    return costs
 
 
 def estimate(u, costs):
     if u['key'] in costs:
         return float(costs[u['key']])
+    if verify_mode() and u['tool'] == 'soundness':
+        return verify_factor(u['doc']) * _estimate(u)
+    return _estimate(u)
+
+
+def _estimate(u):
     if u['tool'] == 'span':
         return 30 + u['edits'] * SPAN_PER_EDIT.get(u['doc'], 20)
     if u['tool'] == 'readers':
@@ -225,6 +259,10 @@ def env():
     # on from the replay; a difference ends the host (exit 3), which the sweep reports. The
     # framed/TikZ fixtures (fixtures/real-world/framed-tikz-theorems, tikzcd-shaded-notes) and the
     # beamer ones make edits replay calls.
+    # The from-scratch references of each soundness.py run, 3 at a time beside its host
+    # (incr_bench.py's INCR_BENCH_REF_JOBS): the same comparisons; a unit left alone at the end of
+    # its shard uses the idle cpus (#2145: beamer-polish in verify mode, 3656 s with one at a time).
+    e.setdefault('INCR_BENCH_REF_JOBS', '3')
     bm = os.environ.get('FLASHTEX_SWEEP_BOXMEMO', '')
     if bm:
         e['FLASHTEX_BOXMEMO'] = bm

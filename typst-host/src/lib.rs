@@ -19,8 +19,10 @@ pub mod lock;
 pub mod packages;
 pub mod pdf;
 pub mod pdfpos;
+pub mod resolve;
 pub mod seeded;
 pub mod server;
+pub mod stages;
 pub mod watchdog;
 pub mod world;
 
