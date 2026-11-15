@@ -5853,6 +5853,82 @@ fn reopen_from_stored_s0(e: &Env, dir: &Path, doc: &str, s0: &Path, what: &str) 
     h
 }
 
+/// (lane F-FONTKEY) BOX-MEMO's font version in a stored S₀ is a number of
+/// the process that wrote it, and the process that opens it counts its own
+/// versions from 1: the version after the first font changes of the body
+/// was then the stored one's again, and a call recorded before those changes
+/// replayed after them. Here a registered `\measure` reads
+/// `\hyphenchar\font` at the start of the body and after each of 24 changes
+/// of it, with every other key equal (`\count1` is reset before each call
+/// and each follows a `]`). A host settles the document and stores S₀;
+/// another opens it and types before the calls: every number typeset must
+/// be the `\hyphenchar` of its place. Run with BOX-MEMO off, on and verify.
+#[test]
+fn a_stored_s0s_font_version_is_not_one_of_the_opening_process() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let calls: String = (1..=24)
+        .map(|k| {
+            format!(
+                "\\global\\count1=0 \\hyphenchar\\font={} \\measure{{Hello}}[\\the\\count1]\n",
+                100 + k
+            )
+        })
+        .collect();
+    let after = paras(0, 30, "beta");
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\count1=\\hyphenchar\\font \\endgroup}}\n\
+             \\begin{{document}}\nSome {word} text.\n\n\
+             []\\global\\count1=0 \\measure{{Hello}}[\\the\\count1]\n{calls}\\hyphenchar\\font=45 \\par\n\n\
+             {after}\\end{{document}}\n"
+        )
+    };
+    for mode in ["off", "on", "verify"] {
+        let dir = e.dir.join(format!("s0-font-version-{mode}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let env = [
+            ("FLASHTEX_BOXMEMO", mode),
+            ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+            ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
+        ];
+        let s0 = dir.with_extension("s0");
+        let _ = std::fs::remove_file(&s0);
+        let first = doc("plain");
+        {
+            let mut h = Host::start_env(&e, &dir, &env);
+            for k in 0..4 {
+                let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &first)], "settle");
+                if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                    break;
+                }
+            }
+            let r = h.cmd(&format!("save {}", s0.display()));
+            assert!(r.contains("\"saved\""), "{mode}: {r}");
+        }
+        // a new process opens the stored S₀
+        let mut h = Host::start_env(&e, &dir, &env);
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let r = h.cmd(&format!("open {}", s0.display()));
+        assert!(
+            r.contains("\"mode\":\"open\""),
+            "{mode}: not opened from S0: {r}"
+        );
+        check_against(&e, &dir, &reference, &r, &format!("{mode}: the open"));
+        // edits before the calls: their windows record them, then replay
+        for word in ["plainx", "plain", "plainx", "plain"] {
+            let text = doc(word);
+            let what = format!("{mode} {word}");
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+        }
+    }
+}
+
 /// Lane COLD-OPEN: a stored S₀ whose preamble read images (`\pdfximage` of
 /// two pages of one PDF, a PNG with alpha, a JPEG and a JBIG2 page) reopens
 /// in a new host, equal to scratch runs, and the body's edits then run from
