@@ -3086,6 +3086,9 @@ mod tests {
     fn the_name_tree_is_xdvipdfmxs() {
         use super::super::pdfobj::{Dict as D, Obj as O};
         let mut doc = Doc::new();
+        // measured with `dvipdfmx:config C 0x0010` (as hyperref sets it):
+        // without it only the destinations a GoTo names are written
+        doc.check_gotos = false;
         for n in [
             "d10", "d02", "d03", "d04", "d05", "d06", "d07", "d08", "d09", "d1", "d1",
         ] {
