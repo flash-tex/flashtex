@@ -618,6 +618,25 @@ fn an_absent_name_is_not_recorded() {
     never_replayed("", "\\ifcsname IntrNone\\endcsname\\fi", "", "Absent");
 }
 
+/// XeTeX's `\sfcode` keeps the character's `\XeTeXcharclass` (the code's
+/// high bits): the assignment reads the code it replaces, so a recording
+/// made before `\XeTeXcharclass` changed is not replayed with the old
+/// class (it would put back class 0).
+#[test]
+fn an_sfcode_keeps_the_class_it_reads() {
+    let Some((on, verify)) = modes_agree(
+        "\\documentclass{article}\n\\def\\pdfstringdefPreHook{\\sfcode`\\.=1000 }\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\XeTeXcharclass`\\.=3 \\pdfstringdefPreHook\n[\\the\\XeTeXcharclass`\\.]\\par\\relax\n\
+         \\pdfstringdefPreHook\n[\\the\\XeTeXcharclass`\\.]\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert!(count(&on, "replayed") > 0, "{on}");
+    assert!(count(&on, "missed.Meaning") > 0, "{on}");
+    assert!(count(&verify, "verify.checked") > 0, "{verify}");
+}
+
 /// `ctx` (where `@H@` calls the hook) with the hook's body `body`: off, on
 /// and verify agree, and no call is kept, replayed or checked, for `why`.
 fn never_replayed_in(pre: &str, body: &str, ctx: &str, why: &str) {

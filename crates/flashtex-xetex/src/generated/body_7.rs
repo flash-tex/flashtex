@@ -3398,6 +3398,9 @@ impl Globals {
                                 {
                                     if (p >= sf_code_base) {
                                         {
+                                            if self.intr_rec_on {
+                                                self.flashtex_intr_read(p);
+                                            }
                                             n = (self.eqtb[crate::ix::U(((p) - 1) as usize)].hh().rh() / 65536i32);
                                             if (a >= 4i32) {
                                                 self.geq_define(p, data, ((n).wrapping_mul(65536i32)).wrapping_add(self.cur_val));
