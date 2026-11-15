@@ -6853,3 +6853,99 @@ fn buffers_through_a_symlink_out_of_the_project_are_refused() {
     drop(host);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// VIEWPORT through the socket host (`Engine::viewport`, lane MEMORY;
+/// `FLASHTEX_VIEWPORT_DEBUG` makes the host say on stdout what each one did
+/// and when the idle trim ran):
+/// - REVIEW-2248's MINOR 2: a VIEWPORT with nothing to do (here page 1,
+///   too near the start for an idle run) schedules no idle trim. The trim
+///   cannot be stopped, and every pause in reading scheduled one, which a
+///   key typed then waited for. A VIEWPORT whose idle run ran still does.
+/// - REVIEW-2248's MINOR 3: in Low Memory a VIEWPORT does nothing (no
+///   second dense window, no idle run's restore).
+#[test]
+fn a_viewport_trims_only_after_an_idle_run_and_is_off_in_low_memory() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let (tx, notes) = std::sync::mpsc::channel::<String>();
+    let host = start_host_lines(
+        "vp",
+        &[("FLASHTEX_VIEWPORT_DEBUG", "1"), ("FLASHTEX_DENSE", "2")],
+        Some(tx),
+    );
+    let base = common::fresh_dir("flashtex-host-viewport");
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(30)).unwrap();
+    let mut c = Client::connect_with(&host.1, &[], Some("balanced")).unwrap();
+    let caps = c
+        .hello
+        .get("capabilities")
+        .and_then(Json::as_array)
+        .unwrap();
+    assert!(
+        caps.iter().any(|x| x.as_str() == Some("viewport-v1")),
+        "{}",
+        c.hello
+    );
+    let mut view = View::default();
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    let pages = first.done.int_field("pages").unwrap_or(0) as u32;
+    assert!(pages >= 20, "{}", first.done);
+    // the notes until one matching `want`, or every note for `wait`
+    let until = |want: &dyn Fn(&str) -> bool, wait: Duration| -> (Option<String>, Vec<String>) {
+        let deadline = Instant::now() + wait;
+        let mut seen = vec![];
+        while Instant::now() < deadline {
+            match notes.recv_timeout(Duration::from_millis(100)) {
+                Ok(l) if want(&l) => return (Some(l), seen),
+                Ok(l) => seen.push(l),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        (None, seen)
+    };
+    let trim = |l: &str| l.contains("\"idle_trim\"");
+    let vp = |page: u32| move |l: &str| l.contains(&format!("\"viewport\":{page},"));
+    // the compile's own idle trim (Balanced: 2 s after it)
+    let (t, seen) = until(&trim, Duration::from_secs(60));
+    assert!(t.is_some(), "no idle trim after the compile: {seen:?}");
+    c.set_viewport(1).unwrap();
+    let (n, seen) = until(&vp(1), Duration::from_secs(30));
+    let n = n.unwrap_or_else(|| panic!("VIEWPORT 1 said nothing: {seen:?}"));
+    assert!(n.contains("\"redensify\":\"nothing\""), "{n}");
+    // no trim for it: three times Balanced's 2 s
+    let (t, seen) = until(&trim, Duration::from_secs(6));
+    assert!(
+        t.is_none(),
+        "a VIEWPORT that did nothing scheduled the idle trim: {seen:?}"
+    );
+    // far from the cursor: an idle run, and its trim
+    let far = pages - 5;
+    c.set_viewport(far).unwrap();
+    let (n, seen) = until(&vp(far), Duration::from_secs(60));
+    let n = n.unwrap_or_else(|| panic!("VIEWPORT {far} said nothing: {seen:?}"));
+    assert!(n.contains("\"redensify\":\"ran\""), "{n}");
+    let (t, seen) = until(&trim, Duration::from_secs(60));
+    assert!(t.is_some(), "no idle trim after an idle run: {seen:?}");
+    // Low Memory: as far from both windows, nothing
+    let mut lm = Client::connect_with(&host.1, &[], Some("low-memory")).unwrap();
+    let hp = lm.hello.get("profile").expect("HELLO.profile");
+    assert_eq!(hp.str_field("mode"), Some("low-memory"), "{}", lm.hello);
+    let far2 = pages / 2;
+    lm.set_viewport(far2).unwrap();
+    let (n, seen) = until(&vp(far2), Duration::from_secs(60));
+    let n = n.unwrap_or_else(|| panic!("VIEWPORT {far2} said nothing: {seen:?}"));
+    assert!(
+        n.contains("\"redensify\":\"nothing\""),
+        "an idle run in Low Memory: {n}"
+    );
+    let _ = lm.bye();
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}

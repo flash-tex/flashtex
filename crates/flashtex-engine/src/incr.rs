@@ -3568,7 +3568,9 @@ impl Obs {
     fn near_cursor(&self) -> bool {
         let j = self.pages_so_far();
         j.abs_diff(self.cursor) <= self.dense
-            || self.view.is_some_and(|v| j.abs_diff(v) <= self.dense)
+            || self
+                .view
+                .is_some_and(|v| j.abs_diff(v) <= view_dense(self.dense))
     }
 
     /// Newer work may not stop the run yet (`protect_edit`); a cancel
@@ -4852,7 +4854,34 @@ impl Session {
             || g.reattach_blocked().is_some()
             || self.before_pass.as_ref().is_some_and(|b| b.s0_retaken)
         {
-            return self.settle_paused();
+            // An idle run (`redensify`) settled: the document is its pages
+            // so far, and the old run's later ones are gone. What it read is
+            // in the journal, a file another program changed while it ran
+            // too (`Obs::idle_missed`), so the next compile's `changes` would
+            // not see that change, and with nothing else changed it would
+            // report `unchanged` over the cut document. That compile runs
+            // again from the idle run's start at the latest, to the end,
+            // shipping its pages (REVIEW-E's #9 on #2248).
+            let idle_from = self
+                .paused
+                .as_ref()
+                .is_some_and(|p| p.idle)
+                .then(|| {
+                    let o = g.layer().observer.take()?;
+                    let o = o.into_any().downcast::<Obs>().ok()?;
+                    let k = o.keep_r;
+                    g.layer().observer = Some(o);
+                    k
+                })
+                .flatten();
+            self.settle_paused()?;
+            if let Some(k) = idle_from {
+                if self.opts.debug {
+                    eprintln!("[incr] an idle run could not be dropped: settled, the next compile runs again from {k}");
+                }
+                self.reemit_from = Some(k);
+            }
+            return Ok(());
         }
         // (an idle run's pages are the old ones, the client's: not again)
         let idle = self.paused.take().is_some_and(|p| p.idle);
@@ -4938,13 +4967,20 @@ impl Session {
         self.paused.is_some()
     }
 
+    /// No second dense window from here on (`view`): the next retention
+    /// keeps the cursor's only (the host in Low Memory, `Engine::viewport`).
+    pub fn forget_view(&mut self) {
+        self.view = None;
+    }
+
     /// The client shows page `page` (0-based; `VIEWPORT`, lane MEMORY): if
     /// it is more than `Options::dense` pages from the retention cursor,
     /// where retention keeps the page checkpoints and no segment ones
     /// (`thin`), run again with nothing changed from a page checkpoint
-    /// `REDENSIFY_BACK` pages or more before it, through it and the page after (no convergence test
-    /// before), so that their checkpoints, segment ones too, are taken
-    /// (`view`: retention keeps them, and the cursor's as well) and a key
+    /// `REDENSIFY_BACK` pages or more before it, through it and the page
+    /// after (no convergence test before), so that their checkpoints,
+    /// segment ones too, are taken (`view`: retention keeps them,
+    /// `view_dense` pages either side, and the cursor's as well) and a key
     /// there restarts close by. The run then converges with the old one and
     /// jumps to its end, as an edit's run does; its pages are the old ones.
     /// The cursor and the next key's restart point stay at the last edit
@@ -4963,7 +4999,9 @@ impl Session {
         }
         let dense = self.opts.dense;
         if page.abs_diff(self.cursor) <= dense
-            || self.view.is_some_and(|v| page.abs_diff(v) <= dense)
+            || self
+                .view
+                .is_some_and(|v| page.abs_diff(v) <= view_dense(dense))
             || page <= REDENSIFY_BACK
         {
             return Ok(None);
@@ -4989,16 +5027,19 @@ impl Session {
         // (never the next edit's: a run that returned before its tests)
         self.tests_from = None;
         match r {
-            Ok(rep) if rep.mode == IDLE_TOOK_NOTHING => {
+            // (or nothing ran: `ck` was no restart point after all, and the
+            // pass found nothing to do; REVIEW-2248's NIT 5)
+            Ok(rep) if rep.mode == IDLE_TOOK_NOTHING || rep.mode == "unchanged" => {
                 self.view = view;
                 self.reemit_from = None;
                 Ok(None)
             }
             // (it took in a change made while it ran, and was dropped: the
-            // restore it spent is prepared again, as after a completed one)
+            // restore it spent is prepared again, as after a completed one.
+            // `reemit_from` is the drop's: set only where it could not go
+            // back to the complete run, `abandon_paused`)
             Ok(rep) if rep.mode == IDLE_DROPPED => {
                 self.view = view;
-                self.reemit_from = None;
                 Ok(Some(rep))
             }
             Ok(rep) => {
@@ -7112,6 +7153,9 @@ impl Session {
         self.key_cover = (0, vec![]);
         self.last_restart = None;
         self.next_edits.clear();
+        // (a page of the old run: the next VIEWPORT says which is shown;
+        // REVIEW-2248's NIT 5)
+        self.view = None;
         self.s1_open = None;
         self.s1_fill_due = false;
         self.pass_restart = None;
@@ -8732,6 +8776,15 @@ fn consumed_nothing_changed(
 /// (`Options::dense`; Balanced's).
 pub const DEFAULT_DENSE: usize = 16;
 
+/// Pages either side of the shown page whose checkpoints are all kept
+/// (`Session::view`): the cursor's `dense`, at most Balanced's. High
+/// Performance's `dense` (512) made it a second window of up to 1,025 dense
+/// pages, about +0.75 GB of undo logs on an infdesc-like book, where a key
+/// at the shown page needs only the pages around it (REVIEW-2248's MINOR 3).
+fn view_dense(dense: usize) -> usize {
+    dense.min(DEFAULT_DENSE)
+}
+
 /// Pages before the shown one that `Session::redensify`'s run starts at
 /// least (a key's restart point is often a page or two before its page:
 /// TeX takes the checkpoint after a page once it has read on into the
@@ -8793,10 +8846,13 @@ fn thin(
     ck_pages: &HashMap<CheckpointId, usize>,
 ) {
     // A page's distance from the nearer window: the cursor's, and the
-    // shown page's a VIEWPORT made dense (`Session::view`, lane MEMORY).
+    // shown page's a VIEWPORT made dense (`Session::view`, lane MEMORY),
+    // which is `view_dense` pages either side: counted from that window's
+    // edge as from the cursor's (within it, `<= dense`).
     let dist = |j: usize| {
         view.map_or(j.abs_diff(cursor), |v| {
-            j.abs_diff(cursor).min(j.abs_diff(v))
+            j.abs_diff(cursor)
+                .min(j.abs_diff(v) + (dense - view_dense(dense)))
         })
     };
     let (aux_done, aux_point) = (g.layer().aux_done, g.layer().aux_point);

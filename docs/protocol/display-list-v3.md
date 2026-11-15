@@ -841,7 +841,9 @@ idle work never takes a changed input (a `.bbl` a tool wrote): the next
 compile does, and ships its pages and diagnostics. The restart points
 around the last edit stay dense as well, so the next key back there
 restarts as close as it would without the `VIEWPORT` (two dense windows
-at most: a later `VIEWPORT` moves the shown page's). A client sends `VIEWPORT`
+at most: a later `VIEWPORT` moves the shown page's, which spans at most
+16 pages either side of it). A host in Low Memory (§6.9) does none of this
+and takes `VIEWPORT` as a no-op. A client sends `VIEWPORT`
 after the `COMPILE`s it queued before it, never ahead of them, and
 when scrolling settles (about 150 ms after the last scroll), and at once
 after a jump (a search result, an outline click, a SyncTeX reveal), so that
