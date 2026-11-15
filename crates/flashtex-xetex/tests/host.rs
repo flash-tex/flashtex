@@ -2928,7 +2928,18 @@ fn a_font_file_rewritten_in_place(reopen: bool) {
                     e.push(("FLASHTEX_UNICODE_SPARES", "0"));
                 }
                 let h = start_with(&sub, &e, &sub.join(format!("host{i}.err")));
-                let c = Client::connect(&h.sock).unwrap();
+                // (the socket file exists from `bind`, a moment before `listen`)
+                let t = Instant::now();
+                let c = loop {
+                    match Client::connect(&h.sock) {
+                        Ok(c) => break c,
+                        Err(e) if t.elapsed() < Duration::from_secs(10) => {
+                            let _ = e;
+                            std::thread::sleep(Duration::from_millis(20))
+                        }
+                        Err(e) => panic!("connect: {e}"),
+                    }
+                };
                 host = Some((h, c));
             }
             let (_, c) = host.as_mut().unwrap();
