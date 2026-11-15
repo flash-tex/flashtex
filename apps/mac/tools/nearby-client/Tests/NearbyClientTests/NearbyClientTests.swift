@@ -390,3 +390,21 @@ final class NearbyClientFlowTests: XCTestCase {
         XCTAssertFalse(resolved.host.isEmpty)
     }
 }
+
+/// `NearbyBrowser.discover` must free its browser once it returns. The
+/// handlers it installs captured the browser strongly while the browser held
+/// them (a retain cycle): every discovery — each auto-reconnect and each
+/// "Find nearby Macs" — leaked one browser and its NWBrowser.
+final class NearbyBrowserLifetimeTests: XCTestCase {
+    func testDiscoverFreesItsBrowser() async throws {
+        weak var freed: NearbyBrowser?
+        do {
+            let b = NearbyBrowser()
+            freed = b
+            _ = try await NearbyBrowser.discover(seconds: 0.2, until: nil, using: b)
+        }
+        // The browser's queue may still hold the last callback for a moment.
+        for _ in 0..<50 where freed != nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertNil(freed, "the browser outlived discover (retain cycle through onResults/onFailure)")
+    }
+}
