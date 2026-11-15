@@ -353,6 +353,71 @@ final class EditorFoldingTests: XCTestCase {
     /// post `textDidChange`, so the fold gutter must invalidate and rescan
     /// for the new string — including after the highlighter table catches up
     /// with the new length (the length-mismatch guard otherwise clears it).
+    /// Typing into a long document while a fold exists (lane REVIEW-APP):
+    /// every keystroke used to revalidate the folds on the main thread, and
+    /// since an edit always invalidates the region cache that was a whole
+    /// buffer lex of every environment pair plus the outline per key. Above
+    /// `foldScanOffMainUTF16` the revalidation waits for the debounced
+    /// off-main rescan, which must still drop a fold an edit elsewhere broke.
+    func testKeystrokesWhileFoldedDoNotScanALongBufferOnTheMainThread() async throws {
+        var text = "\\documentclass{article}\n\\begin{document}\n\\begin{itemize}\n\\item folded\n\\end{itemize}\n"
+        let block = "\\section{Section}\nSome prose with a few words in it, then a display.\n\\begin{equation}\n  x = y\n\\end{equation}\n\n"
+        while text.utf16.count < 2_000_000 { text += block }
+        text += "tail\n\\end{document}\n"
+        let ns = text as NSString
+        XCTAssertGreaterThan(ns.length, SourceEditorView.Coordinator.foldScanOffMainUTF16)
+
+        let probe = FoldHostProbe(text: text)
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
+        var hosting: NSHostingView<FoldHost>? = NSHostingView(rootView: FoldHost(probe: probe))
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.contentView = nil; hosting = nil }
+        var found: NSTextView?
+        let findDeadline = Date().addingTimeInterval(10)
+        while Date() < findDeadline, found == nil {
+            found = TypingBenchDriver.findTextView(in: [window.contentView!])
+            if found == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        let tv = try XCTUnwrap(found as? CompletingTextView)
+        let loadDeadline = Date().addingTimeInterval(10)
+        while Date() < loadDeadline, tv.textStorage?.length != ns.length { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(tv.textStorage?.length, ns.length)
+
+        let header = ns.range(of: "\\begin{itemize}").location
+        XCTAssertTrue(tv.folds.foldInnermost(at: header, in: ns), "the itemize at the top folds")
+        tv.foldingDidChange()
+        let fold = try XCTUnwrap(tv.folds.folds.first)
+
+        // Type at the tail, far below the fold.
+        let tail = (tv.string as NSString).range(of: "tail\n").location
+        tv.setSelectedRange(NSRange(location: tail, length: 0))
+        let scans = tv.folds.regionComputeCount
+        var worstMs = 0.0
+        for ch in "abcdefghij" {
+            let c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            tv.insertText(String(ch), replacementRange: tv.selectedRange())
+            worstMs = max(worstMs, Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0) / 1e6)
+        }
+        print(String(format: "folded keystroke on %d K UTF-16: worst %.2f ms main-thread CPU, %d region scans on main",
+                     ns.length / 1000, worstMs, tv.folds.regionComputeCount - scans))
+        XCTAssertEqual(tv.folds.regionComputeCount, scans, "a keystroke must not lex the whole buffer on the main thread while folded")
+        XCTAssertEqual(tv.folds.folds.first?.hidden, fold.hidden, "an edit below the fold leaves it where it was")
+
+        // An unclosed verbatim above the fold swallows its `\begin{itemize}`
+        // pair: the deferred revalidation drops the fold once the off-main
+        // rescan lands.
+        tv.setSelectedRange(NSRange(location: header, length: 0))
+        tv.insertText("\\begin{verbatim}\n", replacementRange: tv.selectedRange())
+        let dropDeadline = Date().addingTimeInterval(15)
+        let inserted = Date()
+        while Date() < dropDeadline, !tv.folds.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        print(String(format: "fold revalidated off main %.2f s after the breaking edit", Date().timeIntervalSince(inserted)))
+        XCTAssertTrue(tv.folds.isEmpty, "a fold that no longer parses is dropped after the debounced rescan")
+        XCTAssertEqual(tv.folds.regionComputeCount, scans, "that rescan ran off the main thread")
+    }
+
     func testTextResetRescansFoldGutterForTheNewDocument() async throws {
         let documentA = "\\begin{itemize}\n\\item a\n\\end{itemize}\n"
         let documentB = "% lead-in\n% more\n\\begin{enumerate}\n\\item b\n\\end{enumerate}\n"
