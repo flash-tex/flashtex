@@ -6,11 +6,25 @@ import FlashTeXAccessibility
 /// accessory-style process with no Dock icon and, when launched from a
 /// non-GUI context, no visible window. Force a regular, activated app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Set by the App so quitting can check for unsaved edits.
-    weak var model: ShellModel?
+    /// The project windows (ProjectWindows.swift): quitting checks each for unsaved edits.
+    @MainActor var windows: ProjectWindows { ProjectWindows.shared }
+    /// The first project window appeared and the launch hooks ran.
+    var launched = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, model.project.anyDirty, model.documentURL != nil || !model.activeText.isEmpty else { return .terminateNow }
+        // Each window with unsaved edits asks in turn, brought forward so
+        // the question names what you see; Cancel in any keeps the app open.
+        for model in windows.models {
+            guard Self.askBeforeQuitting(model) else { return .terminateCancel }
+        }
+        windows.beginTerminating()
+        return .terminateNow
+    }
+
+    /// The quit question for one window: true to go on quitting.
+    @MainActor static func askBeforeQuitting(_ model: ShellModel) -> Bool {
+        guard model.project.anyDirty, model.documentURL != nil || !model.activeText.isEmpty else { return true }
+        ProjectWindows.shared.entry(for: model)?.window?.makeKeyAndOrderFront(nil)
         let dirty = model.project.listing.filter(\.isDirty).map(\.path)
         let alert = NSAlert()
         alert.messageText = "Save changes to \(model.documentURL == nil ? "the unsaved buffer" : dirty.joined(separator: ", "))?"
@@ -26,7 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for path in dirty where path != model.project.entryPath {
                 switch model.project.saveDocumentNow(path) {
                 case .saved: continue
-                case .conflict(let c): allSaved = false; model.captureNote = c.summary
+                case .conflict(let c):
+                    model.captureNote = c.summary
+                    model.resolveDocumentConflictPanel(path) // Overwrite / Reload / Keep Editing, as for the entry
+                    if model.project.isDirty(path) { allSaved = false }
                 case .failed(let why): allSaved = false; model.captureNote = why
                 }
             }
@@ -38,12 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if model.files.conflict != nil { model.resolveConflictPanel() }
                 }
             }
-            return allSaved && !model.project.anyDirty ? .terminateNow : .terminateCancel
+            return allSaved && !model.project.anyDirty
         case .alertSecondButtonReturn:
             // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
             model.preserveDirtyBuffers(reason: "quit without saving")
-            return .terminateNow
-        default: return .terminateCancel
+            model.dropUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
+            return true
+        default: return false
         }
     }
 
@@ -56,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Coming back to the app rechecks the document on disk (external edits
     /// become an explicit conflict state, never a silent overwrite).
     func applicationDidBecomeActive(_ notification: Notification) {
-        if let model { Task { @MainActor in await model.refreshDiskStatus() } }
+        for model in windows.models { Task { @MainActor in await model.refreshDiskStatus() } }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -87,11 +105,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSRect(x: p[0], y: p[1], width: p[2], height: p[3])
     }
 
-    /// The window the frame hook places: the main "FlashTeX" window only,
+    /// The window the frame hook places: the first project window only,
     /// never another window that happens to be first (an early launch has a
     /// 500×500 helper window before SwiftUI makes the main one).
-    static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
-        windows.first { $0.title == "FlashTeX" && $0.contentView != nil }
+    @MainActor static func mainWindow(in windows: [NSWindow], projects: ProjectWindows? = nil) -> NSWindow? {
+        let project = Set((projects ?? .shared).entries.compactMap { $0.window.map(ObjectIdentifier.init) })
+        return windows.first { project.contains(ObjectIdentifier($0)) && $0.contentView != nil }
     }
 
     /// Applies the frame once the main window exists, after SwiftUI restored
@@ -119,56 +138,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct FlashTeXMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = ShellModel(startup: .untitledDocument) // no file open: the blank-article template (ProjectScaffold.swift)
+    /// The project windows (ProjectWindows.swift): each has its own model,
+    /// engine session and host. The first is the untitled document.
+    @State private var windows = ProjectWindows.shared
     @StateObject private var nearby = NearbyState()
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup("FlashTeX") {
-            ContentView()
-                .environment(model)
+        // One window per project, by id; the app opens them itself
+        // (`ProjectWindows.open`) and reopens them at launch.
+        WindowGroup("FlashTeX", for: ProjectWindowID.self) { $id in
+            ProjectWindowRoot(id: id, windows: windows)
                 .environmentObject(nearby) // Captures inspector: status pill, pairing code (CaptureInbox.swift)
                 .frame(minWidth: DS.Layout.windowMinWidth, minHeight: DS.Layout.windowMinHeight) // usable from ~900pt: below three columns the preview collapses to a toggle
-                .onAppear {
-                    appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
-                    EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
-                    EngineV3PageCapture.startIfConfigured(model: model) // FLASHTEX_V3_CAPTURE_OUT (evidence)
-                    LiveShareAutomation.startIfConfigured(model: model) // FLASHTEX_LIVE_SHARE_HOST / _JOIN_FILE (LiveShareAutomation.swift)
-                    // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
-                    if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
-                        _ = model.openTex(at: URL(fileURLWithPath: (open as NSString).expandingTildeInPath))
-                    }
-                    // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).
-                    if CaptureInboxFeature.autoAdvertise(pairs: nearby.pairs.count) { nearby.startAdvertising() }
-                    // Automation: open a secondary window at launch for evidence captures.
-                    if ProcessInfo.processInfo.environment["FLASHTEX_SHOW_PALETTE"] == "1" { model.commandPaletteShown = true } // evidence captures of the command palette
-                    // Evidence captures of the completion list: place the caret after the
-                    // first occurrence of the given text and open the list (⌃Space) once
-                    // the window is up, exactly as a keystroke would.
-                    if let needle = ProcessInfo.processInfo.environment["FLASHTEX_SHOW_COMPLETION"], !needle.isEmpty {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                            guard let tv = TypingBenchDriver.findTextView(in: NSApp.windows.compactMap(\.contentView)) else { return }
-                            let r = (tv.string as NSString).range(of: needle)
-                            guard r.location != NSNotFound else { return }
-                            tv.window?.makeFirstResponder(tv)
-                            tv.setSelectedRange(NSRange(location: r.location + r.length, length: 0))
-                            tv.scrollRangeToVisible(tv.selectedRange())
-                            if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control, timestamp: ProcessInfo.processInfo.systemUptime,
-                                                        windowNumber: tv.window?.windowNumber ?? 0, context: nil, characters: " ",
-                                                        charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49) {
-                                tv.keyDown(with: e)
-                            }
-                        }
-                    }
-                    if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID].contains(id) { openWindow(id: id) }
-                    // Opt-in background update check (Settings > Updates; off by
-                    // default): once per 24 h, quiet unless a newer release exists.
-                    // Never during automation launches.
-                    if ProcessInfo.processInfo.environment["FLASHTEX_NO_ACTIVATE"] != "1" {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { UpdatePresenter.shared.automaticCheckAfterLaunch() }
-                    }
-                }
-        }
+                .onAppear { if !appDelegate.launched { appDelegate.launched = true; launch(model: windows.model(for: id)) } }
+        } defaultValue: { ProjectWindowID() }
         .defaultSize(width: 1440, height: 900) // VS Code's DEFAULT_WORKSPACE_WINDOW_SIZE (brief §4); the saved frame wins afterwards
         .windowToolbarStyle(.unifiedCompact(showsTitle: false)) // the ~35pt IDE title bar; WindowChrome.swift makes it transparent
         // The menu bar is part of the App scene graph: any model property a
@@ -177,183 +161,254 @@ struct FlashTeXMacApp: App {
         // `AppKitWindowController.updateRootView` was ~20 % of the main thread
         // while typing (FT-071 sample) because the old engine's result was
         // read here per reply. Commands read the change-only mirrors instead.
-        .commands {
-            NavigationCommands(model: model) // Navigation.swift: Navigate menu
-            DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
-            Group {
-                FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
-                EditorMenuCommands(model: model) // EditorMenu.swift: one Editor menu (line commands + Change Environment…)
-            }
-            CommandGroup(after: .toolbar) {
-                Toggle("Show Preview Debug Status", isOn: Binding(get: { model.previewDebugStatus }, set: { model.previewDebugStatus = $0 }))
-                    .help("Show the compile status word, provisional-rendering note, display-list identity line and display-list diagnostics in the preview pane (off by default).")
-                // Classic or Unicode, kept in flashtex.toml (ProjectMode.swift).
-                Menu("Mode for This Document") { ModeMenuItems(model: model) }
-                // Chapter focus (EngineV3FocusChapter.swift): \includeonly the active chapter.
-                Toggle("Focus Preview on This Chapter", isOn: Binding(get: { model.engineV3.focus.isActive },
-                                                                      set: { $0 ? model.focusPreview() : model.showWholeDocument() }))
-                    .disabled(!model.engineV3.focus.isActive && model.focusChapter(for: model.activePath) == nil)
-            }
-            CommandGroup(after: .sidebar) {
-                // View menu (mac-ui-redesign): the command palette lists every
-                // AccessibilityCommand with its shortcut (CommandPalette.swift);
-                // the Problems panel is the bottom diagnostics panel (ProblemsPanel.swift).
-                Button("Command Palette…") { model.commandPaletteShown.toggle() }
-                    .keyboardShortcut("p", modifiers: [.command, .shift])
-                Button("Toggle Problems") { model.problemsVisible.toggle() }
-                    .keyboardShortcut("m", modifiers: [.command, .shift])
-                Button("Toggle Captures") { model.captureInboxVisible.toggle() } // CaptureInbox.swift
-                    .keyboardShortcut("i", modifiers: [.command, .shift])
-                Button("Toggle Vim Keybindings") { EditorPreferences.shared.vimKeybindings.toggle() } // VimMode.swift: modal editing in the source editor
-                    .keyboardShortcut("v", modifiers: [.control, .command])
-                Divider()
-                // Preview zoom (PreviewZoom.swift): multiplier over fit-to-width.
-                Button("Zoom In") { model.previewZoomIn() }
-                    .keyboardShortcut("=")
-                Button("Zoom Out") { model.previewZoomOut() }
-                    .keyboardShortcut("-")
-                Button("Actual Size") { model.previewActualSize() }
-                    .keyboardShortcut("0")
-                Button("Fit Width") { model.previewFitWidth() }
-                    .keyboardShortcut("9")
-                Button("Fit Page") { model.previewFitPage() }
-                    .keyboardShortcut("9", modifiers: [.command, .shift])
-                Divider()
-                // Editor text size: EditorPreferences.fontSize (8…36 pt).
-                Button("Increase Editor Font Size") { model.increaseEditorFontSize() }
-                    .keyboardShortcut("=", modifiers: [.command, .option])
-                Button("Decrease Editor Font Size") { model.decreaseEditorFontSize() }
-                    .keyboardShortcut("-", modifiers: [.command, .option])
-                Button("Reset Editor Font Size") { model.resetEditorFontSize() }
-                    .keyboardShortcut("0", modifiers: [.command, .option])
-            }
-            CommandGroup(after: .help) {
-                Button("FlashTeX Accessibility Help") { openWindow(id: AccessibilityHelpView.windowID) }
-            }
-            CommandGroup(after: .pasteboard) {
-                Divider()
-                Button("Re-indent Lines") { EditorIndentationAction.reindentLines() }
-                    .keyboardShortcut("i", modifiers: [.control])
-                Button("Re-indent Document") { EditorIndentationAction.reindentDocument() }
-                Divider()
-                // Wrap the selection in a command (ShellModel+EditorNavigation.swift):
-                // \textbf / \emph / \underline, \mathbf / \mathit in math mode.
-                // ⌘B is Compile (File), so bold takes ⌘⇧B.
-                Button("Bold") { model.wrapSelectionBold() }
-                    .keyboardShortcut("b", modifiers: [.command, .shift])
-                Button("Emphasize") { model.wrapSelectionEmphasis() }
-                    .keyboardShortcut("i")
-                Button("Underline") { model.wrapSelectionUnderline() }
-                    .keyboardShortcut("u")
-                Button("Wrap Selection in Command…") { model.editorNavigation.wrapCommandShown = true }
-                    .keyboardShortcut("w", modifiers: [.command, .option]) // ⌘⇧W is Wrap Selection in Environment (Navigate)
-                Divider()
-                Button("Pin Insertion Point") { model.pinAnchorAtCaret() }
-                    .keyboardShortcut("p", modifiers: [.command, .option]) // ⌘⇧P is the command palette (View)
-                Button("Open Capture Proposal…") { model.openProposalPanel() } // ⌘⇧I moved to View > Toggle Captures (mac-capture-fluid)
-                Button("Restore Discarded Buffer") { model.restoreDiscardedBuffer() }
-                    .disabled(model.recoverableBuffer == nil)
-                Divider()
-                Button("Attach Capture Bridge") { model.attachDiscoveredBridge() }
-                Button("Detach Capture Bridge") { model.detachBridge() }
-                    .disabled(!model.bridgeAttached)
-                Button("Submit Sample Capture…") { model.submitSampleCapturePanel() }
-                    .keyboardShortcut("u", modifiers: [.command, .shift])
-                    .disabled(!model.bridgeAttached)
-                Button("Convert Capture") { model.convertLatestCapture() }
-                    .keyboardShortcut("g", modifiers: [.command, .shift])
-                    .disabled(model.latestConvertibleCapture == nil)
-                Button("Retry Bridge Receipt") { model.retryBridgeReceipt() }
-                    .disabled(model.bridge?.pendingTransaction == nil)
-                Button("Retry Bridge Reconciliation") { Task { await model.retryBridgeReconciliation() } }
-                    .disabled(!model.bridgeAttached)
-                Divider()
-                Button("Nearby Companion…") { openWindow(id: "nearby") }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
-            }
-            CommandGroup(replacing: .newItem) {
-                Button("New Project…") { model.scaffold.presentNewProject() } // ProjectScaffoldViews.swift
-                    .keyboardShortcut("n", modifiers: [.command, .option]) // ⌘⇧N is Nearby Companion
-                Button("New File…") { model.scaffold.presentNewFile() }
-                    .keyboardShortcut("n")
-                    .disabled(model.project.projectRoot == nil)
-                Button("Move To…") { model.scaffold.presentMove(model.activePath) } // ProjectMove.swift (no key: the tree drags too)
-                    .disabled(model.project.projectRoot == nil || model.activePath == model.menuEntryPath) // change-only mirror: `entryPath` reads `documents`
-                Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
-                    .keyboardShortcut("o")
-                LiveShareMenuItems(model: model) // LiveShareViews.swift: Start/Join/Leave Live Share Session, while Settings > Live Share is on
-                // The project manifest (ProjectManifest.swift): writes the
-                // commented template next to the entry and opens it.
-                Button("Create flashtex.toml…") { Task { await model.manifest.createManifestInteractive() } }
-                    .disabled(model.project.projectRoot == nil || model.manifest.exists)
-                // The project's `[fonts]` table as a sheet (ProjectFonts.swift).
-                Button("Project Fonts…") { model.projectFonts.present() }
-                    .disabled(model.project.projectRoot == nil)
-                // Packages the compiler could not find (ProjectPackages.swift):
-                // the consent sheet, on demand; it also appears after a compile.
-                Button("Fetch Missing Packages…") { model.projectPackages.present() }
-                    .disabled(model.project.projectRoot == nil)
-                Button("Save") { model.saveTexInteractive() }
-                    .keyboardShortcut("s")
-                Button("Resolve On-Disk Conflict…") { model.resolveConflictPanel() }
-                    .disabled(model.files.conflict == nil)
-                Button("Reload From Disk…") { model.reloadFromDiskInteractive() }
-                    .disabled(model.documentURL == nil)
-                Button("Restore Unsaved Snapshot…") { model.restoreDirtySnapshotsInteractive() } // DirtySnapshots.swift
-                    .disabled(model.files.offeredSnapshots.isEmpty)
-                Button("Save As…") { model.saveTexAs() }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                Button("Show in Finder") { model.showActiveDocumentInFinder() } // RevealInFinder.swift
-                    .keyboardShortcut("r", modifiers: [.command, .option])
-                    .disabled(model.project.projectRoot == nil)
-                Divider()
-                // The app's one export route (ExactPDFExport.swift); File > Print…
-                // prints exactly these bytes.
-                Button("Export PDF…") { model.exportPDF() }
-                    .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!model.exportAvailable) // the engine's export (ShellModel.exportAvailable)
-                Divider()
-                Button("Compile") { model.compileCommand() } // the engine (EngineV3Session)
-                    .keyboardShortcut("b")
-                    .disabled(!model.canCompile)
-                Button("Stop Compile") { model.engineV3.stopCompile() } // engine v3: end a compile that runs too long (EngineV3Session)
-                    .keyboardShortcut(".")
-                    .disabled(!model.engineV3Enabled || !model.engineV3.compiling)
-                Button("Show TeX Log") { model.engineV3.showTeXLog() } // engine v3: the last compile's .log (gap A21)
-                    .disabled(!model.engineV3Enabled)
-            }
-        }
-        .commands {
-            // Separate `.commands` so this is not an 11th child of the builder
-            // above (SwiftUI's CommandsBuilder limit). Replaces the system Print
-            // that would otherwise print the editor view.
-            CommandGroup(replacing: .printItem) {
-                Button("Print…") { model.printDocument() }
-                    .keyboardShortcut("p")
-                    .disabled(!PrintController.documentEnabled(model)) // change-only mirrors (see PrintController)
-                    .help(PrintController.documentHelp(model))
-                Button("Print Source…") { model.printSource() }
-                    .disabled(!PrintController.sourceEnabled(model))
-                    .help(PrintController.sourceHelp(model))
-            }
-            CommandGroup(replacing: .appInfo) {
-                // The standard About panel with the GPL source offer in its credits (AboutPanel.swift, #1806).
-                Button("About FlashTeX") { AboutPanel.show() }
-            }
-            CommandGroup(after: .appInfo) {
-                // FlashTeX menu, after About (UpdateChecker.swift, #694 slice 1):
-                // asks GitHub Releases, shows version + notes, Download opens the
-                // release page. Nothing is downloaded or installed.
-                Button("Check for Updates…") { UpdatePresenter.shared.checkForUpdatesInteractive() }
-            }
-        }
+        // They act on the key project window's model (`@FocusedValue`), else
+        // on the last key one's (ProjectWindows.commandTarget).
+        .commands { ProjectCommands(windows: windows, openWindow: openWindow) }
+        .commands { ProjectCommandsMore(windows: windows) }
         Window("Nearby Companion", id: "nearby") {
-            NearbyView().environmentObject(nearby).environment(model)
+            NearbyView().environmentObject(nearby).environment(windows.commandTarget(focused: nil))
         }
         .windowResizability(.contentSize)
         Window("Accessibility Help", id: AccessibilityHelpView.windowID) {
             AccessibilityHelpView() // FlashTeXAccessibility: focus order, VoiceOver notes, command table
         }
-        Settings { SettingsRootView().environment(model) } // EditorPreferences.swift (⌘,): Editor, Compile and Conversion tabs, applying live
+        Settings { SettingsRootView().environment(windows.commandTarget(focused: nil)) } // EditorPreferences.swift (⌘,): Editor, Compile and Conversion tabs, applying live
+    }
+
+    /// Once per launch, with the first window's model: automation hooks,
+    /// the companion, the update check.
+    private func launch(model: ShellModel) {
+        nearby.attach(sink: windows.captures, destinations: windows.captures) // the frontmost project window (ProjectWindows.swift)
+        TypingBench.shared.install(model: model)
+        EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
+        EngineV3PageCapture.startIfConfigured(model: model) // FLASHTEX_V3_CAPTURE_OUT (evidence)
+        LiveShareAutomation.startIfConfigured(model: model) // FLASHTEX_LIVE_SHARE_HOST / _JOIN_FILE (LiveShareAutomation.swift)
+        // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
+        if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
+            windows.open(URL(fileURLWithPath: (open as NSString).expandingTildeInPath), from: model) // this first window: it holds nothing yet
+        }
+        // The windows the last run had open (ProjectWindows.restore), unless
+        // this launch was told what to open.
+        if windows.showWindow == nil { windows.showWindow = { [openWindow] in openWindow(value: $0) } }
+        if ProjectWindows.restoresWindows() { windows.restore(windows.savedRestorable(), first: model) }
+        // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).
+        if CaptureInboxFeature.autoAdvertise(pairs: nearby.pairs.count) { nearby.startAdvertising() }
+        // Automation: open a secondary window at launch for evidence captures.
+        if ProcessInfo.processInfo.environment["FLASHTEX_SHOW_PALETTE"] == "1" { model.commandPaletteShown = true } // evidence captures of the command palette
+        // Evidence captures of the completion list: place the caret after the
+        // first occurrence of the given text and open the list (⌃Space) once
+        // the window is up, exactly as a keystroke would.
+        if let needle = ProcessInfo.processInfo.environment["FLASHTEX_SHOW_COMPLETION"], !needle.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                guard let tv = TypingBenchDriver.findTextView(in: NSApp.windows.compactMap(\.contentView)) else { return }
+                let r = (tv.string as NSString).range(of: needle)
+                guard r.location != NSNotFound else { return }
+                tv.window?.makeFirstResponder(tv)
+                tv.setSelectedRange(NSRange(location: r.location + r.length, length: 0))
+                tv.scrollRangeToVisible(tv.selectedRange())
+                if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control, timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: tv.window?.windowNumber ?? 0, context: nil, characters: " ",
+                                            charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49) {
+                    tv.keyDown(with: e)
+                }
+            }
+        }
+        if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID].contains(id) { openWindow(id: id) }
+        // Opt-in background update check (Settings > Updates; off by
+        // default): once per 24 h, quiet unless a newer release exists.
+        // Never during automation launches.
+        if ProcessInfo.processInfo.environment["FLASHTEX_NO_ACTIVATE"] != "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { UpdatePresenter.shared.automaticCheckAfterLaunch() }
+        }
+    }
+}
+
+/// The menu bar's commands (the first of two builders: SwiftUI's
+/// CommandsBuilder takes at most ten children).
+struct ProjectCommands: Commands {
+    let windows: ProjectWindows
+    let openWindow: OpenWindowAction
+    @FocusedValue(\.shellModel) private var focused
+    /// The key project window's model, else the last key one's.
+    private var model: ShellModel { windows.commandTarget(focused: focused) }
+
+    var body: some Commands {
+        NavigationCommands(model: model) // Navigation.swift: Navigate menu
+        DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
+        Group {
+            FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
+            EditorMenuCommands(model: model) // EditorMenu.swift: one Editor menu (line commands + Change Environment…)
+        }
+        CommandGroup(after: .toolbar) {
+            Toggle("Show Preview Debug Status", isOn: Binding(get: { model.previewDebugStatus }, set: { model.previewDebugStatus = $0 }))
+                .help("Show the compile status word, provisional-rendering note, display-list identity line and display-list diagnostics in the preview pane (off by default).")
+            // Classic or Unicode, kept in flashtex.toml (ProjectMode.swift).
+            Menu("Mode for This Document") { ModeMenuItems(model: model) }
+            // Chapter focus (EngineV3FocusChapter.swift): \includeonly the active chapter.
+            Toggle("Focus Preview on This Chapter", isOn: Binding(get: { model.engineV3.focus.isActive },
+                                                                  set: { $0 ? model.focusPreview() : model.showWholeDocument() }))
+                .disabled(!model.engineV3.focus.isActive && model.focusChapter(for: model.activePath) == nil)
+        }
+        CommandGroup(after: .sidebar) {
+            // View menu (mac-ui-redesign): the command palette lists every
+            // AccessibilityCommand with its shortcut (CommandPalette.swift);
+            // the Problems panel is the bottom diagnostics panel (ProblemsPanel.swift).
+            Button("Command Palette…") { model.commandPaletteShown.toggle() }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Toggle Problems") { model.problemsVisible.toggle() }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            Button("Toggle Captures") { model.captureInboxVisible.toggle() } // CaptureInbox.swift
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+            Button("Toggle Vim Keybindings") { EditorPreferences.shared.vimKeybindings.toggle() } // VimMode.swift: modal editing in the source editor
+                .keyboardShortcut("v", modifiers: [.control, .command])
+            Divider()
+            // Preview zoom (PreviewZoom.swift): multiplier over fit-to-width.
+            Button("Zoom In") { model.previewZoomIn() }
+                .keyboardShortcut("=")
+            Button("Zoom Out") { model.previewZoomOut() }
+                .keyboardShortcut("-")
+            Button("Actual Size") { model.previewActualSize() }
+                .keyboardShortcut("0")
+            Button("Fit Width") { model.previewFitWidth() }
+                .keyboardShortcut("9")
+            Button("Fit Page") { model.previewFitPage() }
+                .keyboardShortcut("9", modifiers: [.command, .shift])
+            Divider()
+            // Editor text size: EditorPreferences.fontSize (8…36 pt).
+            Button("Increase Editor Font Size") { model.increaseEditorFontSize() }
+                .keyboardShortcut("=", modifiers: [.command, .option])
+            Button("Decrease Editor Font Size") { model.decreaseEditorFontSize() }
+                .keyboardShortcut("-", modifiers: [.command, .option])
+            Button("Reset Editor Font Size") { model.resetEditorFontSize() }
+                .keyboardShortcut("0", modifiers: [.command, .option])
+        }
+        CommandGroup(after: .help) {
+            Button("FlashTeX Accessibility Help") { openWindow(id: AccessibilityHelpView.windowID) }
+        }
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            Button("Re-indent Lines") { EditorIndentationAction.reindentLines() }
+                .keyboardShortcut("i", modifiers: [.control])
+            Button("Re-indent Document") { EditorIndentationAction.reindentDocument() }
+            Divider()
+            // Wrap the selection in a command (ShellModel+EditorNavigation.swift):
+            // \textbf / \emph / \underline, \mathbf / \mathit in math mode.
+            // ⌘B is Compile (File), so bold takes ⌘⇧B.
+            Button("Bold") { model.wrapSelectionBold() }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+            Button("Emphasize") { model.wrapSelectionEmphasis() }
+                .keyboardShortcut("i")
+            Button("Underline") { model.wrapSelectionUnderline() }
+                .keyboardShortcut("u")
+            Button("Wrap Selection in Command…") { model.editorNavigation.wrapCommandShown = true }
+                .keyboardShortcut("w", modifiers: [.command, .option]) // ⌘⇧W is Wrap Selection in Environment (Navigate)
+            Divider()
+            Button("Pin Insertion Point") { model.pinAnchorAtCaret() }
+                .keyboardShortcut("p", modifiers: [.command, .option]) // ⌘⇧P is the command palette (View)
+            Button("Open Capture Proposal…") { model.openProposalPanel() } // ⌘⇧I moved to View > Toggle Captures (mac-capture-fluid)
+            Button("Restore Discarded Buffer") { model.restoreDiscardedBuffer() }
+                .disabled(model.recoverableBuffer == nil)
+            Divider()
+            Button("Attach Capture Bridge") { model.attachDiscoveredBridge() }
+            Button("Detach Capture Bridge") { model.detachBridge() }
+                .disabled(!model.bridgeAttached)
+            Button("Submit Sample Capture…") { model.submitSampleCapturePanel() }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .disabled(!model.bridgeAttached)
+            Button("Convert Capture") { model.convertLatestCapture() }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(model.latestConvertibleCapture == nil)
+            Button("Retry Bridge Receipt") { model.retryBridgeReceipt() }
+                .disabled(model.bridge?.pendingTransaction == nil)
+            Button("Retry Bridge Reconciliation") { Task { await model.retryBridgeReconciliation() } }
+                .disabled(!model.bridgeAttached)
+            Divider()
+            Button("Nearby Companion…") { openWindow(id: "nearby") }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .newItem) {
+            Button("New Project…") { model.scaffold.presentNewProject() } // ProjectScaffoldViews.swift
+                .keyboardShortcut("n", modifiers: [.command, .option]) // ⌘⇧N is Nearby Companion
+            Button("New Window") { openWindow(value: windows.newWindow()) } // ProjectWindows.swift: an untitled document in its own window
+                .keyboardShortcut("n", modifiers: [.command, .control])
+            Button("New File…") { model.scaffold.presentNewFile() }
+                .keyboardShortcut("n")
+                .disabled(model.project.projectRoot == nil)
+            Button("Move To…") { model.scaffold.presentMove(model.activePath) } // ProjectMove.swift (no key: the tree drags too)
+                .disabled(model.project.projectRoot == nil || model.activePath == model.menuEntryPath) // change-only mirror: `entryPath` reads `documents`
+            Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
+                .keyboardShortcut("o")
+            LiveShareMenuItems(model: model) // LiveShareViews.swift: Start/Join/Leave Live Share Session, while Settings > Live Share is on
+            // The project manifest (ProjectManifest.swift): writes the
+            // commented template next to the entry and opens it.
+            Button("Create flashtex.toml…") { Task { await model.manifest.createManifestInteractive() } }
+                .disabled(model.project.projectRoot == nil || model.manifest.exists)
+            // The project's `[fonts]` table as a sheet (ProjectFonts.swift).
+            Button("Project Fonts…") { model.projectFonts.present() }
+                .disabled(model.project.projectRoot == nil)
+            // Packages the compiler could not find (ProjectPackages.swift):
+            // the consent sheet, on demand; it also appears after a compile.
+            Button("Fetch Missing Packages…") { model.projectPackages.present() }
+                .disabled(model.project.projectRoot == nil)
+            Button("Save") { model.saveTexInteractive() }
+                .keyboardShortcut("s")
+            Button("Resolve On-Disk Conflict…") { model.resolveConflictPanel() }
+                .disabled(model.files.conflict == nil)
+            Button("Reload From Disk…") { model.reloadFromDiskInteractive() }
+                .disabled(model.documentURL == nil)
+            Button("Restore Unsaved Snapshot…") { model.restoreDirtySnapshotsInteractive() } // DirtySnapshots.swift
+                .disabled(model.files.offeredSnapshots.isEmpty)
+            Button("Save As…") { model.saveTexAs() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+            Button("Show in Finder") { model.showActiveDocumentInFinder() } // RevealInFinder.swift
+                .keyboardShortcut("r", modifiers: [.command, .option])
+                .disabled(model.project.projectRoot == nil)
+            Divider()
+            // The app's one export route (ExactPDFExport.swift); File > Print…
+            // prints exactly these bytes.
+            Button("Export PDF…") { model.exportPDF() }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!model.exportAvailable) // the engine's export (ShellModel.exportAvailable)
+            Divider()
+            Button("Compile") { model.compileCommand() } // the engine (EngineV3Session)
+                .keyboardShortcut("b")
+                .disabled(!model.canCompile)
+            Button("Stop Compile") { model.engineV3.stopCompile() } // engine v3: end a compile that runs too long (EngineV3Session)
+                .keyboardShortcut(".")
+                .disabled(!model.engineV3Enabled || !model.engineV3.compiling)
+            Button("Show TeX Log") { model.engineV3.showTeXLog() } // engine v3: the last compile's .log (gap A21)
+                .disabled(!model.engineV3Enabled)
+        }
+    }
+}
+
+struct ProjectCommandsMore: Commands {
+    let windows: ProjectWindows
+    @FocusedValue(\.shellModel) private var focused
+    private var model: ShellModel { windows.commandTarget(focused: focused) }
+
+    var body: some Commands {
+        // Separate `.commands` so this is not an 11th child of the builder
+        // above (SwiftUI's CommandsBuilder limit). Replaces the system Print
+        // that would otherwise print the editor view.
+        CommandGroup(replacing: .printItem) {
+            Button("Print…") { model.printDocument() }
+                .keyboardShortcut("p")
+                .disabled(!PrintController.documentEnabled(model)) // change-only mirrors (see PrintController)
+                .help(PrintController.documentHelp(model))
+            Button("Print Source…") { model.printSource() }
+                .disabled(!PrintController.sourceEnabled(model))
+                .help(PrintController.sourceHelp(model))
+        }
+        CommandGroup(replacing: .appInfo) {
+            // The standard About panel with the GPL source offer in its credits (AboutPanel.swift, #1806).
+            Button("About FlashTeX") { AboutPanel.show() }
+        }
+        CommandGroup(after: .appInfo) {
+            // FlashTeX menu, after About (UpdateChecker.swift, #694 slice 1):
+            // asks GitHub Releases, shows version + notes, Download opens the
+            // release page. Nothing is downloaded or installed.
+            Button("Check for Updates…") { UpdatePresenter.shared.checkForUpdatesInteractive() }
+        }
     }
 }

@@ -32,10 +32,13 @@ struct IsolatedTask<ID: Equatable>: View {
 /// (see `IsolatedTask`): only this view re-evaluates when the value changes.
 struct IsolatedOnChange<Value: Equatable>: View {
     let value: () -> Value
+    /// Also act on the value when the view appears (`onChange(of:initial:)`).
+    let initial: Bool
     let action: (Value) -> Void
 
-    init(of value: @escaping () -> Value, _ action: @escaping (Value) -> Void) {
+    init(of value: @escaping () -> Value, initial: Bool = false, _ action: @escaping (Value) -> Void) {
         self.value = value
+        self.initial = initial
         self.action = action
     }
 
@@ -43,6 +46,6 @@ struct IsolatedOnChange<Value: Equatable>: View {
         Color.clear
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
-            .onChange(of: value()) { _, new in action(new) }
+            .onChange(of: value(), initial: initial) { _, new in action(new) }
     }
 }

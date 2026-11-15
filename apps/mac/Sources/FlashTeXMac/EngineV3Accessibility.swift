@@ -431,7 +431,10 @@ final class EngineV3PagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDe
 
     nonisolated func rotor(_ rotor: NSAccessibilityCustomRotor,
                            resultFor searchParameters: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
-        MainActor.assumeIsolated { search(searchParameters) }
+        // `ItemResult` is not Sendable: made and returned on the main thread.
+        nonisolated(unsafe) var out: NSAccessibilityCustomRotor.ItemResult?
+        MainActor.assumeIsolated { out = search(searchParameters) }
+        return out
     }
 }
 

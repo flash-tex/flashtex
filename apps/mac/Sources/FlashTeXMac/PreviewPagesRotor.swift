@@ -97,7 +97,7 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
                       standInPage: (PreviewAXElement) -> Int? = { _ in nil }) -> Int? {
         guard let current = parameters.currentItem else { return nil }
         if let view = current.targetElement as? PreviewPageAXTarget { return view.previewPageNumber }
-        if let element = current.targetElement as? PreviewAXElement {
+        if let element = current.targetElement as AnyObject? as? PreviewAXElement { // the protocol is adopted at run time (PreviewAXElement.adoptsElementProtocol)
             if let page = element.pageView as? PreviewPageAXTarget { return page.previewPageNumber } // a line
             return standInPage(element)
         }
@@ -227,12 +227,16 @@ final class PreviewPagesRotor: NSObject, NSAccessibilityCustomRotorItemSearchDel
 
     nonisolated func rotor(_ rotor: NSAccessibilityCustomRotor,
                            resultFor searchParameters: NSAccessibilityCustomRotor.SearchParameters) -> NSAccessibilityCustomRotor.ItemResult? {
+        // `ItemResult` is not Sendable: it is made and returned on the main
+        // thread (AppKit calls this there), so it never crosses an actor.
+        nonisolated(unsafe) var out: NSAccessibilityCustomRotor.ItemResult?
         MainActor.assumeIsolated {
             let found = Self.resolve(items: items, start: start(of: searchParameters),
                                      forward: searchParameters.searchDirection == .next,
                                      filter: searchParameters.filterString)
-            return found.map(result(for:))
+            out = found.map(result(for:))
         }
+        return out
     }
 }
 

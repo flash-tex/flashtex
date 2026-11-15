@@ -38,6 +38,9 @@ final class FakeMac {
     /// `answersInsert == false` → `unknown_type` (a Mac that predates
     /// `capture_insert`), which the companion must report rather than retry.
     var answersInsert = true
+    /// Runs on the fixture's queue as each `capture_submit` arrives, before
+    /// the reply (tests: what the iPad had on disk when the bytes left).
+    var onCaptureSubmit: ((NearbyWire.CaptureSubmit) -> Void)?
     private var _hellos: [NearbyWire.Hello] = []
     private var listener: NWListener!
     private let queue = DispatchQueue(label: "fake.mac")
@@ -181,6 +184,7 @@ final class FakeMac {
                         case "capture_submit":
                             guard let cap = try? NearbyWire.decode(line, as: NearbyWire.CaptureSubmit.self).payload else { fail("bad_request", "undecodable capture_submit"); continue }
                             self._captures.append(cap)
+                            self.onCaptureSubmit?(cap)
                             reply("capture_received", FakeMac.wire(["capture_id": cap.captureId, "durable": false, "has_proposal": false, "applied": false]) as NearbyWire.CaptureReceived)
                         case "capture_status" where self.answersStatus:
                             guard let req = try? NearbyWire.decode(line, as: NearbyWire.CaptureStatusRequest.self).payload else { fail("bad_request", "undecodable capture_status"); continue }

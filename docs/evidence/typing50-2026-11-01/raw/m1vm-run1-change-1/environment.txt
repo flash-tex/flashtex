@@ -1,0 +1,5 @@
+start 2026-11-01T17:22:51Z 17:22  up 5 mins, 1 user, load averages: 12.76 25.03 14.30
+Darwin 24.6.0 arm64
+Apple M1 (Virtual) 3 7516192768
+engine /tmp/fth-realdoc/m1 HEAD 8ecf42fbb; checkout 8ecf42fbb
+end 2026-11-01T17:27:38Z 17:27  up 9 mins, 1 user, load averages: 10.69 17.73 14.12

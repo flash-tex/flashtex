@@ -1,0 +1,27 @@
+FLASHTEX_BOXMEMO_DEBUG on full-100 with \pdfstringdefPreHook the only name (run 41343123964,
+every compile of the variant, the settling passes included):
+    648  replayed (a hit)
+    256  recorded
+    130  miss: a meaning the key read differs
+    122  miss: a register or eqtb entry the key read differs
+key entries that differed on a miss (top 20; a miss can list several):
+    112  \reserved@a (meaning)
+    110  eqtb[26628]
+    110  eqtb[26629]
+     94  eqtb[28379]
+     94  \count144
+     90  \reserved@b (meaning)
+     74  \count255
+     70  eqtb[29905]
+     57  \count321
+     41  \count0
+     41  \count154
+     40  \count186
+     40  \l__cmd_tmpa_tl (meaning)
+     38  \count190
+     38  \count191
+     36  eqtb[29316]
+     24  \count135
+     20  eqtb[26630]
+     20  eqtb[27693]
+     20  eqtb[27694]

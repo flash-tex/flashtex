@@ -241,6 +241,10 @@ pub struct Shift {
     pub first: i32,
     pub after: i32,
     pub tags: Vec<i32>,
+    /// Only the held lines move ([`Shift::relocate_held`]), no input
+    /// level's: the correction a READ-REVALIDATE restart point owes, where
+    /// every stream on the edited file is still before the edit (#1896).
+    pub held_only: bool,
 }
 
 /// A [`Shift`] whose lines before the edit are not counted yet: the edit
@@ -312,6 +316,7 @@ impl Pending {
             // the first line that starts at or after the edit's end
             after: clamp(1 + before + self.mid + if self.at_start { 0 } else { 1 }),
             tags: vec![],
+            held_only: false,
         }
     }
 }
@@ -469,10 +474,19 @@ impl Shift {
     /// there, and the old run read nothing of a changed file again), so its
     /// line moves by `delta`; so does every open level's, group's and
     /// conditional's line of that file from `after` on.
+    ///
+    /// A `held_only` shift moves the held lines alone, no input level's: a
+    /// READ-REVALIDATE restart point owes that (`incr::held_shifts`). Every
+    /// stream on the edited file there is still before the edit
+    /// (`revalidate::streams_before_edits`), so its line is the same in both
+    /// numberings, while an earlier opening of the file, read past the edit
+    /// in the window the comparison held over, left lines in the state that
+    /// the edit moved (#1896: the group a chapter's first reading began,
+    /// below a newline typed earlier in the chapter).
     pub fn relocate(&self, g: &mut Globals) {
         let d = self.delta;
         let tags = &self.tags;
-        for j in 1..=g.in_open.max(0) {
+        for j in (1..=g.in_open.max(0)).filter(|_| !self.held_only) {
             if level_file(g, j).is_none() || !level_tag(g, j).is_some_and(|t| tags.contains(&t)) {
                 continue;
             }
@@ -706,7 +720,7 @@ impl Active {
         };
         self.stages
             .iter()
-            .filter(|s| s.tags.contains(&t))
+            .filter(|s| !s.held_only && s.tags.contains(&t))
             .map(|s| s.delta as i64)
             .sum()
     }
@@ -1048,6 +1062,7 @@ mod tests {
             first: 10,
             after: 11,
             tags: vec![1, 7],
+            held_only: false,
         };
         let r = |tag, known, line| LineRead { tag, known, line };
         assert!(s.moves(&r(1, true, 10)));
@@ -1068,6 +1083,7 @@ mod tests {
             first: after - 1,
             after,
             tags: vec![3],
+            held_only: false,
         };
         let a = Active {
             stages: vec![sh(2, 11)],

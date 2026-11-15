@@ -614,6 +614,10 @@ struct Obs {
     /// at a page, and its outcome (`Ok`: the restart point it allows).
     probe: Option<Box<crate::revalidate::Probe>>,
     probe_result: Option<Result<CheckpointId, String>>,
+    /// ... and when it held, the edits' line shifts it allowed (their tags
+    /// those of the files opened by `P1`): what the old run's checkpoints up
+    /// to `P2` owe (`Session::held_shifts`, #1896).
+    probe_shifts: Vec<crate::lineshift::Shift>,
     /// PREAMBLE-PATCH: the comparison a preamble restart makes at the end
     /// of the `.aux` read (`pre_patch_test`), and its outcome.
     pre_patch: Option<Box<PrePatch>>,
@@ -654,6 +658,9 @@ struct Obs {
     /// The client cancelled this compile (`Session::set_cancel`): stops the
     /// run like newer work, protected or not (`protecting`).
     cancel: Option<Preempt>,
+    /// The client was sent a page it did not hold (`Session::set_painted`):
+    /// the protection is over.
+    painted: Option<Painted>,
     /// The client's heartbeat (`Session::set_progress`): told at every page
     /// and segment checkpoint of every run, cold or incremental.
     progress: Option<Progress>,
@@ -668,18 +675,23 @@ struct Obs {
     /// (`cold`), so that the next compile restarts from S₀ or later.
     preempt_after_s0: bool,
     /// Newer work does not stop this run before its first changed page has
-    /// shipped (or [`PROTECT_PAGES`] pages have, when no page changed):
-    /// the first pass of an incremental compile whose predecessor newer
-    /// work stopped before it shipped a changed page
-    /// (`Session::starved`). Typing faster than the edited page arrives
-    /// would else preempt every compile before its page, and nothing would
-    /// be painted until the typing stopped; at most every other compile is
-    /// held so, and typing slower than that is preempted at once (lane
-    /// LIVE-30MS). Stopping later than asked changes nothing the engine
-    /// computes.
+    /// shipped (or [`PROTECT_PAGES`] pages have, when no page changed): the
+    /// first pass of every incremental compile (lane TYPING-50MS; a cancel
+    /// still stops it). Each keystroke's compile paints its edited page
+    /// before the next keystroke's compile starts: when that page alone
+    /// takes less than the time between keys, every key is painted by its
+    /// own compile, and when it takes longer, a key waits at most for the
+    /// page in progress and the keys that came meanwhile go into one
+    /// compile. LIVE-30MS protected a compile only after one that newer
+    /// work had stopped before its page, so that at most every other
+    /// compile was held: a compile that was not protected and reached its
+    /// page after the next key came painted nothing, and with the previous
+    /// compile's background work in the way (a convergence test or jump to
+    /// stop) every other key was then lost even when its page took less
+    /// than the interval. Stopping later than asked changes nothing the
+    /// engine computes.
     protect_edit: bool,
-    /// The first pass of an incremental compile: its end says whether the
-    /// next one is protected (`Session::starved`).
+    /// The first pass of an incremental compile.
     first_incremental: bool,
     /// The hold before the edited page is over (`on_checkpoint`): from
     /// here on held segment checkpoints are taken near the cursor only
@@ -704,6 +716,10 @@ const PROTECT_PAGES: usize = 3;
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
+
+/// Whether this compile has sent the client a page it did not hold
+/// (`Session::set_painted`).
+pub type Painted = std::rc::Rc<dyn Fn() -> bool>;
 
 /// A heartbeat: (pass, pages the run shipped, the engine's state to read
 /// the file it is in from), at every page and segment checkpoint (the
@@ -1542,20 +1558,19 @@ impl Obs {
         // run's whole future, which a restart at `P2` does not keep:
         // compared here)
         let last_byte_dead = false;
-        // The dimensions `\pdfdest` leaves unset (`crate::iso`) hold
-        // whatever the memory held, which differs between runs that
-        // allocated differently (on Infinite Descent x2 the keystroke after
-        // the first at a new place failed here on a destination's words,
-        // and typeset 4 pages instead of 1; lane LATE-EDIT). They are read
-        // only with a `\pdfsetmatrix` in effect (`matrix_uses`). What a
-        // restart at `P2` keeps of the old run past `P1` is its pages up to
-        // `P2`: when the old run found no matrix in effect between them,
-        // those pages never read the words, and from `P2` on the run is
-        // live from the old run's state there, as from any restart point
-        // (whose unset words are the old run's too).
-        let dest_dims_dead = g
-            .pending_record(pr.p2)
-            .is_some_and(|r| r.matrix_uses == o.matrix_uses);
+        // ... nor the dimensions `\pdfdest` leaves unset (`crate::iso`),
+        // which hold whatever the memory held and differ between runs that
+        // allocated differently. #1908 left them out when the old run had no
+        // `\pdfsetmatrix` in effect between `P1` and `P2`, but from `P2` on
+        // the run is live from the old run's state, with the old run's words
+        // in every destination still in it, and a destination shipped later
+        // under a matrix reads them (`set_rect_dimens`) where a scratch run
+        // reads its own: one kept in a box register and shipped after the
+        // edit took the old run's coordinates, whether the old run had the
+        // matrix there or the edit put it in (review of #1908, lane REVIEW:
+        // `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`).
+        // What the run from `P2` will do is not known here: compared.
+        let dest_dims_dead = false;
         let mut char_or = vec![];
         let mut stages = self
             .old_lines
@@ -1584,6 +1599,32 @@ impl Obs {
         if !char_or.is_empty() {
             return Err("the new run shipped characters the old one had not".into());
         }
+        // #1896: from `P1` on the old run is this one's up to `P2` in the
+        // new numbering, which its checkpoints there get (`held_shifts`).
+        // What it read or printed of a line the edit moved between them
+        // (`crate::lineshift`'s journal) is not: a barrier, as after a
+        // convergence (`line_barrier`); nor is a `P2` the shift cannot be
+        // put right in (`Shift::dirty`).
+        if !self.shifts.is_empty() {
+            let recs = g.pending_lines();
+            let pos = |id: CheckpointId| recs.iter().position(|(i, _)| *i == id);
+            let (Some(a), Some(b)) = (pos(old), pos(pr.p2)) else {
+                return Err("no line journal between P1 and P2".into());
+            };
+            if let Some(x) = recs[(a + 1).min(b)..=b].iter().find_map(|(_, r)| {
+                r.here
+                    .iter()
+                    .find(|x| self.shifts.iter().any(|s| s.moves(x)))
+            }) {
+                return Err(format!(
+                    "the old run read or printed a moved line before P2: {x:?}"
+                ));
+            }
+            if self.shifts.iter().any(|s| s.dirty(&recs[b].1)) {
+                return Err("P2 holds a line the shift cannot correct".into());
+            }
+        }
+        self.probe_shifts = self.shifts.clone();
         Ok(())
     }
 
@@ -3231,6 +3272,22 @@ impl Observer for Obs {
         take
     }
 
+    /// Elsewhere than in an edit's first pass until the edited page has
+    /// shipped (all taken there, as before), only within `dense` pages of
+    /// the cursor: `thin` merges the others away at once (only page
+    /// checkpoints stay farther out). In a cold open of Infinite Descent x2
+    /// a heavy page took one every page, and their logs' merges were half
+    /// of `thin` (lane COLD-FIRST-2). A held one counts as one taken for
+    /// retention's pace, as a held segment does.
+    fn take_held_timed(&mut self, _g: &mut Globals) -> bool {
+        let take = (self.first_incremental && !self.edit_out)
+            || self.pages_so_far().abs_diff(self.cursor) <= self.dense;
+        if !take {
+            self.ticks += 1;
+        }
+        take
+    }
+
     /// (`REQ_PREEMPT`: the checkpoint it takes stops the run, as a held
     /// segment taken for newer work does; `preempt_now` consumed the news)
     fn stops_now(&mut self, g: &mut Globals) -> bool {
@@ -3496,6 +3553,7 @@ impl Obs {
         self.protect_edit
             && self.edited.is_none()
             && self.new_pages.len() < PROTECT_PAGES
+            && !self.painted.as_ref().is_some_and(|p| p())
             && !self
                 .cancel
                 .as_ref()
@@ -3626,6 +3684,10 @@ pub struct Session {
     preempt: Option<Preempt>,
     /// `set_cancel`.
     cancel: Option<Preempt>,
+    /// `set_painted`.
+    painted: Option<Painted>,
+    /// `set_protect_edit` (default on).
+    protect_edit: bool,
     /// `set_on_continue`.
     on_continue: Option<std::rc::Rc<dyn Fn(usize)>>,
     /// The heartbeat every run reports to (`set_progress`).
@@ -3691,9 +3753,6 @@ pub struct Session {
     /// `\begin{document}`'s end, as beamer's `pdftitle` does, fails them
     /// all; every [`PRE_PATCH_RETRY`]th keystroke tries again).
     pre_patch_miss: Option<(i32, u32)>,
-    /// The last compile's first pass was stopped by newer work before it
-    /// shipped a changed page: the next one is protected (`Obs::protect_edit`).
-    starved: bool,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
     /// The last lookup of the journal whose answer changed, as `changes`
@@ -3814,6 +3873,8 @@ impl Session {
             defpatch: HashMap::new(),
             preempt: None,
             cancel: None,
+            painted: None,
+            protect_edit: true,
             on_continue: None,
             progress: None,
             last_restart: None,
@@ -3832,7 +3893,6 @@ impl Session {
             stale_midline: vec![],
             pre_bad: None,
             pre_patch_miss: None,
-            starved: false,
             lookup_dirs: vec![],
             changed_lookup_last: None,
             line_shifts: vec![],
@@ -3944,6 +4004,8 @@ impl Session {
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
             key.check(key.clock, &first_line)?;
+            // (the format a full run loads now: `Key::check_format`)
+            key.check_format()?;
             // (no checkpoint before S₀ here: a changed read at the
             // document's start refuses it, `Key::check_arm`)
             key.check_arm()
@@ -4116,6 +4178,7 @@ impl Session {
         let mut obs = self.observer(t0, base, stop_at);
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
+        obs.painted = self.painted.clone();
         let g = self.g.as_mut().unwrap();
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
@@ -4237,13 +4300,20 @@ impl Session {
         // `\end{document}`'s re-read of the `.aux` may follow)
         let aux = g.layer().aux_done.and_then(pos);
         let mut why = "no page checkpoint before the viewport".to_string();
+        // (each candidate skipped says why, the last one tried wins: what
+        // DONE's `s1_save` shows)
+        let mut kept = 0;
         for k in (S1_MIN_PAGES..=want.min(self.pages.len().saturating_sub(1))).rev() {
             let Some(id) = self.pages[k - 1].ckpt else {
                 continue;
             };
-            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a))
-                || self.ck_pages.get(&id) != Some(&k)
-            {
+            kept += 1;
+            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a)) {
+                why = format!("page {k}'s checkpoint is before the end of the .aux read");
+                continue;
+            }
+            if self.ck_pages.get(&id) != Some(&k) {
+                why = format!("page {k}'s checkpoint has another page count");
                 continue;
             }
             let reading_aux = g.record_of(id).is_ok_and(|r| {
@@ -4255,7 +4325,15 @@ impl Session {
                 why = "an .aux is being read there".into();
                 continue;
             }
-            if self.stale_midline.contains(&id) || !g.restorable(id) {
+            if self.stale_midline.contains(&id) {
+                why = format!("page {k}'s checkpoint holds a line read again");
+                continue;
+            }
+            if !g.restorable(id) {
+                why = format!(
+                    "page {k}'s checkpoint is not restorable ({})",
+                    g.unrestorable_why(id).unwrap_or_default()
+                );
                 continue;
             }
             // (L5: a state that lacks meanings its restores patch in)
@@ -4296,6 +4374,12 @@ impl Session {
             };
             // (a refusal holds for every earlier checkpoint too)
             return host::s1::prepare(g, input).map(|img| (k, img));
+        }
+        if kept == 0 {
+            why = format!(
+                "no page checkpoint of pages {S1_MIN_PAGES}..={want} is retained ({} pages)",
+                self.pages.len()
+            );
         }
         Err(why)
     }
@@ -4479,6 +4563,27 @@ impl Session {
     /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
+    }
+
+    /// Whether newer work waits for an incremental compile's first changed
+    /// page (`Obs::protect_edit`; on unless turned off). Off, a preemption
+    /// stops the run at the checkpoint it is asked at, as a cancel does:
+    /// the soundness driver's interleaved edits (`compile-interrupt`) stop
+    /// runs anywhere, before the edited page too, which a cancel still does.
+    pub fn set_protect_edit(&mut self, on: bool) {
+        self.protect_edit = on;
+    }
+
+    /// The client has been sent a page it did not hold (`p()` says so):
+    /// the protection to the first changed page (`Obs::protect_edit`) is
+    /// over. The first changed page is the one that differs from the last
+    /// complete run; the client may hold another (typing a letter and
+    /// deleting it again returns to the complete run's text, and then no
+    /// page differs from it, and the run was held for [`PROTECT_PAGES`]
+    /// pages after the page the client lacked had gone out: 190 ms on the
+    /// hosted M1 at Infinite Descent x2's late page, lane TYPING-50MS).
+    pub fn set_painted(&mut self, p: Option<Painted>) {
+        self.painted = p;
     }
 
     /// The client cancelled the compile (`c(pass, pages)` says so): a run
@@ -4993,7 +5098,8 @@ impl Session {
         // counts none: that one is the edit's, which moves the retention
         // cursor, holds segment checkpoints, opens BOX-MEMO's recording
         // window until a changed page -- none, here: all 880 pages of
-        // *Infinite Descent ×2*'s fill -- and decides `starved`)
+        // *Infinite Descent ×2*'s fill -- and is protected from newer work
+        // until one ships: `Obs::protect_edit`)
         self.pass = rep.passes.max(1) + 1;
         let p = self.compile_pass(Instant::now(), None);
         self.s1_filling = false;
@@ -5167,16 +5273,15 @@ impl Session {
                 aux_point,
                 s1_open: self.s1_open,
             });
-        if self.paused.is_some() {
-            // A new compile abandons the paused run: its later pages are
-            // redone by this one.
-            self.paused = None;
-            return self.cold(
-                t0,
-                stop_at,
-                Some("a compile arrived while one was paused".into()),
-            );
-        }
+        // No run is paused here: `compile` continues, settles or abandons a
+        // paused run before its first pass (each clears `paused`, or
+        // returns), and `more_passes` runs a pass only after one that did
+        // not pause (`paused` is set only with the report's `paused`, in
+        // `after_run`, and the loop returns on it). (A cold run for "a
+        // compile arrived while one was paused" stood here; no test ever
+        // reached it, lane TEST-GAPS. The paused-run tests check this in
+        // debug builds.)
+        debug_assert!(self.paused.is_none(), "a pass began with a run paused");
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
         }
@@ -6077,9 +6182,15 @@ impl Session {
             return Ok(());
         };
         let n = g.record_of(s0.id)?.reads.2.min(j.outputs.len());
+        if n == 0 {
+            return Ok(());
+        }
+        // (each read's key once: a book's journal lists thousands of reads,
+        // and the preamble writes a few dozen files, lane FIND-PHASE)
+        let read: std::collections::HashSet<String> =
+            j.files.iter().map(|f| system::out_key(&f.path)).collect();
         for o in &j.outputs[..n] {
-            let k = system::out_key(o);
-            if j.files.iter().any(|f| system::out_key(&f.path) == k) {
+            if read.contains(&system::out_key(o)) {
                 if let Some(why) = system::outside_change(o) {
                     return Err(why);
                 }
@@ -6336,6 +6447,94 @@ impl Session {
             );
         }
         Some(ids[a])
+    }
+
+    /// #1896: a revalidation from `p0` held at `P1` with the edits' line
+    /// shifts `shifts` (`Obs::probe_shifts`), and the run restarts at `p2`.
+    /// The old run's checkpoints after `p0` up to `p2` are now this run's,
+    /// but they number lines as the old run did: an earlier opening of an
+    /// edited file that the window read past a line-moving edit left lines
+    /// of it in the state (a group, a paragraph or a conditional it began),
+    /// which the new run holds moved. Each such checkpoint where every
+    /// stream on an edited file is still before its edit (as at `p2`:
+    /// `revalidate::streams_before_edits`) and where the shift can be put
+    /// right (`Shift::dirty`) owes those lines' shift (`Shift::held_only`,
+    /// applied at every restore, `p2`'s first); the others are dropped. So
+    /// are the old run's diagnostics from `p0` to `p2` moved.
+    fn held_shifts(
+        &mut self,
+        p0: CheckpointId,
+        p2: CheckpointId,
+        shifts: &[crate::lineshift::Shift],
+        edits: &[Edit],
+    ) -> Result<(), String> {
+        let held: Vec<crate::lineshift::Shift> = shifts
+            .iter()
+            .filter(|s| !s.tags.is_empty())
+            .map(|s| crate::lineshift::Shift {
+                held_only: true,
+                ..s.clone()
+            })
+            .collect();
+        if held.is_empty() {
+            return Ok(());
+        }
+        let now: HashMap<String, std::sync::Arc<Vec<u8>>> = self
+            .journal
+            .as_ref()
+            .map(|j| {
+                edits
+                    .iter()
+                    .filter_map(|e| {
+                        let f = j
+                            .files
+                            .iter()
+                            .find(|f| f.path == e.path && f.content.is_some())?;
+                        Some((e.path.clone(), f.content.clone()?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let chain = g.checkpoints();
+        let pos = |id: CheckpointId| chain.iter().position(|&i| i == id);
+        let (Some(a), Some(b)) = (pos(p0), pos(p2)) else {
+            return Err("a checkpoint of the window went".into());
+        };
+        if b <= a {
+            return Err("P2 is not after P0".into());
+        }
+        let (n0, n2) = (g.record_of(p0)?.notes, g.record_of(p2)?.notes);
+        let step = Step {
+            threshold: 0,
+            delta: 0,
+            overrides: vec![],
+            lines: held.clone(),
+        };
+        let mut gone = std::collections::HashSet::new();
+        for &id in &chain[a + 1..=b] {
+            let rec = g.record_of(id)?;
+            let ok = crate::revalidate::streams_before_edits(&rec, edits, |p| now.get(p).cloned())
+                && !shifts.iter().any(|s| s.dirty(&rec.lines));
+            if ok {
+                self.reloc.entry(id).or_default().push(&step);
+            } else if id == p2 {
+                return Err("P2's lines cannot be put right".into());
+            } else {
+                gone.insert(id);
+            }
+        }
+        if !gone.is_empty() {
+            if self.opts.debug {
+                eprintln!(
+                    "[incr] {} old checkpoints of the window dropped: lines the shift cannot correct",
+                    gone.len()
+                );
+            }
+            g.retain_checkpoints(&|i| !gone.contains(&i));
+        }
+        crate::diag::move_lines_in(n0, n2, &held);
+        Ok(())
     }
 
     /// READ-REVALIDATE (`crate::revalidate`): for the restart point `p0`,
@@ -6647,6 +6846,7 @@ impl Session {
             dormant_off: false,
             probe: None,
             probe_result: None,
+            probe_shifts: vec![],
             pre_patch: None,
             pre_patch_result: None,
             budget: self.opts.budget,
@@ -6668,6 +6868,7 @@ impl Session {
             patched: self.defpatch.keys().copied().collect(),
             preempt: None,
             cancel: None,
+            painted: None,
             progress: self.progress.clone(),
             pass: self.pass,
             preempted: false,
@@ -6765,6 +6966,7 @@ impl Session {
         // S₀ and the checkpoints it took with it.
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
+        obs.painted = self.painted.clone();
         obs.preempt_after_s0 = true;
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
@@ -6912,7 +7114,16 @@ impl Session {
         // Now that the restore holds the old run's output: the files a
         // settled run truncated after `r` as the last complete run left
         // them, then the fixed inputs as the run they stand for read them.
-        put_back(self.baseline.iter().filter(|b| b.at >= rec.opens))?;
+        // A file opened for output before `r` too (written, closed and read
+        // back again and again: fancyvrb's VerbatimOut, beamer's `.vrb`)
+        // holds its own instance at `r`, which the restore put back
+        // (`system::instances_at`); the last complete run's content is a
+        // later instance (#2148: the rest of a read open at `r` found it).
+        put_back(
+            self.baseline
+                .iter()
+                .filter(|b| b.at >= rec.opens && !system::opened_before(rec.opens, &b.path)),
+        )?;
         for (p, c) in &fixed_writes {
             std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
             // (the run's own output again, not another program's)
@@ -7053,6 +7264,7 @@ impl Session {
             .old_pages
             .iter()
             .filter_map(|p| p.ckpt)
+            .chain(probe.as_ref().map(|p| p.p1))
             .filter_map(|c| {
                 let v = &self.reloc.get(&c)?.lines;
                 (!v.is_empty()).then(|| (c, v.clone()))
@@ -7077,8 +7289,9 @@ impl Session {
         obs.keep_r = Some(r);
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
+        obs.painted = self.painted.clone();
         obs.first_incremental = self.pass == 1;
-        obs.protect_edit = self.pass == 1 && self.starved;
+        obs.protect_edit = self.pass == 1 && self.protect_edit;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
@@ -7218,9 +7431,13 @@ impl Session {
                     (true, Some(Ok(p2))) => {
                         // what the window read left nothing behind: the old
                         // run is this one's up to `p2` (`crate::revalidate`)
+                        let held = std::mem::take(&mut o.probe_shifts);
                         drop(o);
                         let (edits, changed, shifts, fixed_writes) = again.ok_or("no edits")?;
                         if let Err(e) = g.reattach_pending() {
+                            return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
+                        }
+                        if let Err(e) = self.held_shifts(r, p2, &held, &edits) {
                             return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
                         }
                         crate::os::phase_mark('j');
@@ -7518,6 +7735,7 @@ impl Session {
         {
             o.preempt = self.preempt.clone();
             o.cancel = self.cancel.clone();
+            o.painted = self.painted.clone();
             // (a stop the stopped run took the news for is not this one's)
             o.held_stop = false;
             match &again {
@@ -7557,15 +7775,6 @@ impl Session {
         let obs: Box<Obs> = obs
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
             .ok_or("the run lost its observer")?;
-        if obs.first_incremental && obs.edited.is_none() {
-            // (decided once, at its first stop: a protected run ships its
-            // changed page before newer work stops it)
-            // A protected run is never followed by another: at most every
-            // other compile is held (`Obs::protect_edit`).
-            self.starved = status == STOPPED && obs.preempted && !obs.protect_edit;
-        } else if obs.first_incremental {
-            self.starved = false;
-        }
         rep.tests += obs.tests;
         rep.test_s += obs.test_s;
         rep.page_times.extend(obs.page_times.iter().copied());
@@ -9197,5 +9406,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `read_through` (review of #1551): a reader at the old end of a file
+    /// whose last byte was not `\n`, or just after an `\r`, has seen one
+    /// byte more (text appended there extends its line); elsewhere, the
+    /// bytes before its offset.
+    #[test]
+    fn read_through_counts_the_byte_a_line_end_peeked_at() {
+        use super::{read_through, Edit};
+        let e = |prefix, old_mid, new_mid| Edit {
+            path: "t.tex".into(),
+            prefix,
+            old_mid,
+            new_mid,
+        };
+        // "ab\ncd" with "EF" appended: a reader at the old end
+        let now = b"ab\ncdEF";
+        assert_eq!(read_through(5, &e(5, 0, 2), Some(now)), 6);
+        assert_eq!(read_through(5, &e(5, 0, 2), None), 6);
+        // after a "\n" before the end: what is before it
+        assert_eq!(read_through(3, &e(5, 0, 2), Some(now)), 3);
+        // "ab\ncd\n" with "EF" appended: the last line had ended
+        assert_eq!(read_through(6, &e(6, 0, 2), Some(b"ab\ncd\nEF")), 6);
+        // just after an "\r": the byte after it was peeked at
+        assert_eq!(read_through(3, &e(4, 1, 1), Some(b"ab\rcX")), 4);
+        // past the change: as it is
+        assert_eq!(read_through(9, &e(4, 1, 1), Some(b"ab\rcX")), 9);
     }
 }
