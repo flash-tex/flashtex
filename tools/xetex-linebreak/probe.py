@@ -10,7 +10,8 @@ Each word is one paragraph of Latin Modern Roman with \\hyphenchar -1 and no
 spaces, so the whole word reaches ICU's line breaker as one text; the
 offsets are where \\showbox shows \\XeTeXlinebreakpenalty between its pieces.
 The breaks depend on ICU, not on the font (a missing glyph changes nothing).
-The words: one per locale and script, then 240 random ones (seed 20261012).
+The words: one per locale and script, then 240 random ones (seed 20261012),
+then Thai that is not made of whole dictionary words (thai_words).
 """
 import argparse
 import os
@@ -68,6 +69,43 @@ def random_words():
     return out
 
 
+# Thai that is not made of whole dictionary words (issue #2432): fragments,
+# misspellings, numbers and punctuation, PAIYANNOI and MAIYAMOK, then 120
+# random strings of Thai letters, vowels and marks (seed 20261115), which
+# ICU's ThaiBreakEngine (dictbe.cpp) cuts by its look-ahead, combining and
+# resynchronising rules.
+THAI_FIXED = [
+    "สวัสด", "แกรมส", "การเขียนโปรแกรมสวัสดีครับ", "การเขียนโปรแกรมสวัส",
+    "ราคา100บาทต่อคน", "สวัสดี,ครับ", "ภาษาไทย(ไทย)", "กขคงจฉชซ", "ฮฮฮฮฮฮ",
+    "สวัสดีกขคครับ", "ไทยๆๆ", "กรุงเทพฯ", "กรุงเทพฯมหานคร", "ฯลฯๆ", "เด็กๆๆเล่น",
+    "ก่ก่ก่ก่ก่", "ปปปปภาษา", "ภาษาาาไทย", "คอมพิวเตอร์โน้ตบุ๊ก", "นายกรัฐมนตรีคนใหม่",
+    "เขาไปโรงเรียนแล้วฯ", "ฯเขาไป", "ดีๆดี", "สวัสดีชาวโลกกกก", "หนังสือพิมพ์รายวัน",
+    "ข้าวผัดกุ้งสามจาน", "ภาษาไทยเป็นภาษาวรรณยุกต์", "เกเรเกเรเกเร", "ๆๆๆๆ", "กๆ",
+]
+THAI_POOL = [chr(c) for c in list(range(0x0E01, 0x0E2F)) + [0x0E30, 0x0E31, 0x0E32, 0x0E33,
+             0x0E34, 0x0E35, 0x0E36, 0x0E37, 0x0E38, 0x0E39, 0x0E40, 0x0E41, 0x0E42, 0x0E43,
+             0x0E44, 0x0E47, 0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E2F, 0x0E46]]
+THAI_WORDS = ["ภาษา", "ไทย", "เป็น", "การ", "เขียน", "โปรแกรม", "สวัสดี", "ครับ", "ประเทศ",
+              "มี", "ประชากร", "เมือง", "หลวง", "ของ", "คน", "กิน", "ข้าว", "น้ำ", "ที่", "ไม่"]
+
+
+def thai_words():
+    rng = random.Random(20261115)
+    out = [("th", w) for w in THAI_FIXED]
+    for k in range(120):
+        if k % 2:
+            s = "".join(rng.choice(THAI_POOL) for _ in range(rng.randint(5, 16)))
+        else:
+            # words with a letter dropped, doubled or inserted
+            s = "".join(rng.choice(THAI_WORDS) for _ in range(rng.randint(2, 5)))
+            i = rng.randrange(len(s))
+            op = rng.randrange(3)
+            s = (s[:i] + s[i + 1:] if op == 0 else s[:i] + s[i] + s[i:] if op == 1
+                 else s[:i] + rng.choice(THAI_POOL) + s[i:])
+        out.append(("th", s))
+    return out
+
+
 def tex_escape(s):
     return "".join("\\char\"%X " % ord(c) if c in "{}\\#%$&^_~<>[]" else c for c in s)
 
@@ -103,7 +141,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--xetex", default="xetex")
     a = ap.parse_args()
-    cases = FIXED + random_words()
+    cases = FIXED + random_words() + thai_words()
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, "p.tex"), "w", encoding="utf-8").write(tex_source(cases))
         subprocess.run([a.xetex, "-ini", "-etex", "-no-pdf", "-interaction=nonstopmode", "p.tex"],
@@ -117,8 +155,9 @@ def main():
     print("# %s: \\XeTeXlinebreaklocale LOCALE, then TEXT" % ver.split(" (INITEX)")[0])
     print("# as one native word in a paragraph; the offsets (UTF-16) at which its")
     print("# \\showbox puts \\XeTeXlinebreakpenalty, and the end. Written by")
-    print("# tools/xetex-linebreak/probe.py: one word per locale and script, then 240")
-    print("# random ones. LOCALE<TAB>TEXT (\\uXXXX escapes)<TAB>OFFSETS")
+    print("# tools/xetex-linebreak/probe.py: one word per locale and script, 240")
+    print("# random ones, then Thai that is not whole dictionary words.")
+    print("# LOCALE<TAB>TEXT (\\uXXXX escapes)<TAB>OFFSETS")
     for i, (loc, s) in enumerate(cases):
         p = pieces.get(i, [])
         if "".join(p) != s:

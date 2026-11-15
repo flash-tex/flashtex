@@ -24,11 +24,12 @@
 //!
 //! **Dictionaries.** The rules leave the Southeast Asian scripts (class SA)
 //! to ICU's dictionary engines (dictbe.cpp): a run of Thai, Lao, Myanmar or
-//! Khmer is cut into words. Those engines are not ported: a run is cut by
-//! ICU4X's dictionary segmenter (`icu_segmenter` 2.1, whose dictionaries
-//! are exported from ICU 78's), with ICU's minimum run lengths and the Thai
-//! engine's MAI YAMOK rule (measured: without it, a break before `ๆ`); the
-//! rest of those engines' heuristics are not ported. An SA run of
+//! Khmer is cut into words. The Thai engine is ported (dictbe.rs:
+//! `ThaiBreakEngine` over ICU's own `thaidict.dict`). The Lao, Khmer and
+//! Myanmar engines are not: such a run is cut by ICU4X's dictionary
+//! segmenter (`icu_segmenter` 2.1, whose dictionaries are exported from
+//! ICU 78's), with ICU's minimum run length; the rest of those engines'
+//! heuristics are not ported. An SA run of
 //! another script gets no breaks, as ICU's `UnhandledEngine` gives it none.
 //! Which characters make one run comes from Unicode 17's UCD
 //! (`linebreak_sa.rs`, tools/xetex-linebreak/gen_sa_runs.py).
@@ -41,6 +42,9 @@ use icu_segmenter::LineSegmenter;
 
 #[path = "linebreak_sa.rs"]
 mod sa;
+
+#[path = "dictbe.rs"]
+mod dictbe;
 
 /// ICU's compiled line rules (third_party/icu/brkitr), chosen by the locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,9 +398,11 @@ impl<'a> Rbbi<'a> {
                     break;
                 }
             }
-            if let Some(script) = script.filter(|&s| s != SaScript::Other) {
+            if script == Some(SaScript::Thai) {
+                dictbe::thai_divide_up_dictionary_range(text, run_start, i, &mut breaks);
+            } else if script.is_some_and(|s| s != SaScript::Other) {
                 breaks.extend(
-                    dictionary_breaks(script, &text[run_start..i])
+                    dictionary_breaks(&text[run_start..i])
                         .into_iter()
                         .map(|b| run_start + b),
                 );
@@ -427,32 +433,17 @@ fn sa_script(c: i32) -> Option<SaScript> {
         .map(|&(_, _, s)| s)
 }
 
-/// The word boundaries inside a run of one dictionary script, after its
+/// The word boundaries inside a run of Lao, Khmer or Myanmar, after its
 /// start and before its end (`divideUpDictionaryRange`), from ICU4X's
-/// dictionary segmenter. ICU's engines find none in a run too short for
-/// two words: Thai one of at most 4 code points (`THAI_MIN_WORD_SPAN`,
-/// counted by `utext_moveIndex32`), the others one of under 4 code units.
-fn dictionary_breaks(script: SaScript, run: &[u16]) -> Vec<usize> {
-    let too_short = match script {
-        SaScript::Thai => {
-            let mut i = 0;
-            for _ in 0..4 {
-                next32(run, &mut i);
-            }
-            i >= run.len()
-        }
-        _ => run.len() < 4,
-    };
-    if too_short {
+/// dictionary segmenter. ICU's engines find none in a run of under 4 code
+/// units. (Thai has the port of ICU's own engine, dictbe.rs.)
+fn dictionary_breaks(run: &[u16]) -> Vec<usize> {
+    if run.len() < 4 {
         return vec![];
     }
     LineSegmenter::new_dictionary(LineBreakOptions::default())
         .segment_utf16(run)
         .filter(|&b| b > 0 && b < run.len())
-        // ThaiBreakEngine's suffix rule: MAI YAMOK (U+0E46), where no
-        // dictionary word starts, joins the word before it unless that
-        // ends in MAI YAMOK too. (No Thai word starts with it.)
-        .filter(|&b| !(script == SaScript::Thai && run[b] == 0x0E46 && run[b - 1] != 0x0E46))
         .collect()
 }
 

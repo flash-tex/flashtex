@@ -1,7 +1,7 @@
 # `third_party/icu`
 
-Two parts of TeX Live 2026's ICU, **unmodified**, for the XeTeX port
-(`crates/flashtex-xetex`, `docs/design/xetex/PLAN.md` §3.1). Neither is
+Three parts of TeX Live 2026's ICU, **unmodified**, for the XeTeX port
+(`crates/flashtex-xetex`, `docs/design/xetex/PLAN.md` §3.1). None is
 compiled or linked:
 
 - **The line-break rules** (`brkitr/`): the compiled rule-based break
@@ -9,8 +9,13 @@ compiled or linked:
   `\XeTeXlinebreaklocale` (XeTeX_ext.c's `linebreakstart`,
   `crates/flashtex-xetex/src/native/linebreak.rs`, which runs them as ICU's
   `RuleBasedBreakIterator::handleNext` does). ICU's break-iterator code is
-  not vendored, and the Southeast Asian dictionaries are ICU4X's
+  not vendored. Of the Southeast Asian dictionaries, `thaidict.dict` is
+  ICU's own (below); Lao, Khmer and Myanmar are still ICU4X's
   (`icu_segmenter`, see linebreak.rs).
+- **The Thai break engine's sources and dictionary** (`icu-src/`,
+  `brkitr/thaidict.dict`): the source of record for
+  `crates/flashtex-xetex/src/native/dictbe.rs`, which ports
+  `ThaiBreakEngine` (issue #2432; see "The Thai dictionary and break engine" below).
 - **The bidirectional algorithm's sources** (`icu-src/`): the source of
   record for the Rust port in `crates/flashtex-xetex/src/native/ubidi/`.
   XeTeX's `measure_native_node` (`XeTeX_ext.c`) splits each native word
@@ -29,7 +34,7 @@ compiled or linked:
 | Upstream | TeX Live source tree, GitHub mirror <https://github.com/TeX-Live/texlive-source> |
 | Tag | `tags/texlive-2026.1` ("texlive-2026.1 tag based on r78399") |
 | Commit | `6a300188053b8f2ded89dbd52293732a706b9c0e` (the same pin as `third_party/xetex`, `third_party/harfbuzz`, `third_party/teckit`) |
-| Path | `libs/icu/icu-src/source/data/in/icudt78l.dat` (sha256 `d7da8e2e31312a3cb574d1a0ebd7b187daa988e15a9b70b78eb68b213a590608`), items `brkitr/line*.brk`; `libs/icu/icu-src/source/common/` (the bidi files below); `libs/icu/version.ac` |
+| Path | `libs/icu/icu-src/source/data/in/icudt78l.dat` (sha256 `d7da8e2e31312a3cb574d1a0ebd7b187daa988e15a9b70b78eb68b213a590608`), items `brkitr/line*.brk` and `brkitr/thaidict.dict`; `libs/icu/icu-src/source/common/` (the bidi files below); `libs/icu/version.ac` |
 | Version | 78.2 (`libs/icu/version.ac`; `xetex --version`: "Compiled with ICU version 78.2"; `U_ICU_VERSION` in `icu-src/source/common/unicode/uvernum.h`), Unicode 17 bidi data (`ubidi_props_dataVersion` 0x11) |
 | Fetched | 2026-10-12 |
 
@@ -57,6 +62,22 @@ dictionary.
 | `line_normal_cj.brk` | `line_normal_cj.txt` | `zh`, `ja`, `ko` with `@lb=normal` |
 | `line_loose.brk` | `line_loose.txt` | others with `@lb=loose` |
 | `line_loose_cj.brk` | `line_loose_cj.txt` | `zh`, `ja`, `ko` with `@lb=loose` |
+
+## The Thai dictionary and break engine
+
+`brkitr/thaidict.dict` is the item of that name in `icudt78l.dat`
+(126144 bytes), extracted by the data file's table of contents as
+`icupkg -x` does (the same extraction reproduces `brkitr/line.brk`
+byte for byte). It is a `Dict` data file: a `BytesTrie` of ICU's Thai
+word list with the offset transform `0x1000e00` (U+0E00 maps to byte 0).
+
+`icu-src/source/common/` also holds the files the engine port follows:
+
+| file | contents |
+|---|---|
+| `dictbe.cpp`, `dictbe.h` | `ThaiBreakEngine::divideUpDictionaryRange`, `PossibleWord`, the engine's character sets |
+| `dictionarydata.cpp`, `dictionarydata.h` | `BytesDictionaryMatcher::matches` and `transform`, the data file's indexes |
+| `bytestrie.cpp`, `unicode/bytestrie.h` | the trie walk `first`/`next` that `matches` uses |
 
 ## The bidi sources
 
