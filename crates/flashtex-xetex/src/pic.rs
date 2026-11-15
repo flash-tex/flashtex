@@ -1023,4 +1023,32 @@ mod tests {
         b.push(0);
         assert_eq!(bmp_size(&b), Bmp::UnknownHeader);
     }
+
+    /// flash-tex/flashtex#2494: XeTeX reads a PDF picture through pplib,
+    /// which refuses files that xpdf repairs. The files are lockstep case
+    /// p007-pdffile-damaged's (tools/xetex-lockstep/pictures), where TeX
+    /// Live's XeTeX 0.999998 reports `\XeTeXpdfpagecount` 0 and "Unable to
+    /// load picture or PDF file" for each damaged one, and 1 page and a
+    /// box of 281.05pt x 180.675pt for the sound one.
+    #[test]
+    fn a_pdf_file_pplib_cannot_load_is_no_picture() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/xetex-lockstep/pictures");
+        let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        assert_eq!(pdf_pages(&path("p-sound.pdf")), 1);
+        let [_, _, wd, ht] = pic_bounds(&path("p-sound.pdf"), 1, 1).unwrap();
+        let k = 72.27 / 72.0;
+        assert_eq!((wd, ht), (k * 280.0, k * 180.0));
+        for name in [
+            "p-badstartxref.pdf",
+            "p-nostartxref.pdf",
+            "p-junkhead.pdf",
+            "p-trailing.pdf",
+        ] {
+            assert_eq!(pdf_pages(&path(name)), 0, "{name}");
+            for pdf_box in 1..=5 {
+                assert_eq!(pic_bounds(&path(name), pdf_box, 1), None, "{name}");
+            }
+        }
+    }
 }
