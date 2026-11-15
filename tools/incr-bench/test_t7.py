@@ -241,7 +241,8 @@ class HarnessErrorTests(unittest.TestCase):
             t7.Host, t7.keys, t7.IB = self.FakeHost, keys, d
             try:
                 a = types.SimpleNamespace(order='fixed', seed=7, phases=t7.PHASE_NAMES, preamble=2,
-                                          typing_keys=4, keys=4, gap_ms=0, timeout=10, host_args='', reopen=3)
+                                          typing_keys=4, keys=4, gap_ms=0, timeout=10, host_args='', reopen=3,
+                                          open_named=False)
                 res = t7.run_doc(a, f'{d}/eng', 'doc-a', f'{d}/out', 0)
             finally:
                 t7.Host, t7.keys, t7.IB = saved
