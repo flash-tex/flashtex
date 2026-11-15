@@ -430,10 +430,12 @@ impl Globals {
     }
 
     /// `find_input_file` (texmfmp.c): the file named by string `s`, quotes
-    /// removed, found as a TeX input.
+    /// removed, found as a TeX input. `makecfilename` works on the C string
+    /// `makecstring` makes, so the name ends at a NUL (`\pdffilesize{b^^@zz}`
+    /// is `b.tex`'s size).
     pub(crate) fn find_input_file(&mut self, s: i32) -> Option<String> {
         let name: Vec<u8> = self
-            .str_bytes(s)
+            .c_string(s)
             .into_iter()
             .filter(|&c| c != b'"')
             .collect();

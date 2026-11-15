@@ -651,10 +651,13 @@ impl Globals {
     }
 
     /// `find_input_file` (texmfmp.c, XeTeX's): string `s` as UTF-8, looked
-    /// for in `-output-directory`, then as a TeX input.
+    /// for in `-output-directory`, then as a TeX input. `gettexstring` makes
+    /// a C string, so the name ends at a NUL (`\filesize{b^^@zz}` is
+    /// `b.tex`'s size).
     fn find_input_file(&mut self, s: i32) -> Option<String> {
         let name = crate::system::tex_string_utf8(self, s);
-        let name = String::from_utf8_lossy(&name).into_owned();
+        let name = name.split(|&b| b == 0).next().unwrap_or_default();
+        let name = String::from_utf8_lossy(name).into_owned();
         flashtex_engine::system::find_input(&name)
     }
 

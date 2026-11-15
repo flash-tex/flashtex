@@ -4,7 +4,10 @@
 //! x86_64-linux alike): `\openin` of `zz^^@b.tex` finds nothing, of
 //! `b.tex^^@zz` or `b^^@.tex` opens `b.tex`; `\input b^^@zz` reads `b.tex`;
 //! `\openout3={w^^@x.tex}` writes a file `w` and logs the whole name (in
-//! INITEX `\newlinechar` is 0, so `^^@` prints as a line end). Found by lane
+//! INITEX `\newlinechar` is 0, so `^^@` prints as a line end);
+//! `\pdffilesize{b^^@zz}` is `b.tex`'s size (`makecfilename`). The C string
+//! keeps a name's spaces: `\openin1={ b}` and `{b }` find nothing, and
+//! `\openout2={ v}` writes ` v.tex`. Found by lane
 //! PARITY-HUNT in TeX Live's ftc-notebook example (xelatex, a broken tabu
 //! hands `\includegraphics` a name with NULs), issue #2520. No TeX
 //! installation needed: the expected log is pdfTeX's for the same input.
@@ -21,6 +24,11 @@ const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\catcode`\\^
 \\input b^^@zz \\message{[G]}
 \\immediate\\openout3={w^^@x.tex}\\immediate\\write3{w}\\immediate\\closeout3
 \\immediate\\openin1={w} \\ifeof1 \\message{[H eof]}\\else\\message{[H open]}\\fi \\closein1
+\\message{[1 \\pdffilesize{b^^@zz}]}
+\\message{[2 \\pdfmdfivesum file {b.tex^^@zz}]}
+\\immediate\\openin1={ b} \\ifeof1 \\message{[3 eof]}\\else\\message{[3 open]}\\fi \\closein1
+\\immediate\\openin1={b } \\ifeof1 \\message{[4 eof]}\\else\\message{[4 open]}\\fi \\closein1
+\\immediate\\openout2={ v}\\immediate\\write2{v}\\immediate\\closeout2
 \\end
 ";
 
@@ -31,7 +39,11 @@ const PDFTEX_LOG: &str = "**t.tex
 \\openout3 = `w
 x.tex'.
 
- [H open] )
+ [H open] [1 17]
+[2 D6A80E99FC0BE1958B19AF111B299EE7] [3 eof] [4 eof]
+\\openout2 = `\" v.tex\"'.
+
+ )
 No pages of output.
 ";
 
@@ -69,4 +81,5 @@ fn a_nul_ends_the_file_name_the_system_sees() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert_eq!(std::fs::read(d.join("w")).ok().as_deref(), Some(&b"w\n"[..]));
+    assert_eq!(std::fs::read(d.join(" v.tex")).ok().as_deref(), Some(&b"v\n"[..]));
 }
