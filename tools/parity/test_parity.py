@@ -2881,61 +2881,6 @@ while True:
 
 
 @unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
-class PT2OracleUnreadableIsUnmeasured(unittest.TestCase):
-    """An oracle PDF that qpdf cannot read is P-T2 not measured (a harness error: the tier reads
-    partial), not the engine failing P-T2. On the hosted board of 2026-11-13 to 11-15 qpdf was
-    refused every oracle PDF and 4110 documents "failed" (p5-scoreboard 43723688890)."""
-
-    PDF = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
-           b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
-           b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
-
-    def setUp(self):
-        self.d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.d, True)
-        self.good, self.bad = os.path.join(self.d, "good.pdf"), os.path.join(self.d, "bad.pdf")
-        with open(self.good, "wb") as f:
-            f.write(self.PDF)
-        with open(self.bad, "wb") as f:
-            f.write(b"not a PDF\n")
-        self.work = os.path.join(self.d, "pt2")
-
-    def test_an_unreadable_oracle_pdf_is_not_measured(self):
-        with self.assertRaises(tiers.PT2OracleUnreadable) as c:
-            tiers.compare_pt2(self.bad, self.good, self.work)
-        self.assertIn("P-T2 not measured", str(c.exception))
-        self.assertIn("qpdf exit", str(c.exception))
-        self.assertFalse(issubclass(tiers.PT2OracleUnreadable, tiers.pdftext.PdfError))
-        with self.assertRaises(tiers.PT2OracleUnreadable):  # no such file: qpdf's error, or the link's
-            tiers.compare_pt2(os.path.join(self.d, "none.pdf"), self.good, self.work)
-
-    def test_an_unreadable_candidate_pdf_still_fails(self):
-        rec = tiers.compare_pt2(self.good, self.bad, self.work)
-        self.assertIs(rec["ok"], False)
-        self.assertTrue(rec["why"].startswith("candidate PDF: qpdf exit"), rec)
-        self.assertTrue(tiers.compare_pt2(self.good, self.good, self.work)["ok"])
-
-    def test_the_document_is_recorded_as_a_harness_error(self):
-        # what parity.score_safe makes of the exception: excluded under the key the board
-        # counts as unmeasured (scoreboard.UNMEASURED_KEYS), with no level and no P-T verdict
-        import scoreboard
-        doc = {"id": "x", "tier": "fixtures"}
-
-        def score(_doc, _cfg):
-            return tiers.compare_pt2(self.bad, self.good, self.work)
-        old = parity.score
-        parity.score = score
-        try:
-            rec = parity.score_safe(doc, {})
-        finally:
-            parity.score = old
-        self.assertIsNone(rec["level"])
-        self.assertEqual(rec["excluded"].split(":", 1)[0], "harness error")
-        self.assertIn("harness error", scoreboard.UNMEASURED_KEYS)
-        self.assertIn("P-T2 not measured", rec["excluded"])
-
-
-@unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
 class PT2SizeCap(unittest.TestCase):
     """P5-BOARD-T4: a PDF whose qdf copy is over the cap is a harness error (unmeasured),
     never a P-T2 pass or fail, and qpdf stops writing at the cap (T4 2511.15561v1: 3.0 GB)."""
@@ -3036,6 +2981,61 @@ class PT2SizeCap(unittest.TestCase):
         cleared = bytes([0xAA, 0b10000000] * 600)
         self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(cleared))
         self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(g.stream(nums[0])))
+
+
+@unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
+class PT2OracleUnreadableIsUnmeasured(unittest.TestCase):
+    """An oracle PDF that qpdf cannot read is P-T2 not measured (a harness error: the tier reads
+    partial), not the engine failing P-T2. On the hosted board of 2026-11-13 to 11-15 qpdf was
+    refused every oracle PDF and 4110 documents "failed" (p5-scoreboard 43723688890)."""
+
+    PDF = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
+           b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
+           b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.good, self.bad = os.path.join(self.d, "good.pdf"), os.path.join(self.d, "bad.pdf")
+        with open(self.good, "wb") as f:
+            f.write(self.PDF)
+        with open(self.bad, "wb") as f:
+            f.write(b"not a PDF\n")
+        self.work = os.path.join(self.d, "pt2")
+
+    def test_an_unreadable_oracle_pdf_is_not_measured(self):
+        with self.assertRaises(tiers.PT2OracleUnreadable) as c:
+            tiers.compare_pt2(self.bad, self.good, self.work)
+        self.assertIn("P-T2 not measured", str(c.exception))
+        self.assertIn("qpdf exit", str(c.exception))
+        self.assertFalse(issubclass(tiers.PT2OracleUnreadable, tiers.pdftext.PdfError))
+        with self.assertRaises(tiers.PT2OracleUnreadable):  # no such file: qpdf's error, or the link's
+            tiers.compare_pt2(os.path.join(self.d, "none.pdf"), self.good, self.work)
+
+    def test_an_unreadable_candidate_pdf_still_fails(self):
+        rec = tiers.compare_pt2(self.good, self.bad, self.work)
+        self.assertIs(rec["ok"], False)
+        self.assertTrue(rec["why"].startswith("candidate PDF: qpdf exit"), rec)
+        self.assertTrue(tiers.compare_pt2(self.good, self.good, self.work)["ok"])
+
+    def test_the_document_is_recorded_as_a_harness_error(self):
+        # what parity.score_safe makes of the exception: excluded under the key the board
+        # counts as unmeasured (scoreboard.UNMEASURED_KEYS), with no level and no P-T verdict
+        import scoreboard
+        doc = {"id": "x", "tier": "fixtures"}
+
+        def score(_doc, _cfg):
+            return tiers.compare_pt2(self.bad, self.good, self.work)
+        old = parity.score
+        parity.score = score
+        try:
+            rec = parity.score_safe(doc, {})
+        finally:
+            parity.score = old
+        self.assertIsNone(rec["level"])
+        self.assertEqual(rec["excluded"].split(":", 1)[0], "harness error")
+        self.assertIn("harness error", scoreboard.UNMEASURED_KEYS)
+        self.assertIn("P-T2 not measured", rec["excluded"])
 
 
 class RowPadding(unittest.TestCase):
