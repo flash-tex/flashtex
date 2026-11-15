@@ -455,11 +455,12 @@ fn a_replay_raises_the_stack_statistics_as_its_normal_path() {
     assert!(stat(&s, "replays") >= 2, "{s}");
 
     // A call from input level 0 (the command line) that pushes nothing
-    // but its body leaves the lowered mark at 0, which is still a push at
-    // the call's level: replayed one level above every earlier push (in
-    // `\s`, 5000 levels deep), it raises the mark by that level
+    // but its body (no macro, and no `back_input`: a `\let`) leaves the
+    // lowered mark at 0, which is still a push at the call's level:
+    // replayed one level above every earlier push (in `\s`, 5000 levels
+    // deep), it raises the mark by that level (`5001i`, not `5000i`)
     let src = format!(
-        "{h}\\def\\hook{{\\global\\count2=2 }}\n\
+        "{h}\\def\\hook{{\\global\\let\\x\\relax}}\n\
          \\def\\s{{\\relax\\hook\\relax}}\
          \\def\\r{{\\advance\\count1 1 \\ifnum\\count1<5000 \\expandafter\\r\\else\\expandafter\\s\\fi\\relax}}\n"
     );
