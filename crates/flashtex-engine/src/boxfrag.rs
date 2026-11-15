@@ -315,6 +315,27 @@ pub fn frag_diff(a: &Frag, b: &Frag) -> Option<String> {
     (a.fonts != b.fonts).then(|| format!("fonts {:?} / {:?}", a.fonts, b.fonts))
 }
 
+/// Whether `f` refers to nothing outside itself but the static glue
+/// specifications: no hole, no glue an `eqtb` entry, a sparse register or
+/// a font holds, no object the call made. Such a fragment rebuilds the same
+/// wherever it is made, whatever the state then (BOX-MEMO.md §16: a box
+/// left in a register, rebuilt where its assignment is replayed).
+pub fn self_contained(f: &Frag) -> bool {
+    fn list(v: &[Node]) -> bool {
+        v.iter().all(|n| match n {
+            Node::Char(_) => true,
+            Node::Hole(_) => false,
+            Node::Big { fields, .. } => fields.iter().all(|x| match &x.to {
+                Ref::Null | Ref::Toks(_) | Ref::Action(_) => true,
+                Ref::Spec(Spec::Static(_)) | Ref::Spec(Spec::Own(_)) => true,
+                Ref::Spec(_) | Ref::NewObj(_) => false,
+                Ref::List(l) => list(l),
+            }),
+        })
+    }
+    f.fonts.is_empty() && list(&f.nodes)
+}
+
 struct Ser<'a> {
     g: &'a Globals,
     holes: &'a [i32],

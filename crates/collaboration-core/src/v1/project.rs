@@ -75,9 +75,45 @@ fn pending_weight(op: &PendingOp) -> usize {
     }
 }
 
+/// A project's caps (collab-v1 §2.4, §2.6): file-map entries and stored
+/// text across all text documents. The contract's values are the default;
+/// tests use smaller ones so they need not store 64 MiB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectCaps {
+    pub max_files: usize,
+    pub max_text_bytes: usize,
+    /// How far below each cap this replica's own edits stop (§2.4a).
+    pub local_file_headroom: usize,
+    pub local_text_headroom: usize,
+}
+
+impl Default for ProjectCaps {
+    fn default() -> Self {
+        Self {
+            max_files: limits::MAX_FILES,
+            max_text_bytes: limits::MAX_PROJECT_TEXT_BYTES,
+            local_file_headroom: limits::LOCAL_FILE_HEADROOM,
+            local_text_headroom: limits::LOCAL_TEXT_HEADROOM,
+        }
+    }
+}
+
+impl ProjectCaps {
+    /// These caps with no local headroom (tests that fill to the cap locally).
+    pub fn without_headroom(max_files: usize, max_text_bytes: usize) -> Self {
+        Self {
+            max_files,
+            max_text_bytes,
+            local_file_headroom: 0,
+            local_text_headroom: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Project {
     replica: u64,
+    caps: ProjectCaps,
     files: FileMap,
     texts: BTreeMap<FileId, TextDoc>,
     /// Distinct parked operations (an exact redelivery is not parked twice).
@@ -87,9 +123,14 @@ pub struct Project {
 
 impl Project {
     pub fn new(replica: u64) -> Self {
+        Self::with_caps(replica, ProjectCaps::default())
+    }
+
+    pub fn with_caps(replica: u64, caps: ProjectCaps) -> Self {
         Self {
             replica,
-            files: FileMap::new(replica),
+            caps,
+            files: FileMap::with_caps(replica, caps.max_files, caps.local_file_headroom),
             texts: BTreeMap::new(),
             pending: Vec::new(),
             pending_bytes: 0,
@@ -111,7 +152,24 @@ impl Project {
     /// A text file's document, for local edits that need it directly
     /// (undo). Operations made through it must be broadcast like any other.
     pub fn text_mut(&mut self, file: FileId) -> Option<&mut TextDoc> {
-        self.texts.get_mut(&file)
+        self.doc_mut(file)
+    }
+
+    /// Stored text bytes across all text documents, tombstones included.
+    pub fn stored_text_bytes(&self) -> usize {
+        self.texts.values().map(TextDoc::stored_bytes).sum()
+    }
+
+    /// A document with its room under the project's text cap set.
+    fn doc_mut(&mut self, file: FileId) -> Option<&mut TextDoc> {
+        let room = self
+            .caps
+            .max_text_bytes
+            .saturating_sub(self.stored_text_bytes());
+        let headroom = self.caps.local_text_headroom;
+        let doc = self.texts.get_mut(&file)?;
+        doc.set_room(room, headroom);
+        Some(doc)
     }
 
     pub fn pending_len(&self) -> usize {
@@ -142,7 +200,7 @@ impl Project {
     }
 
     pub fn insert(&mut self, file: FileId, pos: usize, text: &str) -> Option<Section> {
-        let op = self.texts.get_mut(&file)?.insert(pos, text)?;
+        let op = self.doc_mut(file)?.insert(pos, text)?;
         Some(Section::Text(file, vec![op]))
     }
 
@@ -160,7 +218,7 @@ impl Project {
                 self.sync_text_docs(op);
                 Ok(r)
             }
-            PendingOp::Text(file, op) => match self.texts.get_mut(file) {
+            PendingOp::Text(file, op) => match self.doc_mut(*file) {
                 Some(doc) => doc.apply(op),
                 None => Err(CollabError::UnknownFile(*file)),
             },

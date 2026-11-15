@@ -1,1 +1,0 @@
-{"id":"real-1","payload":{"diagnostics":[{"message":"compile_result would be 897 bytes for 1 pages, over the 1-byte reply limit; split the project or compile fewer pages","recovery":null,"severity":"error","source":null}],"layout_capabilities":[],"pages":[],"pdf_path":null,"project_id":"p","revision":1,"status":"failed"},"protocol_version":1,"type":"compile_result"}

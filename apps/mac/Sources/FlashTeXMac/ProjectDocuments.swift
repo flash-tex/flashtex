@@ -462,7 +462,8 @@ final class ProjectDocuments {
             // `ShellModel.isDirty` compares the saved text with the *active*
             // buffer; compare it with the entry buffer whichever document is active.
             if let saved = model.savedText { return !saved.sameBytes(as: doc.text) }
-            return model.documentURL == nil && model.editorRevision > 1 && !doc.text.isEmpty
+            // A file URL with no saved text: no file holds it (`ShellModel.isDirty`).
+            return (model.documentURL != nil || model.editorRevision > 1) && !doc.text.isEmpty
         }
         guard let baseline = baselines[path] else { return false }
         return !baseline.sameBytes(as: doc.text)
@@ -1025,6 +1026,67 @@ final class ProjectDocuments {
         case .failed(let why):
             return noteSave(.failed(why))
         }
+    }
+
+    /// Resolves `path`'s on-disk conflict by writing its buffer over whatever
+    /// the file holds now (the entry's `overwriteOnDisk`, per member). Only
+    /// after an explicit user decision; never called automatically.
+    @discardableResult
+    func overwriteDocumentOnDisk(_ path: String) -> SaveOutcome {
+        prune()
+        guard path != entryPath else { return .failed("\(path) is the entry document; use Overwrite (ShellModel.overwriteOnDisk)") }
+        if let why = readOnlyNote(for: path) { return .failed(why) }
+        guard let doc = model.documents.first(where: { $0.path == path }) else { return .failed("\(path) is not open") }
+        guard let root = projectRoot else { return .failed("no project root") }
+        let url = root.appendingPathComponent(path)
+        switch model.files.save(url, text: doc.text, expected: .any, force: true, recordsState: false) {
+        case .saved(let sha):
+            baselines[path] = doc.text
+            diskBaselines[path] = sha
+            saveConflicts[path] = nil
+            model.snapshotSaved(url: url, text: doc.text)
+            return noteSave(.saved(path: path, sha256: sha))
+        case .conflict(let c):
+            saveConflicts[path] = c
+            return noteSave(.conflict(c))
+        case .failed(let why):
+            return noteSave(.failed(why))
+        }
+    }
+
+    /// Resolves `path`'s on-disk conflict the other way: the buffer becomes
+    /// the file's text and baseline. Unsaved edits are kept durably first
+    /// (File > Restore Unsaved Snapshot…); when they cannot be kept nothing
+    /// is replaced. Switches to `path` (the editor shows the reloaded text).
+    /// Returns nil on success, else why nothing was reloaded.
+    func reloadDocumentFromDisk(_ path: String) -> String? {
+        prune()
+        guard path != entryPath else { return "\(path) is the entry document; use Reload (ShellModel.reloadFromDisk)" }
+        if let why = readOnlyNote(for: path) { return why }
+        guard let doc = model.documents.first(where: { $0.path == path }) else { return "\(path) is not open" }
+        guard let root = projectRoot else { return "no project root" }
+        let url: URL
+        switch Self.rootedFile(path, under: root) {
+        case .file(let u): url = u
+        case .refused(let why): return "cannot reload \(path): \(why)"
+        }
+        if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int, size > ProjectIncludes.maxDocumentBytes {
+            return "cannot reload \(path): \(size) bytes exceeds the \(ProjectIncludes.maxDocumentBytes)-byte document limit"
+        }
+        guard let data = try? Data(contentsOf: url) else { return "cannot reload \(path): it is not on disk" }
+        guard let disk = String(data: data, encoding: .utf8) else { return "cannot reload \(path): not readable as UTF-8" }
+        if isDirty(path), case .failed(let why) = model.preserveDiscardedText(doc.text, at: url, reason: "discarded by a reload of \(path) from disk") {
+            return "not reloaded: the unsaved edits to \(path) could not be kept (\(why))"
+        }
+        if model.activePath != path, case .refused(let why) = switchDocument(to: path) { return "cannot reload \(path): \(why)" }
+        // The baseline first: the buffer that arrives is then clean.
+        baselines[path] = disk
+        diskBaselines[path] = SourceDigest.sha256Hex(data)
+        saveConflicts[path] = nil
+        model.updateActiveText(disk)
+        status = "reloaded \(path) from disk (\(data.count) bytes)"
+        FlashTeXLog.write("project: " + status)
+        return nil
     }
 
     private func noteSave(_ outcome: SaveOutcome) -> SaveOutcome {

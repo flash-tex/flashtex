@@ -75,7 +75,15 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_with(tag, src, &[])
+}
+
+/// [`check`] with `files` (name, bytes) next to `t.tex`.
+fn check_with(tag: &str, src: &str, files: &[(&str, Vec<u8>)]) -> String {
     let d = scratch(tag);
+    for (n, b) in files {
+        std::fs::write(d.join(n), b).unwrap();
+    }
     std::fs::write(d.join("t.tex"), src).unwrap();
     let off = run(&d, "off", "measure");
     let on = run(&d, "on", "measure");
@@ -215,6 +223,73 @@ fn draw_calls_replay_with_their_hole() {
     assert!(stat(&s, "hits") >= 3, "{s}");
 }
 
+#[test]
+fn calls_ending_in_expansions_replay() {
+    // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
+    // `\end`: `\if@endpe ... \fi` and its hooks after the last
+    // `\endgroup` -- is used up inside `big_switch`'s `get_x_token`, which
+    // then reads the token after the call: the recording ends where the
+    // last level is popped (`flashtex_bm_popped`), a draw call (a frame
+    // around a box it moves, followed by `\hss`) and a measure call alike,
+    // and replays
+    let s = check(
+        "tail",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\let\\ifendpe\\iffalse\n\
+         \\def\\measure#1{\\begingroup\\vrule width#1\\vbox{\\hrule\\kern 2pt\\box9\\kern2pt\\hrule}\\endgroup\\ifendpe\\relax\\fi\\ifx aa\\fi}\n\
+         \\def\\one#1{\\setbox9\\hbox{\\vrule width #1 height 2pt}\\setbox1\\hbox{\\hss\\measure{1pt}\\hss}\\showbox1 }\n\
+         \\one{3pt}\\one{3pt}\\one{3pt}\\one{4pt}\\one{3pt}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\ifx aa\\fi}\n\
+         \\measure{2pt}\\measure{2pt}\\measure{2pt}\\message{[\\the\\dimen1]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
+#[test]
+fn a_tail_that_reads_past_the_call_never_replays() {
+    // the same bodies, but their last expansion takes the token after the
+    // call as a parameter (`\gobble`) or a primitive reads past it
+    // (`\number` looking for more digits): the read abandons the recording
+    // (`Level`), as before, and nothing replays
+    let s = check(
+        "tail-reads",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\gobble#1{}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\gobble}\n\
+         \\measure{2pt}x\\measure{2pt}x\\measure{2pt}x\\message{[\\the\\dimen1]}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\count1=\\number 1}\n\
+         \\measure{2pt}2\\measure{2pt}2\\measure{2pt}2\\message{[\\the\\dimen1|\\the\\count1]}\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn the_page_discards_tail_is_dead_once_the_list_is_flushed() {
+    // (#2433, lane FUZZ-ALIGN) the second page keeps its top \parskip in
+    // e-TeX's page_disc (\savingvdiscards=1); the third page break flushes
+    // the list, leaving tail_page_disc at a freed node. The full verifier
+    // walked it as a list and compared the free list's links there, which
+    // the normal path's call and the replay leave differently
+    let s = check(
+        "page-disc-tail",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\&=4 \\scrollmode\n\
+         \\hsize=100pt \\vsize=100pt \\hbadness=10000 \\vbadness=10000 \\hfuzz=16000pt \\vfuzz=16000pt\n\
+         \\count254=1000 \\dimen254=500pt \\skip254=12pt plus 4pt minus 4pt\n\
+         \\def\\out{\\shipout\\vbox{\\box255 \\ifvoid254\\else\\unvbox254\\fi}}\n\
+         \\output={\\out}\n\
+         \\def\\measure{\\begingroup\\setbox0\\vbox to 30pt{\\halign to 100pt{##\\hfil&\\tabskip=0pt \\hfil##\\hfil\\crcr }}\
+         \\global\\dimen1=\\wd0 \\endgroup}%\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         10pt{\\hrule\\par} \\savingvdiscards=1 \\vfill\\penalty-20000\n\
+         x{\\penalty100 \\vss} \\savingvdiscards=0\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         \\penalty-20000\\deadcycles=0 \\output={\\out}\n\
+         \\measure\\message{[\\the\\dimen1]}\n\
+         \\end\n",
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
@@ -317,4 +392,370 @@ fn font_parameters_are_part_of_the_key() {
     );
     assert!(stat(&s, "hits") >= 3, "{s}");
     assert!(stat(&s, "recordings") >= 3, "{s}");
+}
+
+/// `\\toks0` (and `\\toks4`): `\\kern.1pt` (`0 `) doubled 15 (16) times,
+/// lists longer than the key's `MAX_LIST` (65,536 tokens).
+const LONG_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+    \\toks0={\\kern.1pt}\\toks4={0 }\n\
+    \\def\\dbl#1{\\edef\\x{\\the\\toks#1 \\the\\toks#1}\\toks#1=\\expandafter{\\x}}\n\
+    \\def\\dbls#1{\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1}\n\
+    \\dbls0\\dbl0\\dbl0\\dbl0\\dbl0\\dbl0\\dbl0\\dbl0 \\dbls4\\dbls4\n\
+    \\def\\show{\\message{[\\the\\dimen1|\\the\\count1]}}\n";
+
+#[test]
+fn long_token_lists_are_never_keys() {
+    // (#2194) a token list longer than `MAX_LIST` was kept as one value,
+    // -2, that every other such list matched: a `\\toks` register the call
+    // reads (KR) and its argument (K1), each one `\\kern.1pt` longer after
+    // the second call, replayed the old width. Such a call is never
+    // replayed
+    let s = check(
+        "long-lists",
+        &[
+            LONG_PRELUDE,
+            "\\def\\measure#1{\\begingroup\\setbox0\\hbox{\\the\\toks0}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\measure{a}\\show\\measure{a}\\show\\toks0=\\expandafter{\\the\\toks0\\kern.1pt}\
+             \\measure{a}\\show\\measure{a}\\show\n\
+             \\def\\measure#1{\\begingroup\\setbox0\\hbox{#1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\edef\\go{\\noexpand\\measure{\\the\\toks0}}\\go\\show\\go\\show\
+             \\edef\\go{\\noexpand\\measure{\\the\\toks0\\kern.1pt}}\\go\\show\\go\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn long_shapes_are_never_keys() {
+    // (#2194) the same for a shape in K2: e-TeX's `\\widowpenalties` with
+    // 65,541 entries, whose first one the penalty between a two-line
+    // paragraph's lines takes, changed from 100 to 200
+    let s = check(
+        "long-shapes",
+        &[
+            LONG_PRELUDE,
+            "\\hsize=10pt \\tolerance=10000 \\hbadness=10000 \\vbadness=10000\n\
+             \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\noindent\\vrule width 5pt\\penalty-10000 \\vrule width 5pt\\par\
+             \\setbox3\\lastbox\\unskip\\global\\count1=\\lastpenalty}\\endgroup}\n\
+             \\widowpenalties 65541 100 \\the\\toks4 0 0 0 0 \\measure{a}\\show\\measure{a}\\show\n\
+             \\widowpenalties 65541 200 \\the\\toks4 0 0 0 0 \\measure{a}\\show\\measure{a}\\show\n\
+             \\widowpenalties 3 300 0 0 \\measure{a}\\show\\measure{a}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    // (the short shape's calls replay)
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+}
+
+#[test]
+fn boxes_set_at_the_calls_level_replay() {
+    // (lane FANCYHDR) fancyhdr's head and foot run `\normalsize` at the
+    // call's own level, whose `\size@update` sets `\strutbox` there: a box
+    // that outlives the call. Taken by value at the end of the call (after
+    // its own changes to it: `\wd`, an inner `\setbox` undone, a second
+    // `\setbox`), it is made again by the replay, and what reads it after
+    // the call -- in the same box and after it, `\showbox` -- sees the
+    // normal path's box
+    let s = check(
+        "outer-box",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\setbox8\\hbox{\\vrule width 9pt}\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\vrule height 7pt depth 3pt width 0pt}\\wd8=#1\
+         \\begingroup\\setbox8\\hbox{\\kern1pt}\\endgroup\\vrule width\\wd8\\copy8\
+         \\setbox7\\hbox{\\kern 2pt\\vrule}\\setbox7\\hbox{\\kern 3pt\\vrule\\penalty5}\\unhcopy7 }\n\
+         \\def\\one#1{\\setbox1\\hbox{\\measure{#1}\\vrule height\\ht8 depth\\dp8\\showbox8 \\showbox7 }\\showbox1 \\showbox8 \\showbox7 }\n\
+         \\one{1pt}\\one{1pt}\\one{1pt}\\one{2pt}\\one{2pt}\\one{1pt}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn boxes_at_the_calls_level_not_its_own_never_replay() {
+    // a box left at the call's level that is not the call's alone: one
+    // moved out of a register it did not make (`\\box9`, a hole), one whose
+    // glue is a register's (`\\hskip\\skip3` shares the specification),
+    // and one the call moved out again (`\\box8` voids the register behind
+    // `eq_define`'s back). Each is abandoned, and nothing replays
+    let s = check(
+        "outer-box-shared",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\skip3=4pt plus 1pt\n\
+         \\def\\measure#1{\\setbox8\\box9 \\kern#1\\relax}\n\
+         \\def\\one{\\setbox9\\hbox{\\vrule width 2pt}\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\hskip\\skip3 \\kern#1}}\n\
+         \\def\\one{\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\kern#1}\\box8 }\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn a_box_made_in_a_group_is_not_the_calls_after_it() {
+    // (lane FANCYHDR, a hole found on the way) a box register the call sets
+    // inside a group gets back its old box when the group ends; read after
+    // that (`\\wd0`), it is the box of before the call, an input of the
+    // call, which must be keyed as one: the later keys' box 0 is wider,
+    // and the call must not replay the first width. Nested groups and
+    // e-TeX's sparse registers (above 255) alike
+    let s = check(
+        "group-box",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup{\\setbox0\\hbox{\\kern1pt}}\\global\\dimen1=\\wd0\
+         \\setbox300\\hbox{\\kern2pt}{\\setbox300\\hbox{\\kern3pt}{\\setbox300\\hbox{}}}\\global\\dimen2=\\wd300\
+         {\\setbox301\\hbox{\\kern2pt}}\\global\\dimen3=\\wd301 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1|\\the\\dimen2|\\the\\dimen3]}}\n\
+         \\setbox0\\hbox{\\vrule width 1pt}\\setbox301\\hbox{\\vrule width 7pt}\\measure{a}\\show\\measure{a}\\show\\measure{a}\\show\n\
+         \\setbox0\\hbox{\\vrule width 5pt}\\measure{a}\\show\\measure{a}\\show\n\
+         \\setbox301\\hbox{\\vrule width 8pt}\\measure{a}\\show\\measure{a}\\show\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+/// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
+fn cmr10() -> Option<Vec<u8>> {
+    let bin = flashtex_engine::resolver::find_texlive_bin()?;
+    let out = Command::new(bin.join("kpsewhich"))
+        .arg("cmr10.tfm")
+        .output()
+        .ok()?;
+    std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+#[test]
+fn protrusion_around_a_replayed_call_is_the_normal_paths() {
+    // (lane FANCYHDR) pdfTeX's protrusion keeps the character `char_pw`
+    // last looked at (`last_leftmost_char`, `last_rightmost_char`). A call
+    // that breaks a paragraph with protrusion on (fancyhdr's head: its
+    // `\\parbox`es under microtype) leaves them set; a replay does not.
+    // Every read is right after a `char_pw` on the same path (`total_pw`
+    // then try_break's margin-kern variations; post_line_break's margin
+    // kerns), so they are the verifier's scratch. The paragraphs broken
+    // before and after the call, with protrusion and expansion, must be
+    // the normal path's, and the whole state otherwise agree
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "protrusion",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0 \\pdfoutput=1\n\
+         \\font\\f=cmr10 \\f \\rpcode\\f`.=700 \\lpcode\\f`A=600 \\rpcode\\f`d=200\n\
+         \\efcode\\f`A=1000 \\efcode\\f`d=1000 \\pdffontexpand\\f 30 30 10 autoexpand\n\
+         \\pdfprotrudechars=2 \\pdfadjustspacing=2 \\parindent=0pt \\tolerance=10000 \\hsize=80pt\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16383pt \\vfuzz=16383pt\n\
+         \\def\\body#1{\\hsize=45pt A word and A word. #1 And A word.\\par}\n\
+         \\setbox9\\vbox{\\body{x}\\body{yy}}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\body{#1}}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\one#1{\\setbox1\\vbox{A b dd. A c dd.\\par\\measure{#1}A d and A word dd. A b.\\par}\\showbox1 \\message{[\\the\\dimen1]}}\n\
+         \\one{x}\\one{x}\\one{x}\\one{yy}\\one{x}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn whatsits_of_a_call_act_at_its_shipout() {
+    // (lane AUDIT-WHATSIT) the shipout-time whatsits a recorded call
+    // leaves, replayed: a `\\write` and a `\\special shipout` /
+    // `\\pdfliteral shipout` keep their tokens unexpanded and expand them
+    // at the shipout with the definitions of then (`\\x` changes after the
+    // call); every `\\pdfliteral` mode; a link, a colour push and a
+    // `\\pdfsave` begun in the call and ended after it, and the reverse
+    // (ended in the call, begun before it); `\\setlanguage` (the list's
+    // `clang`); a link in a box the call throws away (its object is made
+    // again, `\\pdflastlink` read after the call). Logs and PDFs are the
+    // normal path's, and pdfTeX's (TeX Live 2026, by hand)
+    let s = check(
+        "whatsits",
+        &[
+            PDF_PRELUDE,
+            "\\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\def\\x{X}\n\
+             \\pdfobj reserveobjnum \\def\\in{\\pdfstartlink goto page 1 {/Fit}\\vrule width 1pt height 1pt\
+             \\pdfcolorstack0 push{0 0 1 rg}\\pdfsave}\\def\\out{\\pdfrestore\\pdfcolorstack0 pop\\pdfendlink}\n\
+             \\def\\measure#1{\\out\\write-1{w:\\x:#1}\\special{s:#1}\\special shipout{sl:\\x}\
+             \\pdfliteral{0 0 m}\\pdfliteral direct{1 0 m}\\pdfliteral page{2 0 m}\\pdfliteral shipout{\\x}\
+             \\pdfcolorstack0 current\\setlanguage3 \\begingroup\\setbox0\\hbox{\\pdfstartlink user{/S/URI/URI(#1)}\\pdfendlink}\\endgroup\
+             \\pdfstartlink user{/S/URI/URI(#1)}\\vrule width 2pt height 1pt\\pdfcolorstack0 push{1 0 0 rg}\
+             \\pdfsave\\pdfsetmatrix{1 0 0 1}\\kern1pt\\relax}\n\
+             \\def\\one#1{\\setbox1\\hbox{\\in\\measure{a}\\message{[\\the\\pdflastlink]}\\out\\vrule width 1pt}\\showbox1 \
+             \\def\\x{#1}\\shipout\\box1 \\def\\x{X}}\n\
+             \\one{A}\\one{B}\\one{C}\\one{D}\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn objects_and_immediate_whatsits_in_a_call_never_replay() {
+    // (lane AUDIT-WHATSIT) what a call may not do with pdfTeX's objects and
+    // files, in a draw call and in a box it throws away: an annotation, a
+    // destination, a thread, an object and a reference to one (reserved
+    // outside the call), a form, `\\immediate\\write`, `\\pdfsavepos` in the
+    // output, `\\pdflastlink` read: each abandons the recording, and the
+    // logs and PDFs are the normal path's
+    let bodies = [
+        "\\pdfannot width 1pt height 1pt depth 0pt{/Subtype/Text}",
+        "\\pdfdest name{d\\the\\count9} xyz",
+        "\\pdfthread width 1pt height 1pt depth 0pt name{t}",
+        "\\pdfobj{(o)}\\pdfrefobj\\pdflastobj",
+        "\\pdfrefobj\\res",
+        "\\immediate\\write-1{i:\\x}",
+        "\\setbox0\\hbox{\\kern1pt}\\pdfxform0 ",
+        "\\pdfstartlink user{/S/URI/URI(h)}\\kern1pt\\pdfendlink\\xdef\\l{\\the\\pdflastlink}",
+        "\\pdfsavepos",
+        "\\begingroup\\setbox0\\hbox{\\pdfdest num 99 fit\\pdfrefobj\\res}\\global\\dimen1=\\wd0 \\endgroup",
+    ];
+    for (i, b) in bodies.iter().enumerate() {
+        let s = check(
+            &format!("objects-{i}"),
+            &[
+                PDF_PRELUDE,
+                "\\def\\x{X}\\pdfobj reserveobjnum \\edef\\res{\\the\\pdflastobj}\n\\def\\measure{",
+                b,
+                "\\kern1pt\\relax}\n\
+                 \\def\\one{\\advance\\count9 1 \\setbox1\\hbox{\\measure}\
+                 \\message{[\\the\\pdflastlink|\\the\\pdflastannot|\\the\\pdflastobj|\\the\\pdflastxform]}\\shipout\\box1 }\n\
+                 \\one\\one\\one\\one\\pdfobj useobjnum\\res{(r)}\\end\n",
+            ]
+            .concat(),
+        );
+        assert_eq!(stat(&s, "hits"), 0, "{b}: {s}");
+    }
+}
+
+#[test]
+fn calls_in_math_groups_compare_their_save_stack() {
+    // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
+    // display, and of a display's `\\eqno` (cleveref's prefix under
+    // `\\label` in `equation`). The full verifier walks the save stack
+    // group by group as `show_save_groups` does; it took the display's
+    // nest level for inline math under a math group, read the `$$` as an
+    // `\\eqno` with a saved word, and misread every entry below
+    let s = check(
+        "math-group",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+         \\hsize=100pt \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
+    // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
+    // assignments local (tex.web §1214), like `\globaldefs>0` makes its
+    // local ones global; and a pending `\afterassignment` fires inside the
+    // call on the normal path (here after its `\setbox`). Each offer is a
+    // miss, and the logs agree
+    let s = check(
+        "k6",
+        &[
+            PRELUDE,
+            "\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\
+             \\w=1pt \\h=1pt {\\globaldefs=-1 \\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show}\\show\
+             \\def\\after{\\message{[after]}}\\n=0 \\afterassignment\\after\\measure{5pt}\\show\
+             \\n=0 \\measure{5pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "Preconditions"), 3, "{s}");
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
+#[test]
+fn the_space_factor_at_a_draw_call_is_part_of_the_key() {
+    // the context's `aux` (BOX-MEMO.md §3): a draw call whose first space
+    // is typeset at the space factor of the moment (`\xspaceskip` from
+    // 2000 on, tex.web §1043) appends other glue at another space factor
+    let s = check(
+        "aux",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\spaceskip=1pt \\xspaceskip=5pt\n\
+         \\def\\space{ }\\def\\measure#1{\\begingroup\\space\\vrule width #1\\endgroup}\n\
+         \\def\\one#1{\\setbox1\\hbox{\\vrule width 1pt\\spacefactor=#1 \\measure{2pt}}\\showbox1 }\n\
+         \\one{1000}\\one{1000}\\one{1000}\\one{2000}\\one{2000}\\one{1000}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn hyphenation_exceptions_are_part_of_the_key() {
+    // K5's `bm_hyph_version` (BOX-MEMO.md §3): a `\hyphenation` between
+    // two calls that break the same paragraph gives the second call other
+    // break points, here 1 line before and 4 after
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "hyph",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\f=cmr10 \\hyphenchar\\f=45 \\pretolerance=-1 \\tolerance=10000 \\hyphenpenalty=0\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16383pt \\vfuzz=16383pt \\parindent=0pt \\baselineskip=12pt\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=12pt \\f\\noindent\\hskip0pt #1\\par}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\n\
+         \\hyphenation{ab-cd-ef-gh}\\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+/// e-TeX's penalty arrays are K2 values kept by content, not by pointer
+/// (BOX-MEMO.md §3): `\clubpenalties` set three times, the third array is
+/// allocated where the first one was freed, and a call that breaks a
+/// paragraph reads its other penalty. (Not `\interlinepenalties`: e-TeX's
+/// `normal_paragraph` resets it at the paragraph's end, a write that
+/// abandons the recording.)
+#[test]
+fn etex_penalty_arrays_are_compared_by_content() {
+    let s = check(
+        "etexpen",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=10pt \\tolerance=10000 \\hbadness=10000 \
+         \\noindent\\hbox to 10pt{}\\hskip 0pt\\hbox to #1{}\\par\\setbox2\\lastbox\\unskip\
+         \\global\\count1=\\lastpenalty}\\endgroup}\n\
+         \\def\\show{\\message{[\\the\\count1]}}\n\
+         \\clubpenalties=1 100 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         \\clubpenalties=1 5000 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         \\clubpenalties=1 7000 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         {\\clubpenalties=1 300 \\measure{10pt}\\show\\measure{10pt}\\show}\n\
+         {\\clubpenalties=1 400 \\measure{10pt}\\show\\measure{10pt}\\show}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
+    // (lane REVIEW, #1977) the call's body skips `\foo` in a false
+    // conditional, read in place (changes/throughput.ch [4]); then `\foo`
+    // becomes a conditional, which nests the skipped text: the call no
+    // longer draws its rule (and leaves `\iftrue` open). A replay that kept
+    // the recording would draw it. Before #1977 (boxmemo.ch reading the
+    // in-place tokens through `get_next`) the fourth call replayed: the log
+    // with BOX-MEMO on said `[1.0pt]` where off said `[0.0pt]`
+    let s = check(
+        "skipped-in-place",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\let\\foo\\relax\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\iftrue\\iffalse\\foo\\fi\\vrule width #1\\fi}\
+         \\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\measure{1pt}\\message{[\\the\\dimen1]}\\measure{1pt}\\message{[\\the\\dimen1]}\
+         \\measure{1pt}\\message{[\\the\\dimen1]}\n\
+         \\let\\foo\\iftrue\n\
+         \\measure{1pt}\\message{[\\the\\dimen1]}\\end\n",
+    );
+    assert!(stat(&s, "recordings") >= 1, "{s}");
+    // (review of #2153) calls 2 and 3 replay, and call 4 misses: without
+    // this the test passes with nothing replayed
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
 }

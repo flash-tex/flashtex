@@ -25,7 +25,18 @@ sys.path.insert(0,
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import run as fuzz_run
 
-REFERENCE = "/Library/TeX/texbin/pdftex"
+# MacTeX's pdftex: the fallback when none is on PATH. The reference used to
+# be only this path, so on Linux (the NixOS runners) the fuzzer died before
+# its first iteration and nightly.py reported a harness failure every night.
+MACTEX_PDFTEX = "/Library/TeX/texbin/pdftex"
+
+
+def default_reference():
+    """TeX Live's pdftex: the first on PATH, else MacTeX's."""
+    return shutil.which("pdftex") or MACTEX_PDFTEX
+
+
+REFERENCE = default_reference()
 CLASSES = ("crash", "hang", "ok", "graceful-error", "output-flood")
 BOUNDARIES = (b"0", b"1", b"65535", b"2147483647", b"4294967295")
 XREF_OFFSETS = (b"0000000000", b"0000000001", b"9999999999", b"4294967295")
@@ -320,15 +331,23 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", required=True)
     ap.add_argument("--timeout", type=float, default=10)
+    ap.add_argument("--reference", default=None,
+                    help="pdfTeX that builds the seed PDFs (default: pdftex "
+                         "on PATH, else %s)" % MACTEX_PDFTEX)
     args = ap.parse_args(argv)
+    reference = args.reference or default_reference()
     fuzz_run.apply_fsize_limit()
     if not (os.path.isfile(args.candidate) or shutil.which(args.candidate)):
         print("error: candidate not found: %s" % args.candidate,
               file=sys.stderr)
         return 2
-    seeds = build_seeds()
+    if not (os.path.isfile(reference) or shutil.which(reference)):
+        print("error: reference pdftex not found: %s" % reference,
+              file=sys.stderr)
+        return 2
+    seeds = build_seeds(reference)
     # Sanity: the unmutated first seed must work through the reference job.
-    cls, rc, _log = run_case(seeds[0][1], REFERENCE, args.timeout)
+    cls, rc, _log = run_case(seeds[0][1], reference, args.timeout)
     print("reference unmutated seed: %s rc=%s" % (cls, rc))
     counts = run_fuzz(args.candidate, seeds, args.out, args.iterations,
                       args.seed, args.timeout)

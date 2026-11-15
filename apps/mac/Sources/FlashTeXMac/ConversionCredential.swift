@@ -444,7 +444,7 @@ final class MemoryKeychain: ConversionKeychainStore {
     }
     func delete(service: String, account: String) -> Result<Void, KeychainError> {
         if let failWith { return .failure(failWith) }
-        lock.withLock { items.removeValue(forKey: k(service, account)) }
+        _ = lock.withLock { items.removeValue(forKey: k(service, account)) }
         return .success(())
     }
     var isEmpty: Bool { lock.withLock { items.isEmpty } }

@@ -438,6 +438,66 @@ final class WordCountModel {
         return 0.3
     }()
 
+    // MARK: the selection's count
+
+    /// Selections up to this many UTF-16 units are counted where the status
+    /// item is drawn (under 1 ms in a debug build); longer ones in the
+    /// background. Select All in a 3 MB book was 270 ms of main thread on
+    /// every body evaluation, and Shift-arrow paid it again per key.
+    static let inlineSelectionUTF16 = 16_384
+
+    /// A background count and exactly what it counted.
+    struct SelectionCount: Equatable {
+        var path: String
+        var range: NSRange
+        var revision: Int
+        var words: Int
+    }
+
+    /// The last background selection count (see `selectionWords`).
+    private(set) var selection: SelectionCount?
+    @ObservationIgnored private var selectionDebounce: DispatchWorkItem?
+    @ObservationIgnored private var selectionGeneration = 0
+    /// Selections counted on the calling (main) thread by `selectionWords` (tests).
+    @ObservationIgnored private(set) var selectionCountsInline = 0
+
+    /// The word count of `range` of `text` for the status item: counted now
+    /// when it is short, else the background count for exactly this
+    /// selection of this revision (nil until `scheduleSelectionCount` lands it).
+    func selectionWords(text: String, path: String, range: NSRange, revision: Int) -> Int? {
+        guard range.length > 0 else { return nil }
+        if range.length <= Self.inlineSelectionUTF16 {
+            selectionCountsInline += 1
+            return DocumentStatistics.wordCount(inSelection: text, utf16Range: range)
+        }
+        guard let s = selection, s.path == path, s.revision == revision, NSEqualRanges(s.range, range) else { return nil }
+        return s.words
+    }
+
+    /// The selection changed: a long one is counted off the main thread after
+    /// `debounceInterval`, replacing any count not yet started; a stale
+    /// result (a newer selection was scheduled meanwhile) is dropped.
+    func scheduleSelectionCount(text: String, path: String, range: NSRange, revision: Int) {
+        selectionDebounce?.cancel()
+        selectionDebounce = nil
+        selectionGeneration += 1
+        guard range.length > Self.inlineSelectionUTF16 else { return }
+        if let s = selection, s.path == path, s.revision == revision, NSEqualRanges(s.range, range) { return }
+        let gen = selectionGeneration
+        let item = DispatchWorkItem { [weak self] in
+            self?.recomputeExecutor { [weak self] in
+                let words = DocumentStatistics.wordCount(inSelection: text, utf16Range: range)
+                Task { @MainActor [weak self] in
+                    defer { self?.onRecomputeSettled?() }
+                    guard let self, gen == self.selectionGeneration else { return }
+                    self.selection = SelectionCount(path: path, range: range, revision: revision, words: words)
+                }
+            }
+        }
+        selectionDebounce = item
+        if Self.debounceInterval == 0 { item.perform() } else { scheduleDebounce(Self.debounceInterval, item) }
+    }
+
     /// Schedules a rescan of `documents` after `debounceInterval`, replacing any not-yet-run scan.
     func scheduleUpdate(documents: [RuntimeV1.Document]) {
         debounce?.cancel()

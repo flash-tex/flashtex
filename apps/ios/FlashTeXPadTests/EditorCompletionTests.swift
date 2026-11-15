@@ -74,6 +74,47 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertTrue(model.completions.allSatisfy { $0.text.hasPrefix("\\be") }, "\(model.completions.map(\.text))")
     }
 
+    // MARK: Tab before the next pass lands
+
+    /// Tab right after a keystroke, while that keystroke's pass is still
+    /// debouncing: the list showing is the previous pass's, whose byte range
+    /// ends before the character just typed. Before the fix it was applied
+    /// at that old range, leaving the typed `t` after the insertion
+    /// (`\subsection{…}t`).
+    func testTabBeforeTheNextPassLandsReplacesTheWholeCurrentPrefix() async throws {
+        try open("\\documentclass{article}\n")
+        let base = model.document!.text
+        var text = base + "\\subsec"
+        model.textChanged(text, caret: (text as NSString).length)
+        await model.settleCompletions()
+        let shown = try XCTUnwrap(model.completions.first)
+        XCTAssertEqual(shown.text, "\\subsection")
+        model.completionDelay = 30 // the pass for the next keystroke has not landed when Tab arrives
+        text += "t"
+        model.textChanged(text, caret: (text as NSString).length)
+        XCTAssertEqual(model.completions.first, shown, "the previous pass is still showing")
+        XCTAssertTrue(model.handle(.acceptOrNextStop))
+        XCTAssertEqual(model.document?.text, base + shown.insertion)
+    }
+
+    /// The same Tab after a keystroke that ended the word: the showing list
+    /// no longer applies, so it is not applied (before the fix: `\subsec `
+    /// became `\subsection{…} `).
+    func testTabAfterTheWordEndedDoesNotApplyTheOldList() async throws {
+        try open("\\documentclass{article}\n")
+        let base = model.document!.text
+        var text = base + "\\subsec"
+        model.textChanged(text, caret: (text as NSString).length)
+        await model.settleCompletions()
+        XCTAssertEqual(model.completions.first?.text, "\\subsection")
+        model.completionDelay = 30
+        text += " "
+        model.textChanged(text, caret: (text as NSString).length)
+        XCTAssertFalse(model.handle(.acceptOrNextStop), "Tab is the editor's again")
+        XCTAssertEqual(model.document?.text, base + "\\subsec ")
+        XCTAssertTrue(model.completions.isEmpty, "the stale list is dropped")
+    }
+
     // MARK: contexts
 
     func testVocabularyIsBundledAndDecodes() {
@@ -260,5 +301,358 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertFalse(model.diagnosticsPanelVisible)
         model.handle(.toggleDiagnostics)
         XCTAssertTrue(model.diagnosticsPanelVisible)
+    }
+}
+
+/// iPad edits reach the file they were opened from (autosave), guarded by
+/// the hash of the version the buffer was made from, and unsaved text
+/// survives a crash as a draft offered on relaunch.
+@MainActor
+final class AutosaveTests: XCTestCase {
+    var dir: URL!
+    var file: URL!
+    let base = "\\documentclass{article}\n"
+
+    override func setUp() async throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("autosave-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        file = dir.appendingPathComponent("main.tex")
+        try Data(base.utf8).write(to: file)
+    }
+
+    override func tearDown() async throws { try? FileManager.default.removeItem(at: dir) }
+
+    private func onDisk() throws -> String { try String(contentsOf: file, encoding: .utf8) }
+
+    /// Only existing API: open, type, wait. Before: the buffer never reached
+    /// the file (the editor had no save at all).
+    func testEditsReachTheFileWithoutAnyAction() async throws {
+        let m = PadModel(link: MacLink(store: nil))
+        m.open(url: file)
+        XCTAssertNil(m.openError)
+        m.textChanged(base + "Hello.\n", caret: (base as NSString).length + 7)
+        let end = Date().addingTimeInterval(5)
+        while (try? onDisk()) != base + "Hello.\n", Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(try onDisk(), base + "Hello.\n")
+        XCTAssertEqual(m.saveState, .saved)
+    }
+
+    private func model(drafts: PadDraftStore? = nil) -> PadModel {
+        let m = PadModel(link: MacLink(store: nil), draftStore: drafts)
+        m.autosaveDelay = 0.05
+        m.draftDelay = 0.01
+        return m
+    }
+
+    func testAnExternalChangeIsSurfacedAndNeverOverwritten() async throws {
+        let m = model()
+        m.open(url: file)
+        try Data("changed on the Mac\n".utf8).write(to: file)
+        m.textChanged(base + "mine\n")
+        await m.settleSave()
+        guard case .conflict(let disk?) = m.saveState else { return XCTFail("\(m.saveState)") }
+        XCTAssertEqual(disk.text, "changed on the Mac\n")
+        XCTAssertEqual(try onDisk(), "changed on the Mac\n", "the other version is not overwritten")
+        m.textChanged(base + "mine, more\n")
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), "changed on the Mac\n", "later edits wait for the choice too")
+        m.keepBufferOverDisk()
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), base + "mine, more\n")
+        XCTAssertEqual(m.saveState, .saved)
+    }
+
+    func testUsingTheFilesVersionReplacesTheBuffer() async throws {
+        let m = model()
+        m.open(url: file)
+        try Data("theirs\n".utf8).write(to: file)
+        m.textChanged(base + "mine\n")
+        await m.settleSave()
+        await m.reloadFromDisk()
+        XCTAssertEqual(m.document?.text, "theirs\n")
+        XCTAssertEqual(m.saveState, .saved)
+        m.textChanged("theirs\nthen mine\n")
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), "theirs\nthen mine\n", "saves against the reloaded version")
+    }
+
+    /// The app dies before its autosave: the unsaved text is on disk as a
+    /// draft, offered on relaunch, and restoring it saves it to the file.
+    func testUnsavedTextSurvivesACrashAndIsOfferedOnRelaunch() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        let m = model(drafts: drafts)
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "not saved yet\n")
+        await m.settleDraft()
+        XCTAssertEqual(try onDisk(), base, "the autosave never ran")
+
+        let again = model(drafts: drafts) // relaunch
+        let offered = try XCTUnwrap(again.recoverableDrafts.first)
+        XCTAssertEqual(offered.draft.text, base + "not saved yet\n")
+        XCTAssertEqual(offered.draft.title, "main.tex")
+        again.restoreDraft(offered)
+        XCTAssertNil(again.openError)
+        XCTAssertEqual(again.document?.text, base + "not saved yet\n")
+        await again.settleSave()
+        XCTAssertEqual(try onDisk(), base + "not saved yet\n")
+        await drafts.flush()
+        XCTAssertTrue(PadModel(link: MacLink(store: nil), draftStore: drafts).recoverableDrafts.isEmpty, "a restored and saved draft is removed")
+    }
+
+    /// A draft restored over a file that changed since it was written is a
+    /// conflict, not a silent overwrite of the other version.
+    func testARestoredDraftOverAChangedFileIsAConflict() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        let m = model(drafts: drafts)
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "draft\n")
+        await m.settleDraft()
+        try Data("edited on the Mac meanwhile\n".utf8).write(to: file)
+        let again = model(drafts: drafts)
+        again.restoreDraft(try XCTUnwrap(again.recoverableDrafts.first))
+        await again.settleSave()
+        guard case .conflict(let disk?) = again.saveState else { return XCTFail("\(again.saveState)") }
+        XCTAssertEqual(disk.text, "edited on the Mac meanwhile\n")
+        XCTAssertEqual(try onDisk(), "edited on the Mac meanwhile\n")
+        XCTAssertEqual(again.document?.text, base + "draft\n", "the draft text is in the editor to keep or drop")
+    }
+
+    // MARK: review of #2023 (daniel-parent)
+
+    private func second(_ text: String = "B\n") throws -> URL {
+        let url = dir.appendingPathComponent("other.tex")
+        try Data(text.utf8).write(to: url)
+        return url
+    }
+
+    /// Finding 1 (blocker): open A, open B without editing A, type. The
+    /// editor kept showing A (every opened document is revision 1), so the
+    /// keystroke put A's text into B's buffer and autosave wrote it over B.
+    func testOpeningAnotherFileShowsItAndNeverWritesTheOldTextIntoIt() async throws {
+        let b = try second()
+        let m = model()
+        let editor = EditorController()
+        EditorView.connect(editor, to: m)
+        m.open(url: file)
+        EditorView.show(try XCTUnwrap(m.document), in: editor, model: m)
+        XCTAssertEqual(editor.text, base)
+        m.open(url: b)
+        EditorView.show(try XCTUnwrap(m.document), in: editor, model: m)
+        XCTAssertEqual(editor.text, "B\n", "the editor shows the file just opened")
+        editor.select(NSRange(location: 2, length: 0))
+        editor.type("x")
+        await m.settleSave()
+        XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "B\nx")
+        XCTAssertEqual(try onDisk(), base, "A untouched")
+    }
+
+    /// Finding 2: edit A, open B within the draft delay, and A's save
+    /// conflicts. The save result was dropped (another document was open)
+    /// and A's draft task was cancelled: the edits were nowhere.
+    func testSwitchingFilesKeepsEditsWhoseSaveConflicts() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        let b = try second()
+        let m = model(drafts: drafts)
+        m.draftDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "A edits\n")
+        try Data("A changed on the Mac\n".utf8).write(to: file)
+        m.open(url: b) // well within the draft delay
+        await m.settleSave()
+        await drafts.flush()
+        XCTAssertEqual(m.recoverableDrafts.map(\.draft.text), [base + "A edits\n"], "offered at once")
+        XCTAssertEqual(try onDisk(), "A changed on the Mac\n", "the other version is not overwritten")
+        let again = model(drafts: drafts) // and still there after a relaunch
+        XCTAssertEqual(again.recoverableDrafts.map(\.draft.text), [base + "A edits\n"])
+    }
+
+    /// Finding 3: A's save is slow (a file provider holds the file), B is
+    /// edited meanwhile; B's save waited for A's and was then dropped.
+    func testASlowSaveOfTheOldFileDoesNotSwallowTheNewOne() async throws {
+        let b = try second()
+        let m = model()
+        m.open(url: file)
+        m.textChanged(base + "A\n")
+        let hold = DispatchSemaphore(value: 0)
+        let holding = DispatchSemaphore(value: 0)
+        let url = file!
+        DispatchQueue.global().async {
+            var err: NSError?
+            NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [], error: &err) { _ in
+                holding.signal()
+                hold.wait()
+            }
+        }
+        holding.wait()
+        m.saveNow() // A's save now waits on the coordinator
+        m.open(url: b)
+        m.textChanged("B\nedited\n")
+        try await Task.sleep(nanoseconds: 300_000_000) // B's autosave ran and found A's in flight
+        hold.signal()
+        await m.settleSave()
+        let end = Date().addingTimeInterval(3)
+        while (try? String(contentsOf: b, encoding: .utf8)) != "B\nedited\n", Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "B\nedited\n")
+        XCTAssertEqual(m.saveState, .saved)
+        XCTAssertEqual(try onDisk(), base + "A\n")
+    }
+
+    /// A file provider holding `url` (a coordinated write) until the
+    /// returned semaphore is signalled: saves and reads of `url` wait.
+    private func holdFile(_ url: URL) -> DispatchSemaphore {
+        let hold = DispatchSemaphore(value: 0)
+        let holding = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            var err: NSError?
+            NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [], error: &err) { _ in
+                holding.signal()
+                hold.wait()
+            }
+        }
+        holding.wait()
+        return hold
+    }
+
+    /// #2023 re-review 1: A's save is slow; B and then C are edited and
+    /// closed while it runs. Their saves only waited behind A's, and when A's
+    /// finished only the open buffer's save ran: B and C never reached
+    /// their files (their text lived only in drafts).
+    func testEveryBufferClosedDuringASlowSaveIsSaved() async throws {
+        let b = try second()
+        let c = dir.appendingPathComponent("third.tex"), d = dir.appendingPathComponent("fourth.tex")
+        try Data("C\n".utf8).write(to: c)
+        try Data("D\n".utf8).write(to: d)
+        let m = model()
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "A\n")
+        let hold = holdFile(file)
+        m.saveNow() // A's save now waits on the coordinator
+        m.open(url: b)
+        m.textChanged("B\nedited\n")
+        m.open(url: c) // B's save waits behind A's
+        m.textChanged("C\nedited\n")
+        m.open(url: d) // and C's
+        hold.signal()
+        await m.settleSave()
+        XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "B\nedited\n")
+        XCTAssertEqual(try String(contentsOf: c, encoding: .utf8), "C\nedited\n")
+        XCTAssertEqual(try onDisk(), base + "A\n")
+        XCTAssertEqual(try String(contentsOf: d, encoding: .utf8), "D\n")
+    }
+
+    /// #2023 re-review 2: A is closed while its save waits, opened again and
+    /// edited. The closed buffer's save then settled (saved, or a conflict
+    /// offered) and cleared A's draft, which by then held the newer edits.
+    func testAClosedBuffersSaveKeepsTheReopenedFilesNewerDraft() async throws {
+        let b = try second()
+        let c = dir.appendingPathComponent("third.tex")
+        try Data("C\n".utf8).write(to: c)
+        for changedOnTheMac in [false, true] {
+            try Data(base.utf8).write(to: file)
+            try Data("B\n".utf8).write(to: b)
+            let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts-\(changedOnTheMac)"))
+            let m = model(drafts: drafts)
+            m.autosaveDelay = 3600
+            m.open(url: b)
+            m.textChanged("B\nedited\n")
+            let holdB = holdFile(b)
+            m.saveNow() // B's save waits on the coordinator
+            m.open(url: file)
+            m.textChanged(base + "first\n")
+            m.open(url: c) // A closed: its save waits behind B's
+            m.open(url: file) // A again
+            let holdA = holdFile(file)
+            holdB.signal() // B is saved, then A's closed save starts and waits on holdA
+            let end = Date().addingTimeInterval(5)
+            while (try? String(contentsOf: b, encoding: .utf8)) != "B\nedited\n", Date() < end { try await Task.sleep(nanoseconds: 20_000_000) }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            m.textChanged(base + "first\nsecond\n") // the reopened A is edited
+            await m.settleDraft()
+            if changedOnTheMac { try Data("changed on the Mac\n".utf8).write(to: file) }
+            holdA.signal() // A's closed save settles (its autosave is not due: no settleSave)
+            let settled = Date().addingTimeInterval(5)
+            while changedOnTheMac ? m.recoverableDrafts.isEmpty : (try? onDisk()) != base + "first\n", Date() < settled {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            await drafts.flush()
+            let again = model(drafts: drafts) // killed now: relaunch
+            XCTAssertTrue(again.recoverableDrafts.contains { $0.draft.text == base + "first\nsecond\n" },
+                          "changedOnTheMac \(changedOnTheMac): \(again.recoverableDrafts.map(\.draft.text))")
+        }
+    }
+
+    /// #2023 re-review 3: restoring an offered draft removed it before the
+    /// restored buffer's own draft was written (after the draft delay): a
+    /// kill in between lost the text.
+    func testARestoredDraftIsNeverOnlyInMemory() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        let m = model(drafts: drafts)
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "not saved yet\n")
+        await m.settleDraft()
+        let again = model(drafts: drafts) // relaunch
+        again.autosaveDelay = 3600
+        again.draftDelay = 3600
+        again.restoreDraft(try XCTUnwrap(again.recoverableDrafts.first))
+        await drafts.flush()
+        let third = model(drafts: drafts) // killed right after Restore
+        XCTAssertEqual(third.recoverableDrafts.map(\.draft.text), [base + "not saved yet\n"])
+    }
+
+    /// Finding 4: after a relaunch offers A's draft, editing and saving B
+    /// replaced and then deleted the single draft file: A's text was gone.
+    func testEditingAnotherFileKeepsTheOfferedDraft() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        let b = try second()
+        let first = model(drafts: drafts)
+        first.autosaveDelay = 3600
+        first.open(url: file)
+        first.textChanged(base + "A unsaved\n")
+        await first.settleDraft()
+        let second = model(drafts: drafts) // relaunch: A's draft offered
+        XCTAssertEqual(second.recoverableDrafts.map(\.draft.text), [base + "A unsaved\n"])
+        second.open(url: b) // not restored: B is edited and saved instead
+        second.textChanged("B\nedited\n")
+        await second.settleDraft()
+        await second.settleSave()
+        await drafts.flush()
+        XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "B\nedited\n")
+        let third = model(drafts: drafts) // relaunch again
+        XCTAssertEqual(third.recoverableDrafts.map(\.draft.text), [base + "A unsaved\n"], "A's draft survives until Restore or Discard")
+    }
+
+    /// Finding 5: "Use the file's version" loaded the snapshot taken when
+    /// the conflict was found, though the file changed again since.
+    func testUsingTheFilesVersionReadsTheFileAgain() async throws {
+        let m = model()
+        m.open(url: file)
+        try Data("theirs\n".utf8).write(to: file)
+        m.textChanged(base + "mine\n")
+        await m.settleSave()
+        guard case .conflict? = Optional(m.saveState) else { return XCTFail("\(m.saveState)") }
+        try Data("theirs, later\n".utf8).write(to: file)
+        await m.reloadFromDisk()
+        XCTAssertEqual(m.document?.text, "theirs, later\n")
+        m.textChanged("theirs, later\nmine\n")
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), "theirs, later\nmine\n", "saved against the version actually loaded")
+        XCTAssertEqual(m.saveState, .saved)
+    }
+
+    func testDiscardingTheOfferedDraftRemovesIt() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        drafts.save(PadUnsavedDraft(source: .bundledSample, title: "demo.tex", text: "x", diskSha256: nil))
+        await drafts.flush()
+        let m = model(drafts: drafts)
+        let offered = try XCTUnwrap(m.recoverableDrafts.first)
+        m.discardDraft(offered)
+        await drafts.flush()
+        XCTAssertTrue(m.recoverableDrafts.isEmpty)
+        XCTAssertTrue(model(drafts: drafts).recoverableDrafts.isEmpty)
     }
 }

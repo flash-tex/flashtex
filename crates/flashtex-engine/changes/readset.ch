@@ -9,7 +9,8 @@
 % file, a token list, an active character, the \.{\\par} of an empty line,
 % a \.{\\noexpand}ed one), and |id_lookup|, which \.{\\csname} and e-TeX's
 % \.{\\ifcsname} use (a name looked up and not found is a read too: a
-% changed .aux may define it).
+% changed .aux may define it), and e-TeX's \.{\\ifcsname} of an empty or
+% one-character name, which tests a meaning without |id_lookup|.
 %
 % While |rs_on| (the host turns it on at the .aux point, before the .aux is
 % read) each site calls the hand-written |flashtex_cs_read| or
@@ -67,6 +68,16 @@ cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 begin cur_cs:=info(loc)-cs_token_flag; loc:=null;@/
 cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+@z
+
+@x pdftex.web l.38694 - \.{\\ifcsname} of an empty or one-character name is a read
+  flush_list(n);
+@y
+  flush_list(n);
+  if rs_on then if cur_cs<hash_base then if not rs_seen[cur_cs] then
+    flashtex_cs_read(cur_cs);
+    {|null_cs| or |single_base+c|: no |id_lookup| saw it, and the meaning
+     tested next is read by no |get_next| either}
 @z
 
 @x the new sections go at the end of part 54

@@ -456,6 +456,15 @@ public struct DL3PreparedPage: @unchecked Sendable {
     /// The page as a viewer shows it: turned by its `/Rotate` (spec §4.7).
     public var widthPt: Double { page.quarterTurns % 2 == 0 ? page.boxWidth : page.boxHeight }
     public var heightPt: Double { page.quarterTurns % 2 == 0 ? page.boxHeight : page.boxWidth }
+    /// From the page's own points (bp from its unturned top-left, y down:
+    /// links, glyph cells, sources) to the shown page's (`DL3Renderer.shownTurn`).
+    public var shownTurn: CGAffineTransform {
+        DL3Renderer.shownTurn(width: page.boxWidth, height: page.boxHeight, quarterTurns: page.quarterTurns)
+    }
+    /// The page point (bp, unturned, y down) shown at `p` (bp from the shown page's top-left, y down).
+    public func pagePoint(shown p: CGPoint) -> CGPoint { p.applying(shownTurn.inverted()) }
+    /// Where a page rectangle (bp, unturned, y down) is shown on the page.
+    public func shownRect(_ r: CGRect) -> CGRect { r.isNull ? r : r.applying(shownTurn) }
     /// Needs the exported PDF to be pixel-exact: the engine could not
     /// express something (INCOMPLETE), or a resource did not resolve.
     public var needsPDFFallback: Bool { page.incomplete || !problems.isEmpty }
@@ -805,7 +814,8 @@ public enum DL3Renderer {
                     continue
                 }
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
-                let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
+                // In Double: `x + w` overflows Int32 for a rule at the edge of the range.
+                let right = snap((Double(x) + Double(w)) / K), bottom = snap(H - (Double(y) + Double(h)) / K)
                 if let tile, kind == .fill { // (a tile by translation has only filled rules)
                     tileRule(left: left, right: right, top: top, bottom: bottom, tile: tile, in: ctx)
                     continue
@@ -1024,6 +1034,18 @@ public enum DL3Renderer {
         }
     }
 
+    /// `turn` in the preview's page coordinates (bp from the top-left
+    /// corner, y down), which links, glyph cells and sources use: from the
+    /// unturned page (`width × height`) to the shown one. The image, a
+    /// click (its inverse) and a highlight all go through `turn`, so they
+    /// cannot disagree.
+    public static func shownTurn(width w: Double, height h: Double, quarterTurns q: Int) -> CGAffineTransform {
+        let sideways = (((q % 4) + 4) % 4) % 2 == 1
+        let upFromDown = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: h)
+        let downFromUp = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: sideways ? w : h)
+        return upFromDown.concatenating(turn(width: w, height: h, quarterTurns: q)).concatenating(downFromUp)
+    }
+
     /// A PDF page's `/Rotate` in quarter turns clockwise.
     public static func quarterTurns(_ page: CGPDFPage) -> Int { ((Int(page.rotationAngle) / 90) % 4 + 4) % 4 }
 
@@ -1114,8 +1136,9 @@ public enum DL3Renderer {
     /// column and row included), as `rasterizeToSurface` lays it.
     public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba,
                                      smoothFonts: Bool = false, background: CGColor = CGColor(gray: 1, alpha: 1)) -> CGContext? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
-        guard w > 0, h > 0,
+        // Checked in Double first: a non-finite or absurd box (a corrupt
+        // page) sizes nothing instead of trapping in `Int(_:)`.
+        guard let (w, h, _) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale),
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: layout.bitmapInfo) else { return nil }
@@ -1188,8 +1211,7 @@ public enum DL3Renderer {
 
     static func surface(widthPt: Double, heightPt: Double, scale: Double, background: CGColor = CGColor(gray: 1, alpha: 1),
                         smoothFonts: Bool = false, _ body: (CGContext) -> Void) -> IOSurface? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
-        guard w > 0, h > 0,
+        guard let (w, h, _) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale), // as `bitmapContext`
               let s = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
                                              .pixelFormat: 0x4247_5241 /* 'BGRA' */]) else { return nil }
         s.lock(options: [], seed: nil)

@@ -181,6 +181,83 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertEqual(Set(guest.liveShare.allowed.values), ["main.tex", "notes/a.tex"])
     }
 
+    /// #2060: the guest's copy is the host's text. Before, it carried no
+    /// mark, so a copy of the session folder opened elsewhere (where the
+    /// session pins no longer apply) compiled trusted: restricted shell
+    /// escape and external tools on host-controlled text. Now the folder and
+    /// every file are marked as received, the mark survives a copy, and the
+    /// copy is untrusted until the user trusts it.
+    func testAGuestCopyCopiedOutOfTheSessionStaysUntrusted() async throws {
+        let session = CollabSession(role: .hub, replica: UInt64.random(in: 1...UInt64.max), name: "Host", colourIndex: 0)
+        try session.shareFile(path: "main.tex", text: "\\documentclass{article}\\begin{document}\\input{notes/a}\\end{document}\n")
+        try session.shareFile(path: "notes/a.tex", text: "\\immediate\\write18{echo hostile}\n")
+        session.flush()
+        let pins = CollabControl.SessionPins(main: "main.tex", sourceDateEpoch: 0, randomSeed: 0, shellEscape: "off",
+                                             externalTools: false, readConfinement: true)
+        let hub = CollabHub(session: session, identity: try CollabIdentity(), projectName: "x", pins: pins, environmentDigest: "t")
+        hub.approve = { _, reply in reply(.allowEdit) }
+        hubs.append(hub)
+        try hub.start(loopbackOnly: true, advertise: false)
+        try await waitUntil("hub ready") { hub.port != nil }
+        let guest = ShellModel()
+        models = [guest]
+        guest.liveShare.join(link: hub.makeInvite(addresses: [], hostName: CollabGuest.localHostName).link, name: "Bob",
+                             disposition: .discard)
+        try await waitUntil("guest open") { guest.documentURL != nil }
+        let root = try XCTUnwrap(guest.liveShare.root)
+        let event = guest.liveShare.quarantineEvent
+        for url in [root, root.appendingPathComponent("main.tex"), root.appendingPathComponent("notes/a.tex")] {
+            let value = try XCTUnwrap(EngineV3Trust.quarantineValue(url), "\(url.lastPathComponent) is marked as received")
+            XCTAssertEqual(EngineV3Trust.quarantineEvent(value), event)
+        }
+        // A later remote edit to a file no editor shows keeps the mark.
+        let notes = try XCTUnwrap(session.file(atPath: "notes/a.tex"))
+        try XCTUnwrap(session.binding(for: notes)).localReplace(0..<0, with: "% more\n")
+        let notesURL = root.appendingPathComponent("notes/a.tex")
+        try await waitUntil("remote edit written") {
+            (try? String(contentsOf: notesURL, encoding: .utf8))?.hasPrefix("% more") == true
+        }
+        XCTAssertNotNil(EngineV3Trust.quarantineValue(notesURL))
+        guest.liveShare.leave()
+        // Copied out as the Finder or `cp` copies (extended attributes kept).
+        let copy = temp.appendingPathComponent("copied-project")
+        XCTAssertEqual(copyfile(root.path, copy.path, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_RECURSIVE)), 0)
+        let copyMain = copy.appendingPathComponent("main.tex")
+        XCTAssertFalse(guest.liveShare.forcesPinnedCompile(root: copy), "outside the session folder: no pins")
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: copy, main: copyMain), "host-controlled text, copied out, is untrusted")
+        let walked = [copy.appendingPathComponent("notes/a.tex")]
+        let d = EngineV3Trust.decide(root: copy, main: "main.tex", texts: [:], walkQuarantined: walked)
+        XCTAssertFalse(d.trusted)
+        EngineV3Trust.record(d.need)
+        XCTAssertTrue(EngineV3Trust.decide(root: copy, main: "main.tex", texts: [:], walkQuarantined: walked).trusted,
+                      "until the user trusts it")
+    }
+
+    /// Each session is its own provenance event: before, the event and the
+    /// set of guest-edited files lived as long as the app, so a second
+    /// session in the same run tainted nothing once the first was trusted.
+    func testEachSessionIsANewProvenanceEvent() async throws {
+        let project = temp.appendingPathComponent("project")
+        try "x\n".write(to: project.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
+        let host = ShellModel()
+        models = [host]
+        XCTAssertEqual(host.openTex(at: project.appendingPathComponent("main.tex")), .opened)
+        host.liveShare.startHosting()
+        try await waitUntil("invitation") { host.liveShare.invite != nil }
+        let first = host.liveShare.quarantineEvent
+        host.liveShare.markGuestEdited(project.appendingPathComponent("main.tex"))
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: project.appendingPathComponent("main.tex")))
+        EngineV3Trust.record(root: project, main: project.appendingPathComponent("main.tex"))
+        host.liveShare.leave()
+        host.liveShare.startHosting()
+        try await waitUntil("second invitation") { host.liveShare.invite != nil }
+        XCTAssertNotEqual(host.liveShare.quarantineEvent, first)
+        XCTAssertTrue(host.liveShare.guestEdited.isEmpty)
+        host.liveShare.markGuestEdited(project.appendingPathComponent("main.tex"))
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: project.appendingPathComponent("main.tex")),
+                       "the second session's guest edits need trusting again")
+    }
+
     // MARK: Compile pins and the switch
 
     func testSessionCompilesArePinned() async throws {
@@ -246,6 +323,109 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "outside\n")
         XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType, .typeRegular)
         XCTAssertEqual(try String(contentsOf: link, encoding: .utf8), "new\n")
+    }
+
+    /// The check and the write are one walk (`writeConfined`): each folder
+    /// is opened without following links, relative to the one before, and
+    /// the file is made and renamed inside that open folder. A folder
+    /// swapped for a link to elsewhere after it was checked cannot redirect
+    /// the write (the old check-by-path then write-by-path could).
+    func testConfinedWriteCannotBeRedirectedAfterItsCheck() throws {
+        let root = temp.appendingPathComponent("project")
+        let outside = temp.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let chapters = root.appendingPathComponent("chapters")
+        let written = try LiveShareController.writeConfined(Data("one\n".utf8), root: root, path: "chapters/one.tex", afterCheck: {
+            try? FileManager.default.moveItem(at: chapters, to: root.appendingPathComponent("moved"))
+            try? FileManager.default.createSymbolicLink(at: chapters, withDestinationURL: outside)
+        })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("one.tex").path),
+                       "the write followed a link made after the check")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outside.path), [])
+        XCTAssertNotNil(written)
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("moved/one.tex"), encoding: .utf8), "one\n")
+    }
+
+    func testConfinedWriteRefusesLinksAndCreatesFolders() throws {
+        let root = temp.appendingPathComponent("project")
+        let outside = temp.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try "outside\n".write(to: outside.appendingPathComponent("x.tex"), atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("linked"), withDestinationURL: outside)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("evil.tex"),
+                                                   withDestinationURL: outside.appendingPathComponent("x.tex"))
+        XCTAssertNil(try LiveShareController.writeConfined(Data("a".utf8), root: root, path: "linked/x.tex"))
+        XCTAssertNil(try LiveShareController.writeConfined(Data("a".utf8), root: root, path: "evil.tex"))
+        XCTAssertNil(try LiveShareController.writeConfined(Data("a".utf8), root: root, path: "../outside/x.tex"))
+        XCTAssertNil(try LiveShareController.writeConfined(Data("a".utf8), root: root, path: ".git/config.tex"))
+        XCTAssertEqual(try String(contentsOf: outside.appendingPathComponent("x.tex"), encoding: .utf8), "outside\n")
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("two\n".utf8), root: root, path: "new/dir/two.tex"))
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("new/dir/two.tex"), encoding: .utf8), "two\n")
+        let control = root.appendingPathComponent("new/dir/control.tex")
+        let controlFD = open(control.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        XCTAssertGreaterThanOrEqual(controlFD, 0)
+        close(controlFD)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("new/dir/two.tex").path)[.posixPermissions] as? Int,
+                       try FileManager.default.attributesOfItem(atPath: control.path)[.posixPermissions] as? Int)
+        // Replacing keeps the file's extended attributes (a quarantine mark).
+        let one = root.appendingPathComponent("chapters/one.tex")
+        try "old\n".write(to: one, atomically: true, encoding: .utf8)
+        XCTAssertEqual(setxattr(one.path, "com.example.mark", "m", 1, 0, 0), 0)
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/one.tex"))
+        XCTAssertEqual(try String(contentsOf: one, encoding: .utf8), "new\n")
+        XCTAssertEqual(getxattr(one.path, "com.example.mark", nil, 0, 0, 0), 1)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("chapters").path), ["one.tex"],
+                       "no temporary file left behind")
+    }
+
+    func testConfinedWritePreservesPrivateFileMode() throws {
+        let root = temp.appendingPathComponent("project")
+        let file = root.appendingPathComponent("chapters/private.tex")
+        try "old\n".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/private.tex"))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new\n")
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int, 0o600)
+    }
+
+    func testConfinedWriteGivesReplacementAFreshModificationTime() throws {
+        let root = temp.appendingPathComponent("project")
+        let file = root.appendingPathComponent("chapters/one.tex")
+        try "old\n".write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000_000)], ofItemAtPath: file.path)
+        let writeStarted = Date()
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/one.tex"))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new\n")
+        let mtime = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+        XCTAssertGreaterThanOrEqual(mtime, writeStarted)
+    }
+
+    /// A project opened through a link to its folder is still written:
+    /// the root is opened as it resolves, only the walk below refuses links.
+    func testConfinedWriteThroughALinkedProjectRoot() throws {
+        let real = temp.appendingPathComponent("project")
+        let linked = temp.appendingPathComponent("linked-project")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: real)
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("via link\n".utf8), root: linked, path: "chapters/one.tex"))
+        XCTAssertEqual(try String(contentsOf: real.appendingPathComponent("chapters/one.tex"), encoding: .utf8), "via link\n")
+    }
+
+    func testConfinedWriteKeepsOpenedRootAfterPathIsSwapped() throws {
+        let root = temp.appendingPathComponent("project")
+        let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        let moved = temp.appendingPathComponent("moved-project")
+        let outside = temp.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside.appendingPathComponent("chapters"), withIntermediateDirectories: true)
+        let outsideFile = outside.appendingPathComponent("chapters/one.tex")
+        try "outside\n".write(to: outsideFile, atomically: true, encoding: .utf8)
+        try FileManager.default.moveItem(at: root, to: moved)
+        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: outside)
+
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/one.tex", rootFD: fd))
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("chapters/one.tex"), encoding: .utf8), "new\n")
+        XCTAssertEqual(try String(contentsOf: outsideFile, encoding: .utf8), "outside\n")
     }
 
     /// The host process for session compiles: reads and writes confined, no
