@@ -271,7 +271,7 @@ impl Globals {
     /// `\input` file, `-jobname`, the banner, the C parts' file names.
     pub fn make_tex_string(&mut self, bytes: &[u8]) -> i32 {
         if bytes.is_empty() {
-            return self.get_null_str();
+            return self.null_str();
         }
         if self.pool_ptr as usize + bytes.len() > crate::generated::consts::pool_size as usize {
             self.check_buf_fail("utils.c", 183);
@@ -281,16 +281,6 @@ impl Globals {
             self.pool_ptr += 1;
         }
         self.make_string()
-    }
-
-    /// `getnullstr`: the pool's empty string `""`, the first string after
-    /// the single-character ones whose length is 0.
-    pub fn get_null_str(&self) -> i32 {
-        let mut s = 256;
-        while s < self.str_ptr && self.str_start[s as usize + 1] != self.str_start[s as usize] {
-            s += 1;
-        }
-        s
     }
 
     /// ptexmac.h's `set_cur_file_name(s)`: `cur_file_name = s`, then
