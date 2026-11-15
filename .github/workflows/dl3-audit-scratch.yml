@@ -1,0 +1,61 @@
+# SCRATCH (lane F-DL3, branch agent/kabir-claude-f-dl3/proof-*; never merged):
+# dl3-audit's 13 steps against flashtex-host on a hosted runner, TeX Live 2026
+# (scheme-medium image, pinned as in ci.yml).
+name: dl3-audit-scratch
+
+on:
+  push:
+    branches: ["agent/kabir-claude-f-dl3/proof-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build flashtex-host, flashtex-initex, dl3-audit (release)
+        run: |
+          cargo build --release -p flashtex-engine --bin flashtex-host --bin flashtex-initex
+          cargo build --release -p flashtex-display-list --example dl3-audit
+      - name: pdflatex.fmt
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fmt"
+          cd "$RUNNER_TEMP/fmt"
+          FLASHTEX_POOL="$GITHUB_WORKSPACE/crates/flashtex-engine/pdftex.pool" SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 \
+            "$GITHUB_WORKSPACE/target/release/flashtex-initex" -ini -jobname=pdflatex -progname=pdflatex -etex \
+            -translate-file=cp227.tcx pdflatex.ini </dev/null >/dev/null 2>&1 || true
+          ls -la pdflatex.fmt
+      - name: dl3-audit, 13 steps
+        run: |
+          set -uo pipefail
+          export TEXMFCNF="$(kpsewhich -var-value TEXMFCNF)"
+          export FLASHTEX_POOL="$GITHUB_WORKSPACE/crates/flashtex-engine/pdftex.pool" FLASHTEX_FORMATS="$RUNNER_TEMP/fmt"
+          export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_PIN_CLOCK=1700000000.5
+          pdftex --version | head -1
+          I=crates/flashtex-engine/tests/images
+          target/release/examples/dl3-audit --host target/release/flashtex-host --work "$RUNNER_TEMP/audit" \
+            --image $I/png-pal8.png --image $I/jpg-rgb.jpg --timeout 2400 2>&1 | tee "$RUNNER_TEMP/audit.txt"
+          rc=${PIPESTATUS[0]}
+          { echo '```'; cat "$RUNNER_TEMP/audit.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dl3-audit
+          path: |
+            ${{ runner.temp }}/audit.txt
+            ${{ runner.temp }}/audit/fail-*
+            ${{ runner.temp }}/audit/*.log
+          if-no-files-found: ignore
