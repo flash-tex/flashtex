@@ -1,0 +1,36 @@
+% d12-dvipdfmx-gotos-colors: without hyperref (no dvipdfmx:config C 0x0010), xdvipdfmx renames GoTo destinations to (0), (1), ... and drops the unnamed ones; pdf:bcolor and pdf:scolor with fill and stroke keywords; a C 0x0010 on page 2 changes nothing
+\documentclass{article}
+\begin{document}
+\special{pdf:dest (alpha) [@thispage /XYZ @xpos @ypos null]}%
+\special{pdf:dest (beta) [@thispage /Fit]}%
+\special{pdf:dest (unused) [@thispage /FitH 500]}%
+\special{pdf:dest (gamma) [@thispage /Fit]}%
+\special{pdf:outline 1 <</Title (One) /A <</S/GoTo/D (alpha)>>>>}%
+\special{pdf:outline 2 <</Title (Two) /Dest (beta)>>}%
+\special{pdf:outline 1 <</Title (Three) /Dest [@thispage /Fit]>>}%
+\special{pdf:bann <</Subtype/Link/A<</S/GoTo/D(beta)>>>>}Bee\special{pdf:eann}
+\special{pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/Dest(alpha)>>}%
+\special{pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/A<</S/URI/URI(http://example.com)>>>>}%
+\special{pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/A<</S/GoTo/D(missing)>>>>}%
+\special{pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/A<</S/GoToR/F(o.pdf)/D(alpha)>>>>}%
+links.
+
+\special{pdf:bann <</Subtype/Link/Dest(gamma)>>}A link with a destination of its own
+that runs over more than one line of the paragraph, so that it may be broken
+into parts, each a link of its own, as xdvipdfmx writes them.\special{pdf:eann}
+
+\special{pdf:bann <</Subtype/Link/A<</S/GoTo/D(gamma)>>>>}Another, through an
+action, that also runs over more than one line of the paragraph and is broken
+into parts that share the action.\special{pdf:eann}
+
+\special{pdf:bcolor fill [1 0 0] stroke [0 0 1]}\rule{10pt}{5pt} Red\special{pdf:literal 0 0 m 20 0 l S}\special{pdf:ecolor}
+\special{pdf:bcolor stroke [0 1 0]}\rule{10pt}{5pt} Black\special{pdf:literal 0 0 m 20 0 l S}\special{pdf:ecolor}
+\special{pdf:bcolor [0.2]}\special{pdf:scolor fill 0.7}\rule{10pt}{5pt} Grey\special{pdf:literal 0 0 m 20 0 l S}%
+\special{pdf:scolor stroke [1 0 1] fill [0 1 1]}\rule{10pt}{5pt} Cyan\special{pdf:literal 0 0 m 20 0 l S}\special{pdf:ecolor}
+\special{pdf:bcolor fill}\rule{10pt}{5pt} Plain
+\newpage
+\special{dvipdfmx:config C 0x0010}%
+\special{pdf:dest (delta) [@thispage /Fit]}%
+\special{pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/A<</S/GoTo/D(delta)>>>>}%
+Page two.
+\end{document}
