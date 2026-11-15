@@ -69,23 +69,71 @@ SKIP_LINE = re.compile(r'\\(label|ref|eqref|cref|Cref|cite|index|begin|end|input
                        r'only|uncover|pause|onslide|visible|alt|temporal)\b|[#&@~<>]|\\\\')
 
 
+MEASURE = '\\begingroup\\setbox0\\hbox{%s}\\vrule width\\wd0 height 2pt\\endgroup\\hfil'
+
+
+def synth(preamble, head, para, files=None, job='main'):
+    """A document of xdoc:NAME: `preamble` after the class, a page head (`\\@oddhead`, a call
+    BOX-MEMO offers by default) whose body is `head`, and 18 paragraphs of `para` three times;
+    `files` (name: bytes) beside main.tex, compiled as job `job`."""
+    body = '\n\n'.join(para * 3 for _ in range(18))
+    text = (f'\\documentclass{{article}}\n{preamble}\\makeatletter\n\\def\\@oddhead{{{head}}}\n'
+            '\\makeatother\n\\begin{document}\n' + body + '\n\\end{document}\n').encode()
+    return dict(text=text, files=dict(files or {}), job=job)
+
+
 def fonts_doc(first, second):
     """xdoc:fonts-*: two fonts loaded in the order given, so that one font number is another face
-    in each of the pair, and a page head (`\\@oddhead`, a call BOX-MEMO offers by default) that
-    measures text in the second and draws a rule that wide: a replay of the other document's entry
-    keyed by the font's number alone draws the other face's width (#2091's first item)."""
+    in each of the pair, and a page head that measures text in the second and draws a rule that
+    wide: a replay of the other document's entry keyed by the font's number alone draws the other
+    face's width (#2091's first item)."""
     para = ('The measured head above each page is drawn from the width of text set in the font '
             'loaded second, which this document and its pair load in the other order. ')
-    body = '\n\n'.join(para * 3 for _ in range(18))
-    return (f'\\documentclass{{article}}\n\\font\\fa={first}\\relax\n\\font\\fb={second}\\relax\n'
-            '\\makeatletter\n'
-            '\\def\\@oddhead{\\begingroup\\setbox0\\hbox{\\fb Measured head}\\vrule width\\wd0 height 2pt\\endgroup\\hfil}\n'
-            '\\makeatother\n\\begin{document}\n' + body + '\n\\end{document}\n').encode()
+    return synth(f'\\font\\fa={first}\\relax\n\\font\\fb={second}\\relax\n',
+                 MEASURE % '\\fb Measured head', para)
 
 
-# documents xdoc.py writes itself (xdoc:NAME): cmss12 and cmbx12 are not in the LaTeX format, so
-# each document's \font gives them the next numbers, in its own order
+PARA = ('The measured head above each page is drawn from what this document and its pair hold '
+        'apart, and nothing else in the two differs. ')
+
+
+def pair(preamble_a, preamble_b, head_a, head_b=None, files_a=None, files_b=None, job_a='main',
+         job_b='main'):
+    """xdoc:NAME-a and xdoc:NAME-b: two documents alike but for one key part each page head reads
+    (the audit of 2026-11-08, BOX-MEMO.md section 17): a replay of the other document's entry
+    with that part left out of the key draws the other document's head."""
+    return (lambda: synth(preamble_a, head_a, PARA, files_a, job_a),
+            lambda: synth(preamble_b, head_b or head_a, PARA, files_b, job_b))
+
+
+# documents xdoc.py writes itself (xdoc:NAME), in pairs; each pair is alike but for one thing:
+# - fonts: cmss12 and cmbx12 are not in the LaTeX format, so each document's \font gives them the
+#   next numbers, in its own order (K5's font identity, #2091 item 1)
+# - job: the job name (`Entry::job`, #2091 item 2)
+# - cat: a category code (K2, `eqtb`'s local region)
+# - name: two names of one hash location, `\qqXa` and `\qqaO` (they hash alike), which the head
+#   prints (`Entry::names`, #2102)
+# - input: a file `\input` in the preamble defines the head's text (K3: a macro by its tokens)
+# - size: a file the head reads (`\pdffilesize`, refused while recording)
+# - stack: a colour stack that one of the two makes (`Entry::stacks`; the other reports "Unknown
+#   color stack number 1")
 SYNTH = {'fonts-ab': lambda: fonts_doc('cmss12', 'cmbx12'), 'fonts-ba': lambda: fonts_doc('cmbx12', 'cmss12')}
+PAIRS = {
+    'job': pair('', '', MEASURE % '\\jobname', job_b='xdoc-a-much-longer-job-name'),
+    'cat': pair('', '\\catcode`\\|=13\n',
+                MEASURE % '\\ifnum\\catcode`\\|=13 The bar is active, a wide head\\else Other\\fi'),
+    'name': pair('\\def\\qqXa{}\n', '\\def\\qqaO{}\n', MEASURE % '\\string\\qqXa',
+                 MEASURE % '\\string\\qqaO'),
+    'input': pair('\\input{hd}\n', '\\input{hd}\n', MEASURE % '\\hdtext',
+                  files_a={'hd.tex': b'\\def\\hdtext{Short}\n'},
+                  files_b={'hd.tex': b'\\def\\hdtext{A much longer head, from the file}\n'}),
+    'size': pair('', '', MEASURE % '\\pdffilesize{data.txt}', files_a={'data.txt': b'x\n'},
+                 files_b={'data.txt': b'0123456789\n' * 150}),
+    'stack': pair('\\edef\\stk{\\pdfcolorstackinit page direct{0 g}}\n', '\\def\\stk{1}\n',
+                  '\\pdfcolorstack1 push{1 0 0 rg}\\vrule width 20pt height 2pt\\pdfcolorstack1 pop\\hfil'),
+}
+for _k, (_a, _b) in PAIRS.items():
+    SYNTH[f'{_k}-a'], SYNTH[f'{_k}-b'] = _a, _b
 
 
 class Conn:
@@ -188,7 +236,8 @@ def main():
     # the oracle: the CLI engine with BOX-MEMO off, as the host runs it (FLASHTEX_PREVIEW)
     cli_env = dict(env, FLASHTEX_PREVIEW='1', FLASHTEX_BOXMEMO='off')
     cli_env.pop('FLASHTEX_BOXMEMO_VERIFY_FAIL', None)
-    argv = ['-fmt=pdflatex', '-interaction=nonstopmode', '-file-line-error', '-jobname=main', 'main.tex']
+    def argv(job):
+        return ['-fmt=pdflatex', '-interaction=nonstopmode', '-file-line-error', f'-jobname={job}', 'main.tex']
 
     docs = []
     for name in [x for x in a.docs.split(',') if x]:
@@ -197,18 +246,22 @@ def main():
             if name[5:] not in SYNTH:
                 sys.exit(f'xdoc: no document {name} (have {", ".join(SYNTH)})')
             os.makedirs(root)
-            open(os.path.join(root, 'main.tex'), 'wb').write(SYNTH[name[5:]]())
+            sd = SYNTH[name[5:]]()
+            for n, b in [('main.tex', sd['text'])] + sorted(sd['files'].items()):
+                open(os.path.join(root, n), 'wb').write(b)
+            job = sd['job']
         else:
             src = (os.path.join(a.fixtures, 'real-world', name[3:]) if name.startswith('rw:')
                    else os.path.join(BASE, 'docs', name))
             if not os.path.isfile(os.path.join(src, 'main.tex')):
                 sys.exit(f'xdoc: no {src}/main.tex')
             shutil.copytree(src, root, ignore=shutil.ignore_patterns('reference.*', 't7.json', 'doc.json', '.git'))
+            job = 'main'
         text = open(os.path.join(root, 'main.tex'), 'rb').read()
         cands = sites(text)
         if not cands:
             sys.exit(f'xdoc: {name}: no prose line to edit')
-        docs.append(dict(name=name, root=root, text=text, sites=cands))
+        docs.append(dict(name=name, root=root, text=text, sites=cands, job=job))
 
     sock = f'{W}/h.sock'
     sockdir = None
@@ -246,7 +299,7 @@ def main():
         while True:
             before = state(s)
             seen.append(before)
-            subprocess.run(['pdftex'] + argv, executable=f'{E}/pdftex', cwd=s, env=cli_env,
+            subprocess.run(['pdftex'] + argv(d['job']), executable=f'{E}/pdftex', cwd=s, env=cli_env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
             runs += 1
             if runs >= MAX_PASSES or state(s) in seen:
@@ -258,7 +311,7 @@ def main():
     def compile_(c, cid, d, edits, rnd, step, kind):
         pre = snapshot(d['root'])
         req = {'id': cid, 'root': d['root'], 'main': 'main.tex', 'output_dir': d['root'],
-               'incremental': True, 'edits': edits}
+               'jobname': d['job'], 'incremental': True, 'edits': edits}
         t = time.time()
         c.send(COMPILE, req)
         r = c.until_done(cid)
