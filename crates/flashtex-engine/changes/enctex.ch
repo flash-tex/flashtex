@@ -28,9 +28,8 @@
 % branches that use them never run; they are kept as enctex1.ch has them.
 % TeX Live's string pool also holds the 18 strings of encTeX's and ML\TeX's
 % own code (\mubyte, \noconvert, \xordcode & co., \charsubdef and its
-% substitution messages), which only `-enc' and `-mltex' reach; this
-% engine's pool does not (#2039), so its \tracingstats capacities are 18
-% strings and 410 characters above pdfTeX's.
+% substitution messages), which only `-enc' and `-mltex' reach; changes/pool.ch
+% puts them in this engine's pool too, in TeX Live's places (#2208).
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
