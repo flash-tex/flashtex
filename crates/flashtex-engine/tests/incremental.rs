@@ -2164,7 +2164,10 @@ fn a_viewport_idle_run_drops_a_change_made_while_it_runs() {
 /// pages so far, and the journal holds the changed file as it read it, so
 /// the next compile, with nothing else changed, found nothing to do:
 /// `unchanged` over a cut PDF. It must run again from the idle run's start
-/// and give a scratch run's output.
+/// and give a scratch run's output. (`\nofiles`: with an `.aux` the next
+/// compile ran again from page 0 anyway, measured, which is correct if
+/// slow. Without the fix this test's next compile differs from a scratch
+/// run; with it, it restarts at the idle run's start, page 93.)
 #[test]
 fn a_viewport_idle_run_that_cannot_be_dropped_is_run_again() {
     let Some(e) = env() else {
@@ -2173,7 +2176,7 @@ fn a_viewport_idle_run_that_cannot_be_dropped_is_run_again() {
     };
     const AT: usize = 95;
     let body = |word: &str| {
-        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        let mut d = String::from("\\documentclass{article}\n\\nofiles\n\\begin{document}\n");
         for i in 0..120 {
             if i == AT {
                 d.push_str("\\input{chap}\n\n");
