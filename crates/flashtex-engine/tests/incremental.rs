@@ -2205,6 +2205,9 @@ fn a_viewport_idle_run_that_cannot_be_dropped_is_run_again() {
     );
     let r = h.cmd(&format!("redensify-write {AT} 1 {} {new}", chap.display()));
     assert_eq!(field(&r, "mode"), "\"idle-dropped\"", "{r}");
+    // (settled, not dropped: the document is cut at the idle run's stop)
+    let cut = field(&r, "pages").parse::<usize>().unwrap();
+    assert!(cut < 120, "the idle run went back to the complete run: {r}");
     let r = compile_and_check(&e, &mut h, &dir, &[], "after the idle run was settled");
     assert_ne!(field(&r, "mode"), "\"unchanged\"", "{r}");
     assert_eq!(field(&r, "pages"), "120", "{r}");
