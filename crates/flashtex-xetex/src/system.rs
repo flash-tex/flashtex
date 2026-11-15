@@ -1020,9 +1020,15 @@ impl Globals {
         self.name_of_file[..n].to_vec()
     }
 
-    /// The same as a `String` (a name that is not UTF-8 is read lossily).
+    /// The same as a `String` (a name that is not UTF-8 is read lossily),
+    /// as web2c's C side sees it (`nameoffile + 1`, a C string): it ends at
+    /// a NUL (`^^@`) in the name, so `\input b^^@zz` reads `b.tex` and
+    /// `\openout1=w^^@x.tex` writes `w`, as XeTeX does. `make_utf16_name`
+    /// and the strings TeX keeps use the whole name (`raw_name_bytes`).
     pub(crate) fn raw_file_name(&self) -> String {
-        String::from_utf8_lossy(&self.raw_name_bytes()).into_owned()
+        let bytes = self.raw_name_bytes();
+        let c = bytes.split(|&b| b == 0).next().unwrap_or_default();
+        String::from_utf8_lossy(c).into_owned()
     }
 
     /// Replace `name_of_file` by `name` (UTF-8), as web2c does after opening

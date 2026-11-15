@@ -2685,12 +2685,19 @@ impl Globals {
     /// §51 opens the pool file without setting it.
     /// Its bytes are the file system's (UTF-8 names come out as they went
     /// in); a name that is not UTF-8 is read with replacement characters.
+    ///
+    /// This is the name as web2c's C side sees it (`nameoffile + 1`, a C
+    /// string), so it ends at a NUL (`^^@`) in the name: pdfTeX's
+    /// `\input b^^@zz` reads `b.tex`, `\openout1=w^^@x.tex` writes `w`, and
+    /// `\openin1=^^@x` opens what the empty name opens. The string TeX
+    /// itself keeps (and prints, as in `\openout1 = `w^^@x.tex'`) is whole.
     fn raw_file_name(&self) -> String {
         let raw: &[u8] = if self.name_length > 0 {
             &self.name_of_file[..self.name_length as usize]
         } else {
             &self.name_of_file[..]
         };
+        let raw = raw.split(|&b| b == 0).next().unwrap_or_default();
         String::from_utf8_lossy(raw).trim().to_string()
     }
 

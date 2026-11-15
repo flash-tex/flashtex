@@ -1,0 +1,68 @@
+//! A NUL (`^^@`) in a file name ends the name web2c gives kpathsea and
+//! `fopen` (`nameoffile + 1` is a C string), while TeX keeps and prints the
+//! whole name. TeX Live's pdfTeX (1.40.29, TeX Live 2026, macOS arm64 and
+//! x86_64-linux alike): `\openin` of `zz^^@b.tex` finds nothing, of
+//! `b.tex^^@zz` or `b^^@.tex` opens `b.tex`; `\input b^^@zz` reads `b.tex`;
+//! `\openout3={w^^@x.tex}` writes a file `w` and logs the whole name (in
+//! INITEX `\newlinechar` is 0, so `^^@` prints as a line end). Found by lane
+//! PARITY-HUNT in TeX Live's ftc-notebook example (xelatex, a broken tabu
+//! hands `\includegraphics` a name with NULs), issue #2518. No TeX
+//! installation needed: the expected log is pdfTeX's for the same input.
+
+mod common;
+
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\catcode`\\^^@=12
+\\immediate\\openin1={zz^^@b.tex} \\ifeof1 \\message{[C eof]}\\else\\message{[C open]}\\fi \\closein1
+\\immediate\\openin1={b.tex^^@zz} \\ifeof1 \\message{[D eof]}\\else\\message{[D open]}\\fi \\closein1
+\\immediate\\openin1={b^^@.tex} \\ifeof1 \\message{[E eof]}\\else\\message{[E open]}\\fi \\closein1
+\\input b^^@zz \\message{[G]}
+\\immediate\\openout3={w^^@x.tex}\\immediate\\write3{w}\\immediate\\closeout3
+\\immediate\\openin1={w} \\ifeof1 \\message{[H eof]}\\else\\message{[H open]}\\fi \\closein1
+\\end
+";
+
+/// TeX Live's pdfTeX on `DOC`, from `**t.tex` on (the lines before it are
+/// the banner and texmf.cnf's settings).
+const PDFTEX_LOG: &str = "**t.tex
+(./t.tex [C eof] [D open] [E open] (./b.tex [in b]) [G]
+\\openout3 = `w
+x.tex'.
+
+ [H open] )
+No pages of output.
+";
+
+#[test]
+fn a_nul_ends_the_file_name_the_system_sees() {
+    let d = common::fresh_dir("flashtex-engine-nul-file-name");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("t.tex"), DOC).unwrap();
+    std::fs::write(d.join("b.tex"), "\\message{[in b]}\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args(["-ini", "-interaction=nonstopmode", "t.tex"])
+        .current_dir(&d)
+        .env(
+            "FLASHTEX_POOL",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+        )
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run flashtex-initex");
+    let log = std::fs::read_to_string(d.join("t.log")).unwrap();
+    let from = log.find("**t.tex").unwrap_or(0);
+    assert_eq!(
+        &log[from..],
+        PDFTEX_LOG,
+        "exit {:?}; terminal:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(std::fs::read(d.join("w")).ok().as_deref(), Some(&b"w\n"[..]));
+}
