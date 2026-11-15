@@ -237,8 +237,10 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       # (sweeps.py's XDOC, in the same order)
       XDOC=xdoc:fonts-ab,xdoc:fonts-ba,plain-10,full-10,full-100,beamer-5,beamer-30,rw:beamer-madrid,rw:beamer-overlays,rw:beamer-blocks-columns
       XDOC=$XDOC,rw:framed-tikz-theorems,rw:tikzcd-shaded-notes,rw:siunitx-tables
+      # (sweeps.py's XDOC_NEED: each must replay another document's entry)
+      NEED=full-100,rw:beamer-madrid,rw:beamer-overlays,rw:beamer-blocks-columns
       PYTHONHASHSEED=0 timeout 36000 python3 $S/xdoc.py gates --docs $XDOC --rounds 2 --edits 2 --fixtures $W/fixtures \
-        --out $R/xdoc.jsonl > $R/xdoc.txt 2>&1
+        --need-xdoc $NEED --out $R/xdoc.jsonl > $R/xdoc.txt 2>&1
       echo "xdoc exit $?" >> $R/xdoc.txt ;;
     sound-book)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials $(trials 8) --no-fixtures --dir $B/sound-book --out $R/soundness-book.jsonl \
