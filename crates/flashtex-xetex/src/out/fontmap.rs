@@ -350,9 +350,64 @@ pub fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
     Some(out)
 }
 
+/// An encoding file's own name, the `/Name` before its array, as
+/// `load_encoding_file` (`pdfencoding.c`) reads it: after white space and
+/// `%` comment lines, a PDF name (`parse_pdf_name`, `#xx` escapes), or
+/// none.
+pub fn enc_name(data: &[u8]) -> Option<Vec<u8>> {
+    let mut p = 0;
+    loop {
+        while p < data.len() && matches!(data[p], b' ' | b'\t' | b'\n' | b'\r' | 0x0C | 0) {
+            p += 1;
+        }
+        if data.get(p) != Some(&b'%') {
+            break;
+        }
+        while p < data.len() && data[p] != b'\n' && data[p] != b'\r' {
+            p += 1;
+        }
+    }
+    if data.get(p) != Some(&b'/') {
+        return None;
+    }
+    p += 1;
+    let delim =
+        |c: u8| matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0C | 0) || b"()/<>[]{}%".contains(&c);
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    let mut name = Vec::new();
+    while p < data.len() && !delim(data[p]) {
+        if data[p] == b'#' {
+            if let (Some(h), Some(l)) = (
+                data.get(p + 1).copied().and_then(hex),
+                data.get(p + 2).copied().and_then(hex),
+            ) {
+                name.push(h << 4 | l);
+                p += 3;
+                continue;
+            }
+        }
+        name.push(data[p]);
+        p += 1;
+    }
+    Some(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoding_names() {
+        assert_eq!(
+            enc_name(b"% lm-ec.enc\n%  more\n\n/enclmec[ /grave ] def").as_deref(),
+            Some(&b"enclmec"[..])
+        );
+        assert_eq!(
+            enc_name(b"/TeX#42ase1Encoding [").as_deref(),
+            Some(&b"TeXBase1Encoding"[..])
+        );
+        assert_eq!(enc_name(b"[ /a /b ] def"), None);
+    }
 
     #[test]
     fn map_lines() {
