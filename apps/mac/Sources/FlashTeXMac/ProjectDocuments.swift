@@ -1020,9 +1020,9 @@ final class ProjectDocuments {
     /// thread (`DocumentFilesState.saveInBackground`); the outcome is
     /// applied on main when it comes, unless the member was closed or
     /// renamed, or another project opened, meanwhile. Returns whether a save
-    /// was started; `completion` runs after its outcome was applied.
+    /// was started; `completion` gets the outcome once applied (nil: not applied).
     @discardableResult
-    func saveDocumentInBackground(_ path: String, completion: @escaping @MainActor () -> Void = {}) -> Bool {
+    func saveDocumentInBackground(_ path: String, completion: @escaping @MainActor (SaveOutcome?) -> Void = { _ in }) -> Bool {
         prune()
         guard path != entryPath, readOnlyNote(for: path) == nil, let doc = model.documents.first(where: { $0.path == path }),
               let root = projectRoot else { return false }
@@ -1033,9 +1033,8 @@ final class ProjectDocuments {
         let expected: ProjectFilesV1.Expected = expectedDisk.map { .hash($0) } ?? .newFile
         let generation = model.projectGeneration
         model.files.saveInBackground(url, text: text, expectation: { expected }, recordsState: false) { [weak self] result in
-            defer { completion() }
-            guard let self, model.projectGeneration == generation, projectRoot == root, isOpen(path) else { return }
-            _ = applySave(result, path: path, url: url, text: text)
+            guard let self, model.projectGeneration == generation, projectRoot == root, isOpen(path) else { return completion(nil) }
+            completion(applySave(result, path: path, url: url, text: text))
         }
         return true
     }

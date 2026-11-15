@@ -740,6 +740,52 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.lateReplies, [])
     }
 
+    /// Lane APP-LAG-AUDIT: ⌘S waits for the helper off the main thread, for
+    /// the entry and for a member (the fake answers every save 1 s late).
+    func testSaveCommandWaitsForTheHelperOffTheMainThread() async throws {
+        let dir = try tempDir("bg-save-command")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        try "chapter\n".write(to: dir.appendingPathComponent("chapter.tex"), atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        model.documentWatcher.stop() // the fake's write would probe the slow fake
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        // The entry.
+        model.updateActiveText("edited\n")
+        var t0 = Date()
+        model.saveTexInteractive()
+        var held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "⌘S held the main thread for the helper's reply (\(held) s)")
+        XCTAssertEqual(model.files.backgroundSavesSent, 1)
+        try await waitUntil("the entry's save to be applied", state: { "note=\(model.captureNote ?? "nil") status=\(model.files.status)" }) {
+            model.savedText == "edited\n"
+        }
+        XCTAssertEqual(model.captureNote, "Saved paper.tex")
+        XCTAssertEqual(try disk(url), "edited\n")
+        XCTAssertNil(model.files.conflict)
+
+        // A member: the main actor keeps running while its save is out.
+        guard case .switched = model.project.switchDocument(to: "chapter.tex") else { return XCTFail("no switch to chapter.tex") }
+        model.updateActiveText("chapter edited\n")
+        t0 = Date()
+        let save = Task { @MainActor in await model.saveDocumentInteractive("chapter.tex") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "the member's ⌘S held the main actor (\(held) s)")
+        XCTAssertEqual(model.files.backgroundSavesSent, 2)
+        await save.value
+        XCTAssertEqual(model.captureNote, "Saved chapter.tex")
+        XCTAssertFalse(model.project.isDirty("chapter.tex"))
+        XCTAssertEqual(try disk(dir.appendingPathComponent("chapter.tex")), "chapter edited\n")
+        XCTAssertEqual(model.files.lateReplies, [])
+    }
+
     /// REVIEW-E (#2277): the unsaved-edit checks (the quit question, Open,
     /// Reload, restore) settle an autosave in flight before they look. They
     /// used to count the edits it was writing as unsaved: ⌘Q asked to save
@@ -837,6 +883,82 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(try disk(chapterURL), "chapter edited\n")
         XCTAssertNil(model.files.conflict)
         XCTAssertNil(model.project.saveConflict(for: "chapter.tex"))
+    }
+
+    /// REVIEW-E (#2297): Vim's `:wq` on a member saves it off the main
+    /// thread and closes it once the save landed. It used to start the
+    /// detach while the save was still out, which refused it ("has unsaved
+    /// edits"), so `:wq` on a member never closed it.
+    func testWriteQuitOnAMemberSavesThenCloses() async throws {
+        let dir = try tempDir("bg-wq")
+        let url = dir.appendingPathComponent("paper.tex")
+        let chapterURL = dir.appendingPathComponent("chapter.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        try "chapter\n".write(to: chapterURL, atomically: true, encoding: .utf8)
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        model.documentWatcher.stop()
+        guard case .switched = model.project.switchDocument(to: "chapter.tex") else { return XCTFail("no switch to chapter.tex") }
+        model.updateActiveText("chapter edited\n")
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        let t0 = Date()
+        XCTAssertNil(model.writeQuit())
+        let held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, ":wq held the main thread for the helper's reply (\(held) s)")
+        try await waitUntil("the member to be saved and closed",
+                            state: { "open=\(model.project.isOpen("chapter.tex")) note=\(model.captureNote ?? "nil")" }) {
+            !model.project.isOpen("chapter.tex")
+        }
+        XCTAssertEqual(try disk(chapterURL), "chapter edited\n")
+        XCTAssertNil(model.project.saveConflict(for: "chapter.tex"))
+
+        // The entry cannot be closed: `:wq` there is a save.
+        XCTAssertEqual(model.activePath, "paper.tex")
+        XCTAssertEqual(model.writeQuit(), "E37: cannot close the entry document paper.tex")
+    }
+
+    /// REVIEW-E (#2297): an autosave the timer asks for while a ⌘S's
+    /// background save is out is queued, not dropped: it is armed again
+    /// once that save landed, so edits typed meanwhile reach disk without
+    /// waiting for another keystroke.
+    func testAnAutosaveAskedForDuringABackgroundSaveIsQueued() async throws {
+        let dir = try tempDir("bg-save-autosave")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let originalAutosave = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        addTeardownBlock { @MainActor in EditorPreferences.shared.autosave = originalAutosave }
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        model.updateActiveText("edited\n")
+        model.saveTexInteractive() // ⌘S: the entry's save goes out in the background
+        XCTAssertTrue(model.files.backgroundSavesInFlight)
+        model.updateActiveText("edited again\n")
+        model.flushPendingAutosave(inBackground: true) // the timer fires while the ⌘S is out: deferred
+        XCTAssertEqual(model.files.backgroundSavesSent, 1)
+        try await waitUntil("the ⌘S to be applied", state: { "savedText=\(model.savedText ?? "nil")" }) {
+            model.savedText == "edited\n"
+        }
+        // Re-armed: the next flush performs it (it used to find nothing pending).
+        model.flushPendingAutosave(inBackground: true)
+        XCTAssertEqual(model.files.backgroundSavesSent, 2, "the autosave asked for during the ⌘S was dropped")
+        try await waitUntil("the queued autosave to be applied", state: { "savedText=\(model.savedText ?? "nil")" }) {
+            model.savedText == "edited again\n"
+        }
+        XCTAssertEqual(try disk(url), "edited again\n")
+        XCTAssertFalse(model.isDirty)
     }
 
     func testGarbageReplyIsAProtocolFailureNotASave() throws {
