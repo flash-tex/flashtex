@@ -50,8 +50,6 @@ show in a document that uses TFM fonts only and none of the features named;
 - Native (OpenType/AAT/Graphite) fonts: `find_native_font` finds none, so a
   quoted font name that TeX Live finds as an installed font is a TFM lookup
   here (phase S1); the OpenType math routines (S1-S2); `\XeTeXglyph` etc.
-- `\XeTeXinputnormalization` (S1; TECkit's normalizer is
-  `Globals::normalize_utf32`, not yet called from `input_line`).
 - ML\TeX's character substitutions (`tex-mltex.ch` keeps only the effective
   character's TFM font mapping). A mapped character outside the font's
   range read by `char_info` without a range check (`\fontcharwd` etc.)
