@@ -5525,7 +5525,7 @@ impl Globals {
                 // §1447
                 {
                     if self.intr_verify_on {
-                        self.flashtex_intr_op(18i32, 0i32, 0i32, 0i32);
+                        self.flashtex_intr_op(21i32, 0i32, 0i32, 0i32);
                     }
                     self.scan_and_pack_name();
                     i = { let mut __f0 = ::core::mem::take(&mut j); let __r = self.get_encoding_mode_and_info(&mut __f0); j = __f0; __r };
@@ -5537,7 +5537,7 @@ impl Globals {
                 // §1448
                 {
                     if self.intr_verify_on {
-                        self.flashtex_intr_op(18i32, 0i32, 0i32, 0i32);
+                        self.flashtex_intr_op(21i32, 0i32, 0i32, 0i32);
                     }
                     self.scan_file_name();
                     if (self.length(self.cur_name) == 0i32) {
