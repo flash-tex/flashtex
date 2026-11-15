@@ -26,6 +26,9 @@
 
 mod common;
 
+#[path = "host_incremental/srcmap_audit.rs"]
+mod srcmap_audit;
+
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{Item, Page};
@@ -40,6 +43,21 @@ struct Host(Child, PathBuf);
 
 impl Drop for Host {
     fn drop(&mut self) {
+        // (cargo-llvm-cov: `SIGTERM` first, on which a coverage build
+        // writes its profile, `host::crash`; a kill would lose it)
+        #[cfg(coverage)]
+        {
+            let _ = Command::new("kill")
+                .args(["-TERM", &self.0.id().to_string()])
+                .status();
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(20) {
+                if matches!(self.0.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
         let _ = std::fs::remove_file(&self.1);
@@ -158,6 +176,8 @@ struct View {
     files: HashMap<u32, String>,
     /// `IMAGE` messages, in order.
     images: Vec<Json>,
+    /// `FORM` messages, by form id: the latest one of each.
+    forms: HashMap<u32, Page>,
     count: usize,
 }
 
@@ -176,6 +196,8 @@ struct Outcome {
     /// `SOURCES` declared (new or moved).
     span_shifts: usize,
     declared: usize,
+    /// `DIAG`s (`diag-v1`, spec §6.7), for a client that accepted it.
+    diags: Vec<flashtex_display_list::diag::Diag>,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -188,6 +210,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut progress = 0;
     let mut progress_files = vec![];
     let (mut span_shifts, mut declared) = (0, 0);
+    let mut diags = vec![];
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -234,8 +257,24 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
                 view.page_fonts.insert(p.index, view.fonts.clone());
                 view.pages.insert(p.index, p);
             }
+            // (a form by its id, as the client keys it: `resolve` compares
+            // the forms a page draws, whose content its hash leaves out;
+            // its fonts sent before it, as a page's, spec §5)
+            Event::Form(f) => {
+                for it in &f.items {
+                    if let Item::Glyph { font, .. } = it {
+                        assert!(
+                            view.fonts.contains_key(font),
+                            "form {}: font {font} not sent",
+                            f.index
+                        )
+                    }
+                }
+                view.forms.insert(f.index, f);
+            }
             Event::Pages(j) => pages_msgs.push(j),
             Event::Image(j) => view.images.push(j),
+            Event::Diag(d) => diags.push(d),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
             Event::Other(k, body) if k == flashtex_display_list::kind::SPAN_SHIFT => {
@@ -269,6 +308,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         progress_files,
         span_shifts,
         declared,
+        diags,
     }
 }
 
@@ -280,6 +320,28 @@ struct Resolved {
     page: Page,
     spans: Vec<(String, u32)>,
     fonts: Vec<(u16, [u8; 32])>,
+    /// The forms the page draws, directly or through other forms, in order
+    /// of first use: id and content hash (lane TEST-GAPS: a page's hash
+    /// names its forms by id only, so a stale form went unnoticed).
+    forms: Vec<(u32, [u8; 32])>,
+}
+
+/// The forms `items` draw, and the forms those draw, in order of first
+/// use, as `view` holds them; a form drawn but never sent fails.
+fn forms_drawn(view: &View, items: &[Item], what: &str, into: &mut Vec<(u32, [u8; 32])>) {
+    for it in items {
+        if let Item::Form { id, .. } = it {
+            if into.iter().any(|(k, _)| k == id) {
+                continue;
+            }
+            let f = view
+                .forms
+                .get(id)
+                .unwrap_or_else(|| panic!("{what} draws form {id}, which was never sent"));
+            into.push((*id, f.hash));
+            forms_drawn(view, &f.items, what, into);
+        }
+    }
 }
 
 fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
@@ -333,6 +395,19 @@ fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
             _ => None,
         })
         .collect();
+    let mut forms = vec![];
+    forms_drawn(view, &page.items, &format!("page {i}"), &mut forms);
+    // (and the fonts of the forms it draws: a form's font may be used
+    // nowhere else, review of #2019)
+    for (id, _) in &forms {
+        for it in &view.forms[id].items {
+            if let Item::Glyph { font, .. } = it {
+                let key = bound.get(font).or_else(|| view.fonts.get(font));
+                let key = *key.unwrap_or_else(|| panic!("form {id}: font {font} not sent"));
+                fonts.push((*font, key));
+            }
+        }
+    }
     fonts.sort();
     fonts.dedup();
     Resolved {
@@ -340,6 +415,7 @@ fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
         page,
         spans,
         fonts,
+        forms,
     }
 }
 
@@ -354,6 +430,14 @@ fn describe_difference(a: &Resolved, b: &Resolved) -> String {
     }
     if a.fonts != b.fonts {
         return format!("fonts {:?} vs {:?}", a.fonts, b.fonts);
+    }
+    if a.forms != b.forms {
+        let short = |v: &[(u32, [u8; 32])]| -> Vec<String> {
+            v.iter()
+                .map(|(k, h)| format!("{k}:{:02x?}", &h[..4]))
+                .collect()
+        };
+        return format!("forms {:?} vs {:?}", short(&a.forms), short(&b.forms));
     }
     if let Some(k) =
         (0..a.spans.len().max(b.spans.len())).find(|&k| a.spans.get(k) != b.spans.get(k))
@@ -1430,6 +1514,85 @@ fn export_runs_the_engine_as_a_child() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `\include{chapters/one}` with the output directory elsewhere (#1654):
+/// pdfTeX with `-output-directory` stops at `\openout` of
+/// `chapters/one.aux` (the directory is not there; TeX Live 2026, measured),
+/// and the host makes it, so that the run is pdflatex's in the project
+/// directory: the same `.aux` files, resident and exported.
+#[test]
+fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-subdir-include");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, here) = (base.join("proj"), base.join("out"), base.join("here"));
+    for d in [&proj, &here] {
+        std::fs::create_dir_all(d.join("chapters/deeper")).unwrap();
+        std::fs::write(
+            d.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\nSee \\ref{one} and \\ref{two}.\n\
+             \\include{chapters/one}\n\\include{chapters/deeper/two}\n\\end{document}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("chapters/one.tex"),
+            "\\section{One}\\label{one}\nText.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("chapters/deeper/two.tex"),
+            "\\section{Two}\\label{two}\nMore.\n",
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(&out).unwrap();
+    // pdflatex's run, twice, in the project directory (no output directory)
+    let argv: Vec<String> = ["pdflatex", "-interaction=nonstopmode", "main.tex"]
+        .map(String::from)
+        .to_vec();
+    run_engine(&argv, &here);
+    run_engine(&argv, &here);
+    let host = start_host("i");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    for id in 1..=4 {
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        assert_eq!(
+            o.done.str_field("status"),
+            Some("ok"),
+            "compile {id}: {}",
+            o.done
+        );
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    for aux in ["main.aux", "chapters/one.aux", "chapters/deeper/two.aux"] {
+        let want = std::fs::read(here.join(aux)).unwrap();
+        let got = std::fs::read(out.join(aux)).unwrap_or_else(|e| panic!("{aux}: {e}"));
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            String::from_utf8_lossy(&want),
+            "{aux}"
+        );
+        assert!(!proj.join(aux).exists(), "{aux} written in the project");
+    }
+    // an export (the engine as a child) into a fresh output directory
+    let out2 = base.join("out2");
+    std::fs::create_dir_all(&out2).unwrap();
+    let mut r = CompileRequest::new(9, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out2.to_str().unwrap().into());
+    r.export = true;
+    let o = compile(&mut c, &mut View::default(), &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "export: {}", o.done);
+    assert!(out2.join("chapters/deeper/two.aux").is_file());
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Every parity fixture through the socket host (run with `--ignored`; it
 /// takes minutes): a word replaced at the middle of the document, a comment
 /// line inserted early and a word replaced late; after every compile every
@@ -1686,11 +1849,11 @@ fn a_newer_compile_preempts_the_running_one() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// LIVE-30MS: typing faster than the edited page arrives must not starve
-/// the preview. After a compile that newer work stopped before it shipped a
-/// changed page, the next one is not stopped before its changed page, and
-/// sends it even when superseded (then stops, `cancelled`); and what the
-/// client holds at the end still equals a from-scratch compile.
+/// LIVE-30MS, TYPING-50MS: typing faster than the edited page arrives must
+/// not starve the preview. No incremental compile is stopped by newer work
+/// before its changed page: each sends it even when superseded (then stops,
+/// `cancelled`); and what the client holds at the end still equals a
+/// from-scratch compile.
 #[test]
 fn a_superseded_compile_still_sends_its_edited_page() {
     if find_texlive_bin().is_none() {
@@ -1787,22 +1950,19 @@ fn a_superseded_compile_still_sends_its_edited_page() {
         }
         assert_eq!(dones[2].int_field("id"), Some(ids[2]));
         assert_eq!(dones[2].str_field("status"), Some("ok"), "{}", dones[2]);
-        // the first stopped before a page (starved): the second, superseded
-        // too, still sent its changed page
+        // a compile superseded while it ran (the next keystroke was sent
+        // as soon as it started) still sent its changed page
         let cancelled = |d: &Json| d.str_field("status") == Some("cancelled");
-        let started = |d: &Json| d.get("stages").is_some();
-        if cancelled(&dones[0])
-            && started(&dones[0])
-            && pages.get(&ids[0]).copied().unwrap_or(0) == 0
-            && cancelled(&dones[1])
-            && started(&dones[1])
-        {
-            assert!(
-                pages.get(&ids[1]).copied().unwrap_or(0) >= 1,
-                "round {round}: the protected compile sent no page: {}",
-                dones[1]
-            );
-            sent_superseded += 1;
+        let ran =
+            |d: &Json| d.get("stages").is_some() && d.str_field("mode") == Some("incremental");
+        for (n, d) in dones[..2].iter().enumerate() {
+            if cancelled(d) && ran(d) {
+                assert!(
+                    pages.get(&ids[n]).copied().unwrap_or(0) >= 1,
+                    "round {round}: superseded compile {n} sent no page: {d}"
+                );
+                sent_superseded += 1;
+            }
         }
         let dones = [dones[0].clone(), dones[2].clone()];
         let count = dones[1].int_field("pages").unwrap_or(0) as usize;
@@ -1820,13 +1980,16 @@ fn a_superseded_compile_still_sends_its_edited_page() {
             &format!("superseded round {round}"),
         );
     }
-    // The second keystroke is sent as soon as the first has started: the
-    // first is stopped at its first checkpoint, long before its page, in
-    // practice every round; one round at least, or the test proved nothing.
-    eprintln!("{sent_superseded} of 5 rounds starved a compile and protected the next");
+    // The next keystroke is sent as soon as a compile has started: without
+    // the protection it would stop at its first checkpoint, long before its
+    // page, in practice every time; once at least, or the test proved
+    // nothing.
+    eprintln!(
+        "{sent_superseded} of 10 compiles were superseded while they ran and sent their page"
+    );
     assert!(
         sent_superseded >= 1,
-        "no round starved a compile: the protection was not exercised"
+        "no compile was superseded while it ran: the protection was not exercised"
     );
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
@@ -4971,6 +5134,432 @@ fn edits_after_a_reopen_from_s1_equal_scratch_compiles() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The S₀/S₁ cache (`--s0-cache`) is pruned: a host prunes it in the
+/// background once it has opened its first document, least recently used
+/// first, to the performance mode's cap (`FLASHTEX_S0_CACHE_CAP` here).
+/// Another project's pair goes together; the open project's files, and
+/// anything not named as the cache names its files, stay.
+#[test]
+fn the_s0_cache_is_pruned_least_recently_used_first() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s0-prune");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    for d in [&proj, &out, &cache] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    let day = Duration::from_secs(86_400);
+    let now = std::time::SystemTime::now();
+    let fake = |name: &str, kb: usize, age: Duration| {
+        let p = cache.join(name);
+        std::fs::write(&p, vec![7u8; kb << 10]).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(now - age)
+            .unwrap();
+        p
+    };
+    let h = |c: char| c.to_string().repeat(32);
+    // (oldest first: one S₀ alone, a pair, a newer S₀; 1.8 MB in all, over
+    // the 1 MB cap until the first two go)
+    let old1 = fake(&format!("{}.s0", h('a')), 600, 4 * day);
+    let old2 = [
+        fake(&format!("{}.s0", h('b')), 300, 3 * day),
+        fake(&format!("{}.s1", h('b')), 300, 3 * day),
+    ];
+    let newer = fake(&format!("{}.s0", h('c')), 600, day);
+    let kept = [
+        fake("notes.s0", 600, 9 * day),
+        fake(&format!("{}.txt", h('d')), 600, 9 * day),
+        fake(&format!("{}.s0.123.456.0.tmp", h('e')), 600, 9 * day),
+    ];
+    let env = [
+        ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ("FLASHTEX_S0_CACHE_CAP", "1000000"),
+    ];
+    let host = start_host_env("pr", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let gone = || !old1.exists() && old2.iter().all(|p| !p.exists());
+    while !gone() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(gone(), "the least recently used files were not pruned");
+    for p in &kept {
+        assert!(
+            p.exists(),
+            "{} is not the cache's, and was removed",
+            p.display()
+        );
+    }
+    // the current project's S₀, saved after the compile
+    let own_s0 = || {
+        std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "s0") && *p != newer && !kept.contains(p))
+    };
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while own_s0().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let own = own_s0().expect("the current project's S0 was not saved");
+    let _ = c.bye();
+    drop(host);
+    // A second host for the project prunes again: the newer S₀ goes, and
+    // the project's own (the cache's largest file, over the cap alone)
+    // stays while the project is open.
+    let host = start_host_env("pr2", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while newer.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!newer.exists(), "the newer S0 was not pruned");
+    assert!(own.exists(), "the open project's S0 was pruned");
+    for p in &kept {
+        assert!(
+            p.exists(),
+            "{} is not the cache's, and was removed",
+            p.display()
+        );
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+// ---------------------------------------------------------------------------
+// Lane TEST-GAPS: host/server.rs's error and cancellation paths that the CI
+// coverage run (coverage-engine.yml, 2026-11-01) found untaken.
+// ---------------------------------------------------------------------------
+
+/// A raw connection to the host: frames written and read by hand.
+fn raw_connect(sock: &Path) -> std::os::unix::net::UnixStream {
+    std::os::unix::net::UnixStream::connect(sock).unwrap()
+}
+
+fn raw_hello(major: i64) -> Vec<u8> {
+    format!(
+        "{{\"protocol\":\"{}\",\"version\":[{major},{}]}}",
+        flashtex_display_list::PROTOCOL,
+        flashtex_display_list::LATEST_MINOR
+    )
+    .into_bytes()
+}
+
+/// The next frame, decoded as JSON (`Null`: a binary one, PAGE or FONT).
+fn raw_read(s: &mut std::os::unix::net::UnixStream) -> (u8, Json) {
+    let (k, body) = flashtex_display_list::frame::read_frame(s)
+        .unwrap()
+        .expect("the host closed the connection");
+    let j = std::str::from_utf8(&body)
+        .ok()
+        .and_then(|t| Json::parse(t).ok())
+        .unwrap_or(Json::Null);
+    (k, j)
+}
+
+/// `server::connection`'s refusals: a first frame that is not HELLO
+/// ("expected HELLO"), a HELLO of another major version ("this host
+/// speaks ..."), each an ERROR before the host closes the connection; and
+/// a COMPILE whose body is not JSON ("COMPILE is not JSON"), after which
+/// the connection goes on to a compile that runs.
+#[test]
+fn a_connection_refuses_a_bad_hello_and_a_compile_that_is_not_json() {
+    use flashtex_display_list::frame::write_frame;
+    use flashtex_display_list::kind;
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let host = start_host("proto");
+    // (a) COMPILE first
+    let mut s = raw_connect(&host.1);
+    write_frame(&mut s, kind::COMPILE, b"{}").unwrap();
+    let (k, j) = raw_read(&mut s);
+    assert_eq!(k, kind::ERROR, "{j}");
+    assert_eq!(j.str_field("message"), Some("expected HELLO"), "{j}");
+    // (b) another major version
+    let mut s = raw_connect(&host.1);
+    write_frame(&mut s, kind::C_HELLO, &raw_hello(99)).unwrap();
+    let (k, j) = raw_read(&mut s);
+    assert_eq!(k, kind::ERROR, "{j}");
+    assert_eq!(j.str_field("code"), Some("version"), "{j}");
+    assert!(
+        j.str_field("message")
+            .is_some_and(|m| m.starts_with("this host speaks")),
+        "{j}"
+    );
+    // (c) a COMPILE that is not JSON, then one that is
+    let mut s = raw_connect(&host.1);
+    write_frame(
+        &mut s,
+        kind::C_HELLO,
+        &raw_hello(flashtex_display_list::VERSION_MAJOR as i64),
+    )
+    .unwrap();
+    assert_eq!(raw_read(&mut s).0, kind::HELLO);
+    write_frame(&mut s, kind::COMPILE, b"{not json").unwrap();
+    let (k, j) = raw_read(&mut s);
+    assert_eq!(k, kind::ERROR, "{j}");
+    assert_eq!(j.str_field("message"), Some("COMPILE is not JSON"), "{j}");
+    let base = common::fresh_dir("flashtex-host-proto");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    let r = req(1, &proj, &out, "main.tex");
+    write_frame(&mut s, kind::COMPILE, r.to_json().to_string().as_bytes()).unwrap();
+    let done = loop {
+        let (k, j) = raw_read(&mut s);
+        if k == kind::DONE {
+            break j;
+        }
+        assert_ne!(k, kind::ERROR, "{j}");
+    };
+    assert_eq!(done.str_field("status"), Some("ok"), "{done}");
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An export (`server::start_export`) of a document with an error: DONE's
+/// status is "error", and the DIAGNOSTIC names the error the oracle's log
+/// has (TeX Live's pdflatex on the same file: its message and `l.N`).
+#[test]
+fn an_export_with_an_error_reports_it_as_pdflatex_does() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-xerr");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, oracle) = (base.join("proj"), base.join("out"), base.join("oracle"));
+    for d in [&proj, &out, &oracle] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let doc = article(2).replacen(
+        "\\begin{document}\n",
+        "\\begin{document}\nA sentence, then \\undefinedmacro here.\n",
+        1,
+    );
+    std::fs::write(proj.join("main.tex"), &doc).unwrap();
+    std::fs::write(oracle.join("main.tex"), &doc).unwrap();
+    // the oracle: its first error's message and line
+    let bin = find_texlive_bin().unwrap();
+    let _ = Command::new(bin.join("pdflatex"))
+        .args(["-interaction=nonstopmode", "main.tex"])
+        .current_dir(&oracle)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    let log = std::fs::read_to_string(oracle.join("main.log")).unwrap();
+    let mut lines = log.lines().skip_while(|l| !l.starts_with("! "));
+    let message = lines.next().expect("the oracle reports an error")[2..].to_string();
+    let line: i64 = lines
+        .find_map(|l| l.strip_prefix("l.")?.split(' ').next()?.parse().ok())
+        .expect("the oracle's l.N");
+    let host = start_host("xerr");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut r = CompileRequest::new(1, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out.to_str().unwrap().into());
+    r.export = true;
+    c.compile(&r).unwrap();
+    let mut diags = vec![];
+    let done = loop {
+        match c
+            .next_event()
+            .unwrap()
+            .expect("the host closed the connection")
+        {
+            Event::Diagnostic(d) => diags.push(d),
+            Event::Done(d) => break d,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    };
+    assert_eq!(done.str_field("status"), Some("error"), "{done}");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.str_field("severity") == Some("error")
+                && d.str_field("message")
+                    .is_some_and(|m| m.contains(message.trim_end_matches('.')))
+                && d.int_field("line") == Some(line)),
+        "no diagnostic for the oracle's {message:?} at l.{line}: {diags:?}"
+    );
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A CANCEL of a running export (`server::connection`, `ExportRun::cancel`)
+/// ends it: DONE's status is "cancelled", and the connection goes on to a
+/// compile that runs.
+#[test]
+fn a_cancelled_export_says_so_and_the_connection_goes_on() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-xcancel");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(400)).unwrap();
+    let host = start_host("xcancel");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut r = CompileRequest::new(1, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out.to_str().unwrap().into());
+    r.export = true;
+    c.compile(&r).unwrap();
+    let done = loop {
+        match c
+            .next_event()
+            .unwrap()
+            .expect("the host closed the connection")
+        {
+            Event::Started(_) => c.cancel(1).unwrap(),
+            Event::Done(d) => break d,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    };
+    // (CANCEL follows STARTED's COMPILE in order, so it cannot precede the
+    // export; but a reader stalled for the whole export sees it finish
+    // first: not a failure of cancelling, review of #2019)
+    if done.str_field("status") == Some("ok") {
+        eprintln!("skipped: the export finished before the CANCEL was read ({done})");
+    } else {
+        assert_eq!(done.str_field("status"), Some("cancelled"), "{done}");
+    }
+    let mut view = View::default();
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    let o = compile(&mut c, &mut view, &req(2, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Every page of `view` draws at least one form.
+fn every_page_draws_a_form(view: &View, proj: &Path, out: &Path, what: &str) {
+    for i in 0..view.count as u32 {
+        assert!(
+            !resolve(view, i, proj, out).forms.is_empty(),
+            "{what}: page {i} draws no form"
+        );
+    }
+}
+
+/// Lane TEST-GAPS: forms (`\pdfxform`) through the resident host
+/// (`host::resident::emit`'s and `deliver`'s form paths, never taken under
+/// the CI coverage run; and the tests' views ignored FORM, so a stale form
+/// went unnoticed). A form made on the first page, drawn on every page,
+/// and its content edited: after each compile every page and every form it
+/// draws equals a scratch compile's. Then a second connection to the same
+/// document gets the kept pages from the cache, with their forms.
+#[test]
+fn an_edited_form_drawn_on_every_page_equals_a_scratch_compile() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let doc = |logo: &str| -> String {
+        let mut s = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\
+             \\setbox0\\hbox{{\\bfseries Logo {logo}}}\\immediate\\pdfxform0\n\
+             \\edef\\logo{{\\the\\pdflastxform}}\n"
+        );
+        for i in 0..60 {
+            s.push_str(&format!(
+                "Paragraph {i} with the logo \\pdfrefxform\\logo{{}} and enough text to \
+                 fill a few lines of the page so that the document ships several pages.\n\n"
+            ));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let base = common::fresh_dir("flashtex-host-forms");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), doc("alpha")).unwrap();
+    let host = start_host("forms");
+    let scratch = start_host("formss");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for (k, logo) in ["alpha", "alpha", "omega", "omega", "alpha"]
+        .iter()
+        .enumerate()
+    {
+        std::fs::write(proj.join("main.tex"), doc(logo)).unwrap();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        assert!(view.count >= 3, "{} pages", view.count);
+        assert!(!view.forms.is_empty(), "compile {k}: no FORM sent");
+        // (each page draws the logo: if emission dropped every form draw,
+        // the scratch side would lose them too, review of #2019)
+        every_page_draws_a_form(&view, &proj, &out, &format!("compile {k}"));
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("f{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            "main.tex",
+            &format!("compile {k}, logo {logo}"),
+        );
+    }
+    // a second client of the same document: the pages from the cache,
+    // with the forms they draw
+    let mut c2 = Client::connect(&host.1).unwrap();
+    let mut v2 = View::default();
+    let mut r = req(1, &proj, &out, "main.tex");
+    r.incremental = true;
+    let o = compile(&mut c2, &mut v2, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    every_page_draws_a_form(&v2, &proj, &out, "a second connection");
+    let (p2, o2) = snapshot(&base, &proj, &out, "fsecond");
+    compare_with_scratch(
+        &scratch.1,
+        &v2,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "a second connection",
+    );
+    let _ = c.bye();
+    let _ = c2.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A `COMPILE` the host may refuse: the ERROR it sent, or the DONE of the
 /// compile it ran (its pages not kept).
 fn compile_or_error(c: &mut Client, r: &CompileRequest) -> Result<Json, Json> {
@@ -5386,5 +5975,881 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
     assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
     assert!(log == log0, "the log differs from a scratch compile's");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+// ---------------------------------------------------------------------------
+// Lane TEST-GAPS: random edit sequences against scratch compiles.
+//
+// From a seed, each document gets a sequence of edits as an author makes
+// them: letters typed into and deleted from words, a control sequence's
+// name broken and mended, preamble lines, labels, references, citations
+// and sections (the `.aux` and the passes), edits in the files the main
+// file `\input`s, reverts to an earlier text (undo), and jumps far from the
+// last edit. Half arrive as COMPILE edits (byte splices), half as files
+// written on disk. After every step the host's pages -- with every form
+// they draw -- and its log equal a scratch compile's on a copy of the
+// directory. A mismatch is shrunk to a shortest failing sequence found
+// (steps removed while it still fails), and the panic names the seed, the
+// document and that sequence.
+//
+// Short by default (`random_edit_sequences_equal_scratch_compiles`: three
+// documents, 8 steps each). The long mode is the same test with
+// FLASHTEX_FUZZ_SEED (first seed, default 1), FLASHTEX_FUZZ_SEEDS (how
+// many), FLASHTEX_FUZZ_STEPS (per document) and FLASHTEX_FUZZ_DOCS (fixture
+// names, comma-separated, or `all`): .github/workflows/edit-fuzz.yml.
+// ---------------------------------------------------------------------------
+
+/// xorshift64*: the sequences are the seed's, on every machine.
+struct Rng(u64);
+
+impl Rng {
+    fn new(seed: u64) -> Rng {
+        Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+    }
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n.max(1) as u64) as usize
+    }
+    fn chance(&mut self, percent: u64) -> bool {
+        self.next() % 100 < percent
+    }
+}
+
+/// One step of a sequence: a splice of one file (offsets are clamped when a
+/// shrunk sequence replays it on another text), or a revert of every file
+/// to the text before step `to` of the sequence.
+#[derive(Clone, Debug)]
+enum FuzzStep {
+    Splice {
+        file: String,
+        at: usize,
+        delete: usize,
+        insert: String,
+        /// as a COMPILE edit (else written on disk)
+        wire: bool,
+    },
+    Revert {
+        to: usize,
+    },
+}
+
+/// The document's editable sources: the main file and the `.tex` files
+/// under its directory (what it `\input`s or `\include`s).
+fn fuzz_sources(proj: &Path, main: &str) -> Vec<String> {
+    let mut v = vec![main.to_string()];
+    let mut stack = vec![PathBuf::new()];
+    while let Some(rel) = stack.pop() {
+        for e in std::fs::read_dir(proj.join(&rel)).unwrap().flatten() {
+            let r = rel.join(e.file_name());
+            if e.file_type().unwrap().is_dir() {
+                stack.push(r);
+            } else if r.extension().is_some_and(|x| x == "tex") {
+                let s = r.to_string_lossy().into_owned();
+                if s != main {
+                    v.push(s);
+                }
+            }
+        }
+    }
+    v[1..].sort();
+    v
+}
+
+/// Byte offsets inside words (between two ASCII letters) of `text`, from
+/// `lo` on; not in a control word's name or an environment's (`\begin{..}`,
+/// `\end{..}`): a name broken is an edit kind of its own, and the error
+/// it gives stays until a revert mends it (and not in a file's name,
+/// `names_a_file`).
+fn inside_words(text: &str, lo: usize) -> Vec<usize> {
+    let b = text.as_bytes();
+    let mut v = vec![];
+    let mut run = 0;
+    for i in 1..b.len() {
+        if !b[i - 1].is_ascii_alphabetic() {
+            run = i;
+        }
+        if i < lo || !b[i - 1].is_ascii_alphabetic() || !b[i].is_ascii_alphabetic() {
+            continue;
+        }
+        // (`run`, the word's first letter, is ASCII: a char boundary)
+        let name = run > 0
+            && (b[run - 1] == b'\\'
+                || text[..run].ends_with("\\begin{")
+                || text[..run].ends_with("\\end{"));
+        if !name && !names_a_file(text, i) {
+            v.push(i);
+        }
+    }
+    v
+}
+
+/// Whether offset `i` is in the name of a file that `text` loads there: a
+/// class, a package, a theme, an `\input` or `\include`. A letter typed or
+/// deleted there names a file that does not exist, and TeX stops before
+/// the first page -- on both sides alike, so that the steps until a revert
+/// would compare no page.
+fn names_a_file(text: &str, i: usize) -> bool {
+    let ls = text[..i].rfind('\n').map_or(0, |k| k + 1);
+    let Some(bs) = text[ls..i].rfind('\\').map(|k| ls + k) else {
+        return false;
+    };
+    let name: String = text[bs + 1..i]
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let loads = matches!(
+        name.as_str(),
+        "documentclass"
+            | "usepackage"
+            | "RequirePackage"
+            | "input"
+            | "include"
+            | "includegraphics"
+            | "bibliography"
+            | "bibliographystyle"
+    ) || (name.starts_with("use") && name.ends_with("theme"));
+    // (in its arguments, up to the closing brace)
+    loads && !text[bs + 1 + name.len()..i].contains('}')
+}
+
+/// The next step for `texts` (the sources' current text), near `last` (the
+/// last edit's file and offset) unless the step jumps.
+fn fuzz_step(
+    rng: &mut Rng,
+    texts: &[(String, String)],
+    main: &str,
+    last: &mut Option<(usize, usize)>,
+    done: usize,
+    labels: &mut usize,
+) -> FuzzStep {
+    if done > 1 && rng.chance(12) {
+        return FuzzStep::Revert {
+            to: rng.below(done),
+        };
+    }
+    let wire = rng.chance(50);
+    // which file: the last one mostly, another sometimes
+    let fi = match *last {
+        Some((f, _)) if !rng.chance(25) => f,
+        _ => rng.below(texts.len()),
+    };
+    let (file, text) = &texts[fi];
+    let body = if file == main {
+        text.find("\\begin{document}").map_or(0, |i| i + 16)
+    } else {
+        0
+    };
+    let end = text.find("\\end{document}").unwrap_or(text.len());
+    // where: near the last edit, or anywhere (a jump)
+    let near = |rng: &mut Rng, cands: &[usize]| -> Option<usize> {
+        if cands.is_empty() {
+            return None;
+        }
+        if let Some((f, o)) = *last {
+            if f == fi && !rng.chance(30) {
+                let close: Vec<usize> = cands
+                    .iter()
+                    .copied()
+                    .filter(|&c| c.abs_diff(o) < 400)
+                    .collect();
+                if !close.is_empty() {
+                    return Some(close[rng.below(close.len())]);
+                }
+            }
+        }
+        Some(cands[rng.below(cands.len())])
+    };
+    let words: Vec<usize> = inside_words(text, body)
+        .into_iter()
+        .filter(|&i| i < end)
+        .collect();
+    let kind = rng.below(100);
+    let step = |at: usize, delete: usize, insert: String| FuzzStep::Splice {
+        file: file.clone(),
+        at,
+        delete,
+        insert,
+        wire,
+    };
+    let s = if kind < 35 {
+        // letters typed into a word
+        near(rng, &words).map(|at| {
+            let n = 1 + rng.below(3);
+            let ins: String = (0..n)
+                .map(|_| (b'a' + rng.below(26) as u8) as char)
+                .collect();
+            step(at, 0, ins)
+        })
+    } else if kind < 55 {
+        // letters deleted from a word (both sides stay letters)
+        near(rng, &words).map(|at| {
+            let b = text.as_bytes();
+            let mut n = 1 + rng.below(2);
+            while n > 0 && !(at + n < b.len() && b[at + n].is_ascii_alphabetic()) {
+                n -= 1;
+            }
+            step(at, n.max(1).min(b.len() - at), String::new())
+        })
+    } else if kind < 65 {
+        // a control sequence's name broken (a letter in it), or mended by
+        // a later revert
+        let cs: Vec<usize> = text
+            .match_indices('\\')
+            .map(|(i, _)| i + 2)
+            .filter(|&i| {
+                i < end
+                    && i >= body
+                    && text
+                        .as_bytes()
+                        .get(i - 1)
+                        .is_some_and(|c| c.is_ascii_alphabetic())
+                    && text
+                        .as_bytes()
+                        .get(i)
+                        .is_some_and(|c| c.is_ascii_alphabetic())
+            })
+            .collect();
+        near(rng, &cs).map(|at| step(at, 0, "x".into()))
+    } else if kind < 73 && file == main && body > 0 {
+        // the preamble: a definition, a comment, or a letter of a word
+        let at = text[..body - 16].rfind('\n').map_or(0, |i| i + 1);
+        let pre: Vec<usize> = inside_words(text, 0)
+            .into_iter()
+            .filter(|&i| i < body - 16)
+            .collect();
+        Some(match rng.below(3) {
+            // (a new name each time: `\newcommand` of a defined one is an
+            // error that would stay)
+            0 => {
+                *labels += 1;
+                step(
+                    at,
+                    0,
+                    format!("\\newcommand\\fuzz{}{{x}}\n", roman_fuzz(*labels)),
+                )
+            }
+            1 => step(at, 0, "% a preamble comment\n".into()),
+            _ => match near(rng, &pre) {
+                Some(p) => step(p, 0, "q".into()),
+                None => step(at, 0, "% a preamble comment\n".into()),
+            },
+        })
+    } else if kind < 90 {
+        // the .aux: a label, a reference to one, a citation, a section
+        let lines: Vec<usize> = std::iter::once(body)
+            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+            .filter(|&i| i >= body && i < end)
+            .collect();
+        near(rng, &lines).map(|at| {
+            *labels += 1;
+            let n = *labels;
+            let ins = match rng.below(4) {
+                0 => format!("\\label{{fz{n}}}"),
+                1 => format!(
+                    "See~\\ref{{fz{}}} on page~\\pageref{{fz{}}}.\n",
+                    n / 2,
+                    n / 2
+                ),
+                2 => format!("\\cite{{fz{n}}}\n"),
+                _ => format!("\\section{{Fuzz {n}}}\\label{{fz{n}}}\n"),
+            };
+            step(at, 0, ins)
+        })
+    } else {
+        // a paragraph break, or two lines joined
+        let nl: Vec<usize> = text
+            .match_indices('\n')
+            .map(|(i, _)| i)
+            .filter(|&i| i >= body && i < end)
+            .collect();
+        near(rng, &nl).map(|at| {
+            if rng.chance(50) {
+                step(at, 0, "\n".into())
+            } else {
+                step(at, 1, " ".into())
+            }
+        })
+    };
+    let s = s.unwrap_or_else(|| step(body.min(end), 0, "\n% nothing to edit here\n".into()));
+    if let FuzzStep::Splice { at, .. } = &s {
+        *last = Some((fi, *at));
+    }
+    s
+}
+
+/// FNV-1a, 64 bits: a document's name as a number for its sequences' seed.
+fn fnv1a(s: &str) -> u64 {
+    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+fn roman_fuzz(mut k: usize) -> String {
+    // (a control sequence name of letters only)
+    let mut s = String::new();
+    loop {
+        s.push((b'a' + (k % 26) as u8) as char);
+        k /= 26;
+        if k == 0 {
+            return s;
+        }
+    }
+}
+
+/// The log with TeX's line wrapping undone (a line of `max_print_line`, 79
+/// bytes, goes on in the next), `from` replaced by `to` (the copy's
+/// directory, the same length, by the host's), and without DESIGN.md
+/// §1.1's capacity accounting.
+fn fuzz_log(log: &[u8], from: &Path, to: &Path) -> String {
+    let raw = String::from_utf8_lossy(log);
+    let mut t = String::new();
+    for ln in raw.split('\n') {
+        t.push_str(ln);
+        if ln.len() != 79 {
+            t.push('\n');
+        }
+    }
+    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    for (a, b) in [
+        (from.to_path_buf(), to.to_path_buf()),
+        (canon(from), canon(to)),
+    ] {
+        t = t.replace(&*a.to_string_lossy(), &b.to_string_lossy());
+    }
+    let mut out = vec![];
+    let mut in_block = false;
+    for ln in t.split('\n') {
+        if ln == "Here is how much of TeX's memory you used:" || ln == "PDF statistics:" {
+            in_block = true;
+            continue;
+        }
+        if in_block && ln.starts_with(' ') {
+            continue;
+        }
+        in_block = false;
+        match ln.rfind(" bytes).") {
+            Some(_) if ln.starts_with("Output written on ") => {
+                out.push(ln[..ln.rfind(", ").unwrap_or(ln.len())].to_string())
+            }
+            _ => out.push(ln.to_string()),
+        }
+    }
+    out.join("\n")
+}
+
+/// `view` (the host's pages, compiled in `base/a/proj` and `base/a/out`)
+/// against a scratch compile of a copy in `base/b`: pages, the forms they
+/// draw, the log (whose paths, the same length, are put back). `Err`: the
+/// first difference.
+fn fuzz_compare(sock: &Path, view: &View, base: &Path, main: &str) -> Result<(), String> {
+    let (proj, out) = (base.join("a/proj"), base.join("a/out"));
+    let (proj, out) = (proj.as_path(), out.as_path());
+    // (`b` and `c` by turns: the scratch host holds one document, so a
+    // directory other than the last one's compiles cold)
+    static TURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let copy = if TURN.fetch_xor(true, std::sync::atomic::Ordering::Relaxed) {
+        "c"
+    } else {
+        "b"
+    };
+    let (p2, o2) = (base.join(copy).join("proj"), base.join(copy).join("out"));
+    let _ = std::fs::remove_dir_all(base.join(copy));
+    copy_dir(proj, &p2);
+    copy_dir(out, &o2);
+    let stem = Path::new(main)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    // (the scratch compile writes its own log: a copy of the host's would
+    // compare equal however the scratch compile went)
+    let _ = std::fs::remove_file(o2.join(format!("{stem}.log")));
+    let r = (|| {
+        let mut s = Client::connect(sock).map_err(|e| e.to_string())?;
+        let mut sv = View::default();
+        let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), main);
+        rs.output_dir = Some(o2.to_str().unwrap().into());
+        let so = compile(&mut s, &mut sv, &rs);
+        let _ = s.bye();
+        // (a harness fault, not the host's: say so)
+        assert_eq!(
+            so.done.str_field("mode"),
+            Some("cold"),
+            "the scratch compile was not cold: {}",
+            so.done
+        );
+        if sv.count != view.count {
+            return Err(format!(
+                "{} pages, a scratch compile {}",
+                view.count, sv.count
+            ));
+        }
+        for i in 0..view.count as u32 {
+            if !view.pages.contains_key(&i) {
+                return Err(format!("page {i} missing"));
+            }
+            let a = resolve(view, i, proj, out);
+            let b = resolve(&sv, i, &p2, &o2);
+            if a != b {
+                return Err(format!("page {i}: {}", describe_difference(&a, &b)));
+            }
+        }
+        // (a log missing on both sides is not a match)
+        let log = |d: &Path, whose: &str| {
+            std::fs::read(d.join(format!("{stem}.log")))
+                .map_err(|e| format!("{whose} {stem}.log: {e}"))
+        };
+        let (mine, theirs) = (
+            fuzz_log(&log(out, "the host's")?, &base.join("a"), &base.join("a")),
+            fuzz_log(
+                &log(&o2, "a scratch compile's")?,
+                &base.join(copy),
+                &base.join("a"),
+            ),
+        );
+        if mine != theirs {
+            let k = mine
+                .lines()
+                .zip(theirs.lines())
+                .position(|(a, b)| a != b)
+                .unwrap_or(mine.lines().count().min(theirs.lines().count()));
+            return Err(format!(
+                "the log differs at line {}: {:?} vs a scratch compile's {:?} (status {:?})",
+                k + 1,
+                mine.lines().nth(k),
+                theirs.lines().nth(k),
+                so.done.str_field("status")
+            ));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(base.join(copy));
+    r
+}
+
+/// What a replay compiled: the compiles by mode; `paged`, the steps whose
+/// compile was incremental (neither cold nor unchanged) and had pages, in
+/// any status; and `live`, those of them that were `ok` -- the steps that
+/// test the incremental host. (A name broken stays in error until a revert
+/// mends it, so a sequence may have no `live` step; a seed may not.)
+#[derive(Default, Debug)]
+struct FuzzStats {
+    modes: BTreeMap<String, usize>,
+    paged: usize,
+    live: usize,
+}
+
+/// Replay `steps` on a fresh copy of `src` in a fresh host: `Err` names the
+/// first step whose compile differs from a scratch compile (and how), or
+/// step 0 when the document itself does not compile `ok` with pages.
+fn fuzz_replay(
+    src: &Path,
+    main: &str,
+    steps: &[FuzzStep],
+    tag: &str,
+) -> Result<FuzzStats, (usize, String)> {
+    let base = common::fresh_dir(&format!("flashtex-fuzz-{tag}"));
+    let _ = std::fs::remove_dir_all(&base);
+    // (the host's directories under `a`, the scratch compile's copies under
+    // `b`: the same length, so that the logs wrap alike, `fuzz_log`)
+    let (proj, out) = (base.join("a/proj"), base.join("a/out"));
+    copy_dir(src, &proj);
+    std::fs::create_dir_all(&out).unwrap();
+    let host = start_host(&format!("fz{tag}"));
+    let scratch = start_host(&format!("fzs{tag}"));
+    let selftest: Option<usize> = std::env::var("FLASHTEX_FUZZ_SELFTEST")
+        .ok()
+        .and_then(|v| v.parse().ok());
+    let mut stats = FuzzStats::default();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let mut id = 0;
+        let mut status = None;
+        for _ in 0..4 {
+            id += 1;
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+            status = o.done.str_field("status").map(String::from);
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        // (a document that does not compile would compare only its error
+        // log, the same on both sides, at every step)
+        if status.as_deref() != Some("ok") || view.count == 0 {
+            return Err((
+                0,
+                format!(
+                    "the document itself does not compile: status {status:?}, {} pages",
+                    view.count
+                ),
+            ));
+        }
+        fuzz_compare(&scratch.1, &view, &base, main).map_err(|e| (0, e))?;
+        let files = fuzz_sources(&proj, main);
+        let read_all = || -> Vec<(String, String)> {
+            files
+                .iter()
+                .map(|f| (f.clone(), std::fs::read_to_string(proj.join(f)).unwrap()))
+                .collect()
+        };
+        let mut history = vec![read_all()];
+        for (k, s) in steps.iter().enumerate() {
+            id += 1;
+            let mut r = req(id, &proj, &out, main);
+            match s {
+                FuzzStep::Splice {
+                    file,
+                    at,
+                    delete,
+                    insert,
+                    wire,
+                } => {
+                    let text = std::fs::read_to_string(proj.join(file)).unwrap_or_default();
+                    // (a shrunk sequence's offsets on another text)
+                    let mut at = (*at).min(text.len());
+                    while !text.is_char_boundary(at) {
+                        at -= 1;
+                    }
+                    let mut end = (at + delete).min(text.len());
+                    while !text.is_char_boundary(end) {
+                        end += 1;
+                    }
+                    if *wire {
+                        r.edits = vec![Edit {
+                            path: file.clone(),
+                            offset: at as u64,
+                            delete: (end - at) as u64,
+                            insert: insert.clone(),
+                        }];
+                    } else {
+                        let mut t = text.clone();
+                        t.replace_range(at..end, insert);
+                        std::fs::write(proj.join(file), t).unwrap();
+                    }
+                }
+                FuzzStep::Revert { to } => {
+                    for (f, t) in &history[(*to).min(history.len() - 1)] {
+                        std::fs::write(proj.join(f), t).unwrap();
+                    }
+                }
+            }
+            let o = compile(&mut c, &mut view, &r);
+            let mode = o.done.str_field("mode").unwrap_or("?");
+            *stats.modes.entry(mode.to_string()).or_insert(0) += 1;
+            let paged = mode != "cold" && mode != "unchanged" && view.count > 0;
+            let live = paged && o.done.str_field("status") == Some("ok");
+            history.push(read_all());
+            // FLASHTEX_FUZZ_SELFTEST=N: the harness's own check, a page
+            // dropped from the client's view from step N on, which must
+            // fail and shrink to N steps
+            if selftest.is_some_and(|n| k + 1 >= n) {
+                let last = view.count.saturating_sub(1) as u32;
+                view.pages.remove(&last);
+            }
+            fuzz_compare(&scratch.1, &view, &base, main).map_err(|e| (k + 1, e))?;
+            stats.paged += paged as usize;
+            stats.live += live as usize;
+        }
+        let _ = c.bye();
+        eprintln!(
+            "edit fuzz:   {tag}: compiles {:?}, {} incremental with pages, {} of them ok",
+            stats.modes, stats.paged, stats.live
+        );
+        Ok(())
+    }));
+    drop(host);
+    drop(scratch);
+    let _ = std::fs::remove_dir_all(&base);
+    match r {
+        Ok(r) => r.map(|()| stats),
+        Err(p) => {
+            let msg = p
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "a panic".into());
+            Err((usize::MAX, format!("panicked: {msg}")))
+        }
+    }
+}
+
+/// A shortest failing sequence found from `steps` (which fail): the prefix
+/// to the first failing step, then steps removed one at a time while the
+/// replay still fails (at most `budget` replays).
+fn fuzz_shrink(
+    src: &Path,
+    main: &str,
+    steps: Vec<FuzzStep>,
+    failed_at: usize,
+    mut budget: usize,
+) -> (Vec<FuzzStep>, String) {
+    let mut cur: Vec<FuzzStep> = steps[..failed_at.min(steps.len())].to_vec();
+    let mut why = String::new();
+    let mut i = 0;
+    while i < cur.len() && budget > 0 {
+        let mut trial = cur.clone();
+        trial.remove(i);
+        // (a revert names a step of the sequence: those after `i` move)
+        for s in trial.iter_mut().skip(i) {
+            if let FuzzStep::Revert { to } = s {
+                if *to > i {
+                    *to -= 1;
+                }
+            }
+        }
+        budget -= 1;
+        match fuzz_replay(src, main, &trial, "shrink") {
+            Err((at, e)) => {
+                trial.truncate(at.min(trial.len()));
+                cur = trial;
+                why = e;
+            }
+            Ok(_) => i += 1,
+        }
+    }
+    if why.is_empty() {
+        why = match fuzz_replay(src, main, &cur, "shrink") {
+            Err((_, e)) => e,
+            Ok(_) => "(the shrunk sequence passed on its last replay: timing-dependent)".into(),
+        };
+    }
+    (cur, why)
+}
+
+#[test]
+fn random_edit_sequences_equal_scratch_compiles() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let env_n = |k: &str, d: u64| -> u64 {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    let first = env_n("FLASHTEX_FUZZ_SEED", 1);
+    let seeds = env_n("FLASHTEX_FUZZ_SEEDS", 1);
+    let steps_n = env_n("FLASHTEX_FUZZ_STEPS", 8) as usize;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/real-world");
+    let docs: Vec<String> = match std::env::var("FLASHTEX_FUZZ_DOCS").ok().as_deref() {
+        Some("all") => {
+            let mut v: Vec<String> = std::fs::read_dir(&root)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().join("main.tex").is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            v.sort();
+            v
+        }
+        Some(list) => list.split(',').map(|s| s.trim().to_string()).collect(),
+        None => ["input-bibliography", "hyperref-toc", "beamer-overlays"]
+            .map(String::from)
+            .to_vec(),
+    };
+    // (a dispatch that runs nothing must not pass)
+    assert!(
+        seeds >= 1 && steps_n >= 1 && !docs.is_empty() && docs.iter().all(|d| !d.is_empty()),
+        "edit fuzz: nothing to run (FLASHTEX_FUZZ_SEEDS={seeds}, FLASHTEX_FUZZ_STEPS={steps_n}, FLASHTEX_FUZZ_DOCS={docs:?})"
+    );
+    for doc in &docs {
+        assert!(
+            root.join(doc).join("main.tex").is_file(),
+            "edit fuzz: no fixture fixtures/real-world/{doc}"
+        );
+    }
+    let mut failures = vec![];
+    for seed in first..first + seeds {
+        let (failed, mut live) = (failures.len(), 0);
+        for (d, doc) in docs.iter().enumerate() {
+            let src = root.join(doc);
+            let main = "main.tex";
+            // the sequence: generated against the texts as they evolve, from
+            // the seed and the document's name (not its place in the list:
+            // the rerun line names the document alone)
+            let mut rng = Rng::new(seed.wrapping_mul(1_000_003).wrapping_add(fnv1a(doc)));
+            let tmp = common::fresh_dir(&format!("flashtex-fuzz-gen-{d}"));
+            let _ = std::fs::remove_dir_all(&tmp);
+            copy_dir(&src, &tmp);
+            let files = fuzz_sources(&tmp, main);
+            let read = |p: &Path| -> Vec<(String, String)> {
+                files
+                    .iter()
+                    .map(|f| (f.clone(), std::fs::read_to_string(p.join(f)).unwrap()))
+                    .collect()
+            };
+            let mut history = vec![read(&tmp)];
+            let (mut last, mut labels) = (None, 0);
+            let mut steps = vec![];
+            for k in 0..steps_n {
+                let texts = history.last().unwrap().clone();
+                let s = fuzz_step(&mut rng, &texts, main, &mut last, k + 1, &mut labels);
+                let next = match &s {
+                    FuzzStep::Splice {
+                        file,
+                        at,
+                        delete,
+                        insert,
+                        ..
+                    } => texts
+                        .iter()
+                        .map(|(f, t)| {
+                            let mut t = t.clone();
+                            if f == file {
+                                t.replace_range(*at..(*at + delete).min(t.len()), insert);
+                            }
+                            (f.clone(), t)
+                        })
+                        .collect(),
+                    FuzzStep::Revert { to } => history[*to].clone(),
+                };
+                history.push(next);
+                steps.push(s);
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+            eprintln!("edit fuzz: seed {seed}, {doc}: {} steps", steps.len());
+            match fuzz_replay(&src, main, &steps, &format!("{seed}-{d}")) {
+                Ok(st) if st.paged == 0 => failures.push(format!(
+                    "seed {seed}, fixtures/real-world/{doc}: no step compiled incrementally with pages (compiles {:?}): the sequence tested nothing",
+                    st.modes
+                )),
+                Ok(st) => live += st.live,
+                Err((0, why)) => failures.push(format!(
+                    "seed {seed}, fixtures/real-world/{doc}: before any edit: {why}"
+                )),
+                Err((at, why)) => {
+                    eprintln!(
+                        "edit fuzz: seed {seed}, {doc}: step {at} differs: {why}; shrinking"
+                    );
+                    let (min, why) = fuzz_shrink(&src, main, steps, at, 40);
+                    failures.push(format!(
+                        "seed {seed}, fixtures/real-world/{doc}: {why}\n  shortest failing sequence ({} steps):\n{}",
+                        min.len(),
+                        min.iter()
+                            .enumerate()
+                            .map(|(k, s)| format!("    {}: {s:?}", k + 1))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+            }
+        }
+        if failures.len() == failed && live == 0 {
+            failures.push(format!(
+                "seed {seed}: no step of {docs:?} compiled incrementally and ok with pages: the seed tested only error states"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "random edit sequences: a step differs from a scratch compile, or a sequence tested nothing (rerun one: FLASHTEX_FUZZ_SEED=<seed> FLASHTEX_FUZZ_SEEDS=1 FLASHTEX_FUZZ_DOCS=<doc> FLASHTEX_FUZZ_STEPS={steps_n}):\n{}",
+        failures.join("\n")
+    );
+}
+
+/// A `COMPILE`'s buffers and edits are written only inside the project
+/// (`host::resident::apply_changes`, walked from the root's descriptor, a
+/// link only where its target stays below the root: `server::open_confined`):
+/// through a linked directory, a linked file or a dangling link that leads
+/// out of the root, the request is refused and nothing outside is written
+/// or created. A link that stays inside the root is written through.
+#[cfg(unix)]
+#[test]
+fn buffers_through_a_symlink_out_of_the_project_are_refused() {
+    use std::os::unix::fs::symlink;
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    fn refusal(c: &mut Client, r: &CompileRequest) -> Option<String> {
+        c.compile(r).unwrap();
+        loop {
+            match c
+                .next_event()
+                .unwrap()
+                .expect("the host closed the connection")
+            {
+                Event::Error(e) => return Some(e.to_string()),
+                Event::Done(_) => return None,
+                _ => {}
+            }
+        }
+    }
+    let base = common::fresh_dir("flashtex-host-symlink");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, away) = (base.join("proj"), base.join("out"), base.join("away"));
+    for d in [&proj, &out, &away] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    std::fs::write(away.join("kept.tex"), "outside\n").unwrap();
+    symlink(&away, proj.join("linked")).unwrap();
+    symlink(away.join("kept.tex"), proj.join("kept.tex")).unwrap();
+    symlink(away.join("new.tex"), proj.join("dangling.tex")).unwrap();
+    std::fs::write(proj.join("real.tex"), "inside\n").unwrap();
+    symlink(proj.join("real.tex"), proj.join("alias.tex")).unwrap();
+    let host = start_host("symlink");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let edit = |p: &str| Edit {
+        path: p.into(),
+        offset: 0,
+        delete: 0,
+        insert: "x".into(),
+    };
+    let cases: [(&str, Option<&str>, Option<Edit>); 5] = [
+        (
+            "a buffer in a linked directory",
+            Some("linked/evil.tex"),
+            None,
+        ),
+        ("a buffer over a linked file", Some("kept.tex"), None),
+        ("a buffer at a dangling link", Some("dangling.tex"), None),
+        (
+            "an edit of a linked directory's file",
+            None,
+            Some(edit("linked/kept.tex")),
+        ),
+        ("an edit of a linked file", None, Some(edit("kept.tex"))),
+    ];
+    for (k, (what, buffer, e)) in cases.into_iter().enumerate() {
+        let mut r = req(2 + k as i64, &proj, &out, "main.tex");
+        if let Some(p) = buffer {
+            r.buffers = vec![(p.into(), "written\n".into())];
+        }
+        r.edits = e.into_iter().collect();
+        let why = refusal(&mut c, &r).unwrap_or_else(|| panic!("{what}: written"));
+        assert!(why.contains("\"request\""), "{what}: {why}");
+        assert!(
+            !away.join("evil.tex").exists(),
+            "{what}: away/evil.tex made"
+        );
+        assert!(!away.join("new.tex").exists(), "{what}: away/new.tex made");
+        assert_eq!(
+            std::fs::read_to_string(away.join("kept.tex")).unwrap(),
+            "outside\n",
+            "{what}: away/kept.tex changed"
+        );
+    }
+    // a link inside the project is written through
+    let mut r = req(9, &proj, &out, "main.tex");
+    r.buffers = vec![("alias.tex".into(), "inside, edited\n".into())];
+    assert_eq!(refusal(&mut c, &r), None, "a link inside the root");
+    assert_eq!(
+        std::fs::read_to_string(proj.join("real.tex")).unwrap(),
+        "inside, edited\n"
+    );
+    let _ = c.bye();
+    drop(host);
     let _ = std::fs::remove_dir_all(&base);
 }
