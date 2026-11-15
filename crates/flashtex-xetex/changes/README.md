@@ -57,10 +57,16 @@ show in a document that uses TFM fonts only and none of the features named;
   texmfmem.h's little-endian `fmemoryword` union; this port's word packing
   differs there, so such a read gives other garbage (a checked index, so at
   worst a panic beyond `font_info`, where C reads out of bounds).
-- ICU: `\XeTeXinputencoding` with a name other than XeTeX's built-in ones
-  (`utf8`, `utf16`, `utf16be`, `utf16le`, `bytes`, `auto`) reads bytes, as
-  TeX Live does for a name ICU does not know; ICU line breaking
-  (`\XeTeXlinebreaklocale`) serves native fonts only (S1).
+- ICU converters (`\XeTeXinputencoding`, `\XeTeXdefaultencoding`; issue
+  #2382): `src/ucnv.rs` has ICU 78.2's name lookup, its single-byte tables
+  and its UTF-8, CESU-8, ISO-8859-1, US-ASCII, UTF-16 and UTF-32
+  converters. A name of one of ICU's multi-byte tables (`Shift_JIS`,
+  `EUC-JP`, `GBK`, `Big5`, `GB18030`, ...), of `gsm-03.38-2009`, or of
+  ICU's UTF-7, IMAP-mailbox-name, SCSU, BOCU-1, ISO-2022, HZ, LMBCS, ISCII
+  or x11-compound-text converter is reported as an unknown encoding and
+  the file read as bytes, as TeX Live does only for a name ICU does not
+  know (S1). ICU line breaking (`\XeTeXlinebreaklocale`) serves native
+  fonts only (S1).
 - Pictures: `\XeTeXpicfile` and `\XeTeXpdffile` find no file (S2).
 - The output driver: `-no-pdf` is the only mode; without it the program
   still writes XDV (phase 3, with the PDF backend).

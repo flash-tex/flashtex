@@ -1,0 +1,17 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \endlinechar=-1
+\def\p#1{\ifx#1\relax\else\message{\number`#1}\expandafter\p\fi}
+\def\l{\readline1 to\x \ifeof1 \else\message{[\x]}\expandafter\p\x\relax\expandafter\l\fi}
+\def\t#1#2{\message{☃☃#1☃☃}\XeTeXdefaultencoding "#1"\relax\openin1=#2\relax\XeTeXdefaultencoding "utf8"\relax\l\message{|}}
+\t{UTF-16}{d0.dat}
+\t{UTF-16BE}{d1.dat}
+\t{UTF-16LE}{d2.dat}
+\t{UnicodeBig}{d3.dat}
+\t{UnicodeLittle}{d4.dat}
+\t{UTF-16,version=1}{d5.dat}
+\t{UTF-32}{d6.dat}
+\t{UTF-32BE}{d7.dat}
+\t{UTF-32LE}{d8.dat}
+\t{UTF-8}{d9.dat}
+\t{CESU-8}{d10.dat}
+\t{US-ASCII}{d11.dat}
+\end

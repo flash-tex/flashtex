@@ -1,0 +1,14 @@
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (INITEX)  1 JAN 1970 00:00
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+**p.tex
+(./p.tex hello é 😀
+> 233.
+<to be read again> 
+                   �
+l.3 \message{hello é 😀}\count1=`é \showthe\count1�
+                                                  
+
+[0.233] )
+Output written on p.xdv (1 page, 152 bytes).
