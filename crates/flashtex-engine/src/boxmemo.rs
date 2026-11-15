@@ -603,10 +603,11 @@ struct Rec {
     /// A foreign box register just fetched, waiting for what is done with
     /// it (`flashtex_bm_box_use`): (register, box).
     pending_box: Option<(i32, i32)>,
-    /// A register the call wrote, just fetched, whose box holds a hole:
-    /// only its dimensions, a test or a move may follow (`\copy` would read
-    /// the hole's contents, which the key does not hold).
-    pending_own: Option<i32>,
+    /// A register the call wrote, just fetched, whose box is or holds a
+    /// hole: only its dimensions, a test or a move may follow (`\copy`
+    /// would read the hole's contents, which the key does not hold).
+    /// (register, whether its box is the hole itself)
+    pending_own: Option<(i32, bool)>,
     kb: Vec<(i32, Vec<i32>)>,
     /// (register, box node, key) of each box moved out of a foreign register
     holes: Vec<(i32, i32, Vec<i32>)>,
@@ -3337,8 +3338,18 @@ impl Globals {
                 .bm_with_rec(|r| r.holes.iter().map(|h| h.1).collect())
                 .unwrap_or_default();
             let p = self.bm_box_value(n);
-            if !holes.is_empty() && p != 0 && self.bm_holds_hole(p, &holes) {
-                self.bm_with_rec(|r| r.pending_own = Some(n));
+            if !holes.is_empty() && p != 0 {
+                // (`\\setbox2\\box9` makes the hole itself the register's box)
+                let own = if holes.contains(&p) {
+                    Some((n, true))
+                } else if self.bm_holds_hole(p, &holes) {
+                    Some((n, false))
+                } else {
+                    None
+                };
+                if own.is_some() {
+                    self.bm_with_rec(|r| r.pending_own = own);
+                }
             }
             return;
         }
@@ -3363,9 +3374,14 @@ impl Globals {
     pub fn flashtex_bm_box_use(&mut self, n: i32, k: i32) {
         // (a register the call wrote, holding a hole: a move takes the hole
         // node along, its contents unread)
-        if let Some(Some(m)) = self.bm_with_rec(|r| r.pending_own.take()) {
-            if m != n {
+        if let Some(Some((m, is_hole))) = self.bm_with_rec(|r| r.pending_own.take()) {
+            if m != n || (is_hole && k == 4) {
+                // (`\\unhbox` of the hole itself moves its list into the
+                // output: the contents, which the key does not hold)
                 self.bm_abort("BoxContent");
+            } else if k == 3 && self.cur_list.mode_field.abs() == k::mmode {
+                // (into a formula: as for a foreign box, below)
+                self.bm_abort("MathHole");
             }
             return;
         }
