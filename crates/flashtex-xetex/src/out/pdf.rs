@@ -492,11 +492,14 @@ impl<'a> Writer<'a> {
         let b = &doc.pages[i];
         let num = self.pages[i];
         let mut res = Res::default();
-        let content = self.content(&b.dl, &b.sup, &mut res);
-        let contents = self.alloc();
-        self.stream(contents, b"", &content, true);
+        let mut content = self.content(&b.dl, &b.sup, &mut res);
         let bop = self.bop_eop(&b.sup.bop, &doc.bop);
         let eop = self.bop_eop(&b.sup.eop, &doc.eop);
+        if bop.is_some() || eop.is_some() {
+            content = between_bop_eop(&content, &b.sup);
+        }
+        let contents = self.alloc();
+        self.stream(contents, b"", &content, true);
         let contents = match (bop, eop) {
             (None, None) => format!("{contents} 0 R"),
             _ => {
@@ -2186,6 +2189,33 @@ fn type1_flags(font_name: &str, italic_angle: &str, force_bold: bool) -> u32 {
         f |= 64;
     }
     f
+}
+
+/// A page's stream as it must be between a `pdf:bop` and a `pdf:eop`: as
+/// xdvipdfmx writes its own, the colours of the page's start set after its
+/// `q` (stroke, then fill: `0 G 0 g` by default) and the `q`s left open
+/// closed, so that the page neither takes the bop's graphics state nor
+/// leaves its own to the eop. It starts with white space, as xdvipdfmx's
+/// does (` q 1 0 0 1 ...`): the bop before it may end in an operator.
+fn between_bop_eop(content: &[u8], sup: &Supplement) -> Vec<u8> {
+    let mut c = Vec::with_capacity(content.len() + 32);
+    c.push(b' ');
+    let rest = match content.strip_prefix(b"q\n") {
+        Some(rest) => {
+            c.extend_from_slice(b"q\n");
+            rest
+        }
+        None => content,
+    };
+    if let Some((fill, stroke)) = &sup.start_colors {
+        color_op(&mut c, &stroke.0, true);
+        color_op(&mut c, &fill.0, false);
+    }
+    c.extend_from_slice(rest);
+    for _ in 0..sup.open_saves {
+        c.extend_from_slice(b"Q\n");
+    }
+    c
 }
 
 fn color_op(c: &mut Vec<u8>, v: &[f64], stroke: bool) {

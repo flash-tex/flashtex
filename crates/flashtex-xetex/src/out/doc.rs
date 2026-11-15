@@ -119,6 +119,13 @@ pub struct Supplement {
     /// ended ([`Doc::bop`]).
     pub bop: Option<std::sync::Arc<Vec<u8>>>,
     pub eop: Option<std::sync::Arc<Vec<u8>>>,
+    /// A page: the fill and stroke colours in effect at its start, which
+    /// dvipdfmx sets after the page's `q` (`pdf_dev_bop`:
+    /// `pdf_dev_reset_color`), and the `q`s still open at its end, which
+    /// it closes (`pdf_dev_eop`: `pdf_dev_grestore_to(0)`). Written only
+    /// around a `pdf:bop` or `pdf:eop`, where they change what is drawn.
+    pub start_colors: Option<(Col, Col)>,
+    pub open_saves: usize,
 }
 
 /// A page or form as built.
@@ -280,6 +287,8 @@ pub struct Doc {
     /// content stream written before and after every page's own. Each
     /// special makes a new stream (one object, shared by the pages that
     /// ended while it was in effect); one without content changes nothing.
+    /// Only the PDF has them: the display list (and so the live preview)
+    /// shows the page without them.
     pub bop: Option<std::sync::Arc<Vec<u8>>>,
     pub eop: Option<std::sync::Arc<Vec<u8>>>,
 }

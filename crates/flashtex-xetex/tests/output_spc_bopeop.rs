@@ -88,3 +88,104 @@ fn bop_and_eop_streams_are_xdvipdfmxs() {
     assert_ne!(contents[0][0], contents[1][0]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The page's own stream between a bop and an eop (review of #2482): as
+/// xdvipdfmx's (`pdf_dev_bop`, `pdf_dev_eop`), it starts with white space
+/// and `q`, sets the colours of the colour stack at the page's start before
+/// it draws, and closes its `q`s, so the bop's `0 0 1 rg` colours neither
+/// the page's text nor survives into the eop. TeX Live 2026's streams for
+/// this input (`xetex -ini` + xdvipdfmx 20260317, `-z 0`):
+/// page 1 ` q 1 0 0 1 72 720 cm 0 G 0 g BT ... ET 1 0 0 RG 1 0 0 rg BT ...
+/// ET 0 G 0 g Q`, page 2 ` q ... 0 G 0 g 0 1 0 RG 0 1 0 rg BT ... ET Q`,
+/// page 3 ` q ... 0 1 0 RG 0 1 0 rg BT ... ET 0 G 0 g Q`: A black, B red,
+/// C and D green, and every eop square in the bop's blue.
+const COLOURS: &str = r#"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\font\x="[lmmono10-regular.otf]" at 10pt
+\shipout\hbox{\special{pdf:bop 0 0 1 rg 2 w}\special{pdf:eop 0 0 20 20 re f}\x A\special{color push rgb 1 0 0}\x B\special{color pop}}
+\shipout\hbox{\special{color push rgb 0 1 0}\x C}
+\shipout\hbox{\x D\special{color pop}}
+\end
+"#;
+
+#[test]
+fn the_page_between_bop_and_eop_keeps_its_own_colours() {
+    let dir = std::env::temp_dir().join(format!("flashtex-xetex-bopeop2-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let font =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts/lmmono10-regular.otf");
+    std::fs::copy(&font, dir.join("lmmono10-regular.otf")).unwrap();
+    std::fs::write(dir.join("t.tex"), COLOURS).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_flashtex-xetex"))
+        .current_dir(&dir)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .args(["-ini", "-interaction=nonstopmode", "t.tex"])
+        .output()
+        .expect("run flashtex-xetex");
+    let log = std::fs::read_to_string(dir.join("t.log")).unwrap();
+    assert!(
+        log.contains("Output written on t.pdf (3 pages)."),
+        "{log}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(dir.join("t.pdf")).unwrap();
+    let pdf = PdfFile::parse(&bytes).unwrap();
+    let pages = pdf.pages().unwrap();
+    // the fill colour of each glyph shown, in order
+    let mut shown: Vec<String> = Vec::new();
+    for (i, p) in pages.iter().enumerate() {
+        let c = pdf
+            .page_attr(p, "Contents")
+            .and_then(Obj::as_array)
+            .expect("[bop page eop]");
+        assert_eq!(c.len(), 3, "page {}", i + 1);
+        assert_eq!(
+            pdf.decode_stream(pdf.resolve(&c[0])).unwrap(),
+            b"0 0 1 rg 2 w\n"
+        );
+        assert_eq!(
+            pdf.decode_stream(pdf.resolve(&c[2])).unwrap(),
+            b"0 0 20 20 re f\n"
+        );
+        let page = pdf.decode_stream(pdf.resolve(&c[1])).unwrap();
+        assert!(
+            page.first().is_some_and(u8::is_ascii_whitespace),
+            "page {}: {:?}",
+            i + 1,
+            String::from_utf8_lossy(&page)
+        );
+        let s = String::from_utf8_lossy(&page).into_owned();
+        let toks: Vec<&str> = s.split_ascii_whitespace().collect();
+        assert_eq!(toks.first(), Some(&"q"), "page {}: {s}", i + 1);
+        let depth = toks.iter().fold(0i32, |d, t| match *t {
+            "q" => d + 1,
+            "Q" => {
+                assert!(d > 0, "page {}: {s}", i + 1);
+                d - 1
+            }
+            _ => d,
+        });
+        assert_eq!(depth, 0, "page {}: the page's q left open: {s}", i + 1);
+        // the colours of the page's start, right after its `q`
+        let start: &[&str] = match i {
+            0 | 1 => &["0", "G", "0", "g"],
+            _ => &["0", "1", "0", "RG", "0", "1", "0", "rg"],
+        };
+        assert_eq!(&toks[1..1 + start.len()], start, "page {}: {s}", i + 1);
+        let mut fill = None;
+        for (k, t) in toks.iter().enumerate() {
+            match *t {
+                "g" => fill = Some(toks[k - 1..=k].join(" ")),
+                "rg" => fill = Some(toks[k - 3..=k].join(" ")),
+                t if t.ends_with("Tj") || t.ends_with("TJ") => {
+                    shown.push(fill.clone().unwrap_or_else(|| "none".into()))
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(shown, ["0 g", "1 0 0 rg", "0 1 0 rg", "0 1 0 rg"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
