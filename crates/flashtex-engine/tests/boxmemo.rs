@@ -394,6 +394,53 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
 
+/// A font identifier's name is no `eqtb` entry (`font_id_text`, the text
+/// of the frozen location `\the\font`'s token names), and `\font` changes
+/// it: `\font\b=cmr10` after `\font\a=cmr10` finds the font loaded and
+/// names its identifier `\b` (tex.web §1260, §1257); a `\font` whose file
+/// is not found does the same to the null font's. `\string`, `\meaning` and
+/// every printed token list show that name. Before, nothing in the key held
+/// it, and the calls after the `\font` replayed the old name.
+#[test]
+fn a_font_identifiers_name_is_part_of_the_key() {
+    // the null font, renamed by a \font that finds no file (an error, the
+    // same on every path); \relax ends the scan for `at`/`scaled`, which
+    // would otherwise expand the call inside \font. \show resets \y, which
+    // the call's \xdef keys on, so that the second call of each pair hits.
+    let s = check(
+        "fontname",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\begingroup\\edef\\x{\\the\\font}\\setbox0\\hbox{}%\n\
+         \\xdef\\y{\\meaning\\x/\\expandafter\\string\\x/\\detokenize\\expandafter{\\x}}\\endgroup}\n\
+         \\def\\show{\\message{[\\y]}\\global\\let\\y\\relax}\\let\\y\\relax\n\
+         \\measure\\show\\measure\\show\\font\\renamed=nosuchfontfile \\relax\n\
+         \\measure\\show\\measure\\show\\font\\again=nosuchfontfile \\relax\n\
+         \\measure\\show\\measure\\show\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 3, "{s}");
+    assert_eq!(stat(&s, "recordings"), 3, "{s}");
+    // a font loaded before, found again under another name; the same name
+    // again changes nothing
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "fontname-tfm",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\fa=cmr10 \\fa\n\
+         \\def\\measure{\\begingroup\\edef\\x{\\the\\font}\\setbox0\\hbox{\\expandafter\\string\\x}%\n\
+         \\global\\dimen1=\\wd0 \\xdef\\y{\\meaning\\x}\\endgroup}\n\
+         \\def\\show{\\message{[\\y|\\the\\dimen1]}\\global\\let\\y\\relax}\\let\\y\\relax\n\
+         \\measure\\show\\measure\\show\\font\\longername=cmr10 \\relax\n\
+         \\measure\\show\\measure\\show\\font\\longername=cmr10 \\relax\n\
+         \\measure\\show\\font\\fa=cmr10 \\relax\\measure\\show\\measure\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert_eq!(stat(&s, "hits"), 4, "{s}");
+    assert_eq!(stat(&s, "recordings"), 3, "{s}");
+}
+
 /// `\\toks0` (and `\\toks4`): `\\kern.1pt` (`0 `) doubled 15 (16) times,
 /// lists longer than the key's `MAX_LIST` (65,536 tokens).
 const LONG_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\

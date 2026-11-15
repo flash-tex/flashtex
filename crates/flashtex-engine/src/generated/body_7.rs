@@ -2760,6 +2760,9 @@ impl Globals {
         } else {
             self.eq_define(u, set_font, f);
         }
+        if self.bm_on {
+            self.flashtex_bm_font_named(f, t);
+        }
         { let __v1844 = __av_eqtb[crate::ix::U(((u) - 1) as usize)]; __av_eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v1844; }
         self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].set_rh(t);
     }

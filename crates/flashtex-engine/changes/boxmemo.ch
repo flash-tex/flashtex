@@ -37,7 +37,11 @@
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
-%   naming a version names one state of those arrays.
+%   naming a version names one state of those arrays. A font identifier's
+%   name (|font_id_text|, which \.{\\string}, \.{\\meaning} and every
+%   printed token list show for the token \.{\\the\\font} makes) is part of
+%   that state: \.{\\font} of a font loaded before gives it the new
+%   identifier's name (|flashtex_bm_font_named|).
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
@@ -272,6 +276,24 @@ if bm_rec_on then flashtex_bm_box_use(cur_val,2);
 if this_if=if_void_code then b:=(p=null)
 @z
 
+@x pdftex.web l.17839 - a font identifier's name is part of the fonts' version: a letter-spaced font's
+    equiv(u):=f; eqtb[font_id_base+f]:=eqtb[u]; font_id_text(f):=t;
+end;
+@y
+    equiv(u):=f; if bm_on then flashtex_bm_font_named(f,t);
+    eqtb[font_id_base+f]:=eqtb[u]; font_id_text(f):=t;
+end;
+@z
+
+@x pdftex.web l.17939 - ... a copied font's
+    equiv(u):=f; eqtb[font_id_base+f]:=eqtb[u]; font_id_text(f):=t;
+end;
+@y
+    equiv(u):=f; if bm_on then flashtex_bm_font_named(f,t);
+    eqtb[font_id_base+f]:=eqtb[u]; font_id_text(f):=t;
+end;
+@z
+
 @x pdftex.web l.20923 - a recording notes that it packed a box (it then set |last_badness|)
 begin last_badness:=0; r:=get_node(box_node_size); type(r):=hlist_node;
 @y
@@ -378,6 +400,13 @@ assign_font_int: begin n:=cur_chr; scan_font_ident; f:=cur_val;
     kn_ac_code_base: set_kn_ac_code(f, p, cur_val);
     end;
     if bm_on then flashtex_bm_font_set(n, f, p, cur_val);
+@z
+
+@x pdftex.web l.32378 (after the three changes above, whose numbers are an older file's) - ... and \.{\\font}'s, which renames a font loaded before (the null font when the file is not found)
+common_ending: define(u,set_font,f); eqtb[font_id_base+f]:=eqtb[u]; font_id_text(f):=t;
+@y
+common_ending: define(u,set_font,f); if bm_on then flashtex_bm_font_named(f,t);
+eqtb[font_id_base+f]:=eqtb[u]; font_id_text(f):=t;
 @z
 
 @x pdftex.web l.33519 (after changes/intrinsics.ch) - registered names are found once the format is loaded
@@ -529,6 +558,7 @@ procedure flashtex_bm_reg_loc(@!l:pointer;@!e:boolean); external;
 procedure flashtex_bm_abort(@!r:integer); external;
 procedure flashtex_bm_font_changed; external;
 procedure flashtex_bm_font_set(@!n:integer;@!a:integer;@!b:integer;@!v:integer); external;
+procedure flashtex_bm_font_named(@!f:integer;@!t:integer); external;
 procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
