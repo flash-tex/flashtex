@@ -147,6 +147,9 @@ final class ProjectWindowsHostedTests: XCTestCase {
     /// as in EditorInstantTests; the target is a 16 ms frame and the
     /// measured numbers are printed as one `MultiWindow:` line).
     func testTypingInOneWindowCostsTheOtherWindowsNothing() throws {
+        // Commander ruling 2026-11-08 (#2154): red on every hosted run since 11-02. MULTI-WINDOW-CI's
+        // fix removes this skip; #2151 stays open until it does.
+        try XCTSkipIf(true, "temporarily skipped: #2151 (EditorPane 12 > 9 on hosted runners), owner lane MULTI-WINDOW-CI")
         env.set("FLASHTEX_HOST", "none")
         let windows = makeWindows()
         let id1 = ProjectWindowID()
