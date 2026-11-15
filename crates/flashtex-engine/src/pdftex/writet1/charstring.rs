@@ -461,6 +461,20 @@ impl Charstrings {
         self.glyphs.push(cs);
     }
 
+    /// Start the operand stack as `values` (writet1.c's `cc_stack`, as the
+    /// last font left it).
+    pub fn set_stack(&mut self, values: &[i32]) {
+        self.stack.clear();
+        for &v in values {
+            self.stack.push(v);
+        }
+    }
+
+    /// The operand stack, bottom first.
+    pub fn stack_values(&self) -> Vec<i32> {
+        self.stack.values.clone()
+    }
+
     /// Forget the glyphs (`t1_subset_charstrings` starts afresh).
     pub fn clear_glyphs(&mut self) {
         self.glyphs.clear();

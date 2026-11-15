@@ -71,19 +71,30 @@ impl Host for Globals {
 }
 
 /// The persistent statics of writet1.c.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Persist {
     /// cs_mark's `static integer lastargOtherSubr3 = 3`.
     last_arg_other_subr3: i32,
+    /// The charstring operand stack, `cc_stack[0..stack_ptr]`: writet1.c's
+    /// `static integer cc_stack[CC_STACK_SIZE], *stack_ptr = cc_stack;`
+    /// (pdfTeX 1.40.29, TeX Live 2026 `texk/web2c/pdftexdir/writet1.c`).
+    /// Only `cc_clear` empties it: a clearing operator, `seac`, and the
+    /// `cs_error` exit of `cs_mark`; `cs_init` and `writet1` leave it be. So
+    /// what one font's last walk leaves on it is under the next font's
+    /// first walk (`.notdef`), whose `hsbw` then sees more arguments than it
+    /// takes (`pdftex_fail`, #2408).
+    cc_stack: Vec<i32>,
 }
 crate::codec_struct!(Persist {
-    last_arg_other_subr3
+    last_arg_other_subr3,
+    cc_stack
 });
 
 impl Default for Persist {
     fn default() -> Self {
         Persist {
             last_arg_other_subr3: 3,
+            cc_stack: Vec::new(),
         }
     }
 }
