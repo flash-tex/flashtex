@@ -133,6 +133,11 @@ pub struct State {
     /// Type 3 font's bounding box. Only a written glyph sets it, so a Type 3
     /// font with none keeps the previous font's.
     pub t3_bbox: [i32; 4],
+    /// writettf.c's `static TTF_USHORT upem`: set by `ttf_read_head`, it
+    /// keeps its value from one font to the next, so an OpenType font
+    /// without a `head` table scales its `hhea`/`PCLT` metrics by the
+    /// units per em of the font written before it (0 for the first).
+    pub ttf_upem: u16,
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a
@@ -144,7 +149,8 @@ crate::codec_struct!(State {
     fo_tree,
     t1,
     ttf_cmaps,
-    t3_bbox
+    t3_bbox,
+    ttf_upem
 });
 
 fn fm_of(st: &Fonts, id: usize) -> &FmEntry {
