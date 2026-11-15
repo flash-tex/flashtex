@@ -1398,6 +1398,9 @@ impl<M: Metrics> Builder<'_, M> {
                             dict: d,
                             depth: self.stack.len(),
                             rect: None,
+                            name: None,
+                            broken: false,
+                            goto: None,
                         });
                         self.doc.html_anchor = Some(true);
                     }
