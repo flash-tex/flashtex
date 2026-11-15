@@ -410,6 +410,10 @@ fn xtoi(c: u8) -> Option<u8> {
     (c as char).to_digit(16).map(|v| v as u8)
 }
 
+/// pst.c's tokenizer over a whole CMap file. cmap_read.c reads through a
+/// 4096-byte window (`ifreader`, refilled before each record); the two
+/// differ only on a CMap with a token or comment longer than the rest of
+/// the window, where the C stops reading (or, on `<>`, loops for ever).
 struct Lexer<'a> {
     s: &'a [u8],
     i: usize,
@@ -1035,16 +1039,7 @@ impl Reader<'_, '_> {
                 Tok::Name(n) if n == b"CIDSystemInfo" => self.cidsysteminfo()?,
                 Tok::Name(n) if n == b"Version" || n == b"UIDOffset" || n == b"XUID" => true,
                 Tok::Name(n) => match self.tok()? {
-                    Some(Tok::Unknown(op)) if op == b"usecmap" => {
-                        match self.cache.find(n, &mut self.warn)? {
-                            None => false,
-                            Some(id) => {
-                                let u = self.cache.cmaps[id].clone();
-                                self.set_usecmap(u)?;
-                                true
-                            }
-                        }
-                    }
+                    Some(Tok::Unknown(op)) if op == b"usecmap" => self.usecmap(n)?,
                     _ => true,
                 },
                 Tok::Unknown(op) => match op.as_slice() {
@@ -1070,6 +1065,57 @@ impl Reader<'_, '_> {
         Ok(self.cmap.is_valid(&mut self.warn))
     }
 
+    /// `/Name usecmap`: false when there is no such CMap. xdvipdfmx puts a
+    /// CMap in its cache before parsing it (`CMap_cache_find`), so a
+    /// `usecmap` that names a CMap still being read (this one, or one
+    /// whose reading led here) finds the half-read CMap: this one is
+    /// "Identical CMap object", another is used as it is now, which fails
+    /// its `CMap_is_valid` unless it is already complete.
+    fn usecmap(&mut self, name: &[u8]) -> Result<bool, Fatal> {
+        let mut scratch = Vec::new();
+        let me = (
+            self.cmap.name.clone(),
+            self.cmap
+                .is_valid(&mut scratch)
+                .then(|| Arc::new(self.cmap.clone())),
+        );
+        if self.cache.loaded(name).is_none() {
+            let found = self
+                .cache
+                .loading
+                .iter()
+                .chain(std::iter::once(&me))
+                .position(|(n, _)| n.as_deref() == Some(name));
+            if let Some(k) = found {
+                if k == self.cache.loading.len() {
+                    return Err(
+                        "CMap: Identical CMap object cannot be used for usecmap CMap.".into(),
+                    );
+                }
+                return match self.cache.loading[k].1.clone() {
+                    Some(u) => self.set_usecmap(u).map(|()| true),
+                    None => Err("CMap: Invalid CMap.".into()),
+                };
+            }
+        }
+        if self.cache.loading.len() >= 64 {
+            // a `usecmap` of itself before its `/CMapName`: the C recurses
+            // until it runs out of stack
+            return Err("CMap: Parsing CMap file failed.".into());
+        }
+        self.cache.loading.push(me);
+        let found = self.cache.find(name, &mut self.warn);
+        self.cache.loading.pop();
+        match found? {
+            None => Ok(false),
+            Some(id) => {
+                let u = self.cache.cmaps[id].clone();
+                self.set_usecmap(u)?;
+                Ok(true)
+            }
+        }
+    }
+
     /// `CMap_set_usecmap`.
     fn set_usecmap(&mut self, u: Arc<CMap>) -> Result<(), Fatal> {
         if !u.is_valid(&mut self.warn) {
@@ -1091,11 +1137,21 @@ impl Reader<'_, '_> {
     }
 }
 
+/// A CMap being read: its name, and itself when it is valid.
+type Loading = (Option<Vec<u8>>, Option<Arc<CMap>>);
+
 /// cmap.c's CMap cache: Identity-H and Identity-V, then every CMap loaded,
 /// found again by its `/CMapName`.
 #[derive(Clone, Debug)]
 pub struct Cache {
     cmaps: Vec<Arc<CMap>>,
+    /// The CMaps being read, outermost first, while one of them reads a
+    /// `usecmap`: each one's name and, when it would pass
+    /// `CMap_is_valid`, itself as it is then.
+    loading: Vec<Loading>,
+    /// Tests: CMap files by name, found before the resolver.
+    #[cfg(test)]
+    files: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl Default for Cache {
@@ -1105,6 +1161,9 @@ impl Default for Cache {
                 Arc::new(CMap::identity(b"Identity-H")),
                 Arc::new(CMap::identity(b"Identity-V")),
             ],
+            loading: Vec::new(),
+            #[cfg(test)]
+            files: Vec::new(),
         }
     }
 }
@@ -1114,15 +1173,21 @@ impl Cache {
         &self.cmaps[id]
     }
 
+    fn loaded(&self, name: &[u8]) -> Option<usize> {
+        self.cmaps
+            .iter()
+            .position(|c| c.name.as_deref() == Some(name))
+    }
+
     /// `CMap_cache_find`: the CMap's id, `None` when there is no such CMap
     /// file (or it does not look like one), an `Err` when it fails to parse.
     pub fn find(&mut self, name: &[u8], warn: &mut Vec<String>) -> Result<Option<usize>, Fatal> {
-        if let Some(id) = self
-            .cmaps
-            .iter()
-            .position(|c| c.name.as_deref() == Some(name))
-        {
+        if let Some(id) = self.loaded(name) {
             return Ok(Some(id));
+        }
+        #[cfg(test)]
+        if let Some((_, data)) = self.files.iter().find(|(n, _)| n == name).cloned() {
+            return self.load(&data, warn);
         }
         let Ok(n) = std::str::from_utf8(name) else {
             return Ok(None);
@@ -1214,6 +1279,88 @@ endcmap CMapName currentdict /CMap defineresource pop end end\n";
         let c = Cache::default().get(0).clone();
         assert_eq!(decode(&c, b"abcd"), Some(b"\xfe\xffabcd".to_vec()));
         assert!(reencode(&c, b"abc", &mut Vec::new()).is_err());
+    }
+
+    fn cmap(name: &str, body: &str) -> Vec<u8> {
+        format!(
+            "%!PS-Adobe-3.0 Resource-CMap\n/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+/CIDSystemInfo 3 dict dup begin /Registry (Adobe) def /Ordering (UCS) def /Supplement 0 def end def\n\
+/CMapName /{name} def /CMapType 2 def\n{body}\n\
+endcmap CMapName currentdict /CMap defineresource pop end end\n"
+        )
+        .into_bytes()
+    }
+
+    fn load_err(cache: &mut Cache, data: &[u8]) -> String {
+        cache.load(data, &mut Vec::new()).unwrap_err()
+    }
+
+    /// A `usecmap` cycle is xdvipdfmx's fatal error, not a recursion
+    /// without end (measured with TeX Live 2026's xdvipdfmx 20260317
+    /// through `pdf:tounicode`).
+    #[test]
+    fn usecmap_cycles_are_fatal() {
+        // `/S usecmap` inside S: "Identical CMap object cannot be used for
+        // usecmap CMap"
+        let mut cache = Cache::default();
+        let s = cmap(
+            "S",
+            "/S usecmap\n1 begincodespacerange <00> <FF> endcodespacerange",
+        );
+        assert!(load_err(&mut cache, &s).contains("Identical CMap object"));
+        // P uses Q, Q uses P: P is half read, so "Invalid CMap."
+        let mut cache = Cache::default();
+        let p = cmap(
+            "P",
+            "/Q usecmap\n1 begincodespacerange <00> <FF> endcodespacerange",
+        );
+        let q = cmap(
+            "Q",
+            "/P usecmap\n1 begincodespacerange <00> <FF> endcodespacerange",
+        );
+        cache.files.push((b"Q".to_vec(), q));
+        assert_eq!(load_err(&mut cache, &p), "CMap: Invalid CMap.");
+    }
+
+    /// Quirks of cmap.c that the port keeps (oracle: TeX Live 2026's
+    /// xdvipdfmx 20260317, a `pdf:docinfo` string through
+    /// `pdf:tounicode`).
+    #[test]
+    fn decoder_quirks() {
+        let mut cache = Cache::default();
+        // input that ends inside a 2-byte code: byte 0x41 is looked up
+        // in the next table, where <4141> is defined: <feff0058>
+        let c = cmap(
+            "A",
+            "1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+1 beginbfchar <4141> <0058> endbfchar",
+        );
+        let id = cache.load(&c, &mut Vec::new()).unwrap().unwrap();
+        let a = cache.get(id).clone();
+        assert_eq!(decode(&a, b"\x41"), Some(b"\xfe\xff\x00\x58".to_vec()));
+        // a `beginbfchar` with no count uses the last one again:
+        // <4142> gives <feff00580059>
+        let c = cmap(
+            "B",
+            "1 begincodespacerange <00> <FF> endcodespacerange\n\
+1 beginbfchar <41> <0058> endbfchar\nbeginbfchar <42> <0059> endbfchar",
+        );
+        let id = cache.load(&c, &mut Vec::new()).unwrap().unwrap();
+        let b = cache.get(id).clone();
+        assert_eq!(
+            decode(&b, b"AB"),
+            Some(b"\xfe\xff\x00\x58\x00\x59".to_vec())
+        );
+        // 8 output bytes for each of 2 input bytes do not fit: the string
+        // is left as it is (no re-encoding, a warning)
+        let c = cmap(
+            "C",
+            "1 begincodespacerange <00> <FF> endcodespacerange\n\
+1 beginbfchar <41> <D83DDE00D83DDE00> endbfchar",
+        );
+        let id = cache.load(&c, &mut Vec::new()).unwrap().unwrap();
+        let cc = cache.get(id).clone();
+        assert_eq!(decode(&cc, b"AA"), None);
     }
 
     #[test]
