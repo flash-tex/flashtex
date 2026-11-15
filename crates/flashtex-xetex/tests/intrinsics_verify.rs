@@ -918,6 +918,29 @@ fn a_variant_recorded_at_level_one_is_not_replayed_in_a_group() {
     assert_eq!(count(&on, "missed.Context"), 1, "{on}");
 }
 
+/// The usual case: `\pdfstringdef` calls the hook inside its group, at
+/// whatever depth the document is. A variant recorded inside one group
+/// replays inside two and three (only level one or not is part of the
+/// context), with its local and global definitions, and every mode agrees.
+#[test]
+fn a_variant_recorded_in_a_group_replays_at_another_depth() {
+    let Some((on, verify)) = modes_agree(
+        "\\documentclass{article}\\def\\IntrSrc{one}\n\
+         \\def\\pdfstringdefPreHook{\\def\\IntrL{\\IntrSrc}\\xdef\\IntrG{\\IntrSrc}\
+         \\begingroup\\let\\IntrC\\IntrSrc\\endgroup\\relax}\n\
+         \\begin{document}\\relax\n\
+         \\begingroup\\relax\\pdfstringdefPreHook\\relax\\endgroup\n\
+         \\begingroup\\begingroup\\relax\\pdfstringdefPreHook\\relax\\endgroup\\endgroup\n\
+         {{{\\relax\\pdfstringdefPreHook\\relax}}}\n\
+         [\\IntrG]\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&on, "recordings.committed"), 1, "{on}");
+    assert_eq!(count(&on, "replayed"), 2, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 2, "{verify}");
+}
+
 /// Verify compares the high-water marks and the extent of `mem`: with the
 /// guard's room check switched off (`no-room`), the chain's call one input
 /// level deeper is admitted, and its check differs in `max_in_stack`.
