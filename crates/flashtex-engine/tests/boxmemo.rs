@@ -472,6 +472,25 @@ fn boxes_set_at_the_calls_level_replay() {
 }
 
 #[test]
+fn a_call_whose_command_reads_a_parameter_after_it_never_replays() {
+    // (lane AUDIT-MATH) a body ending in `\\let#1= ` (expl3's
+    // `\\cs_set_eq:NN`) leaves `\\let` to read its source after the call:
+    // here a parameter of the macro the call is in, whose `out_param`
+    // pushes the argument's list at the level the body had. Before, the
+    // recording did not see the read past it and kept `a`; the next call
+    // replayed `\\let\\x=a` and left `b` to be typeset
+    let s = check(
+        "read-past-param",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\let#1= }\\def\\caller#1{\\measure\\x#1}\n\
+         \\def\\show{\\message{[\\meaning\\x]}\\let\\x\\relax}\\let\\x\\relax\n\
+         \\caller a\\show\\caller b\\show\\caller c\\show\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert_eq!(stat(&s, "Level"), 1, "{s}");
+}
+
+#[test]
 fn boxes_at_the_calls_level_not_its_own_never_replay() {
     // a box left at the call's level that is not the call's alone: one
     // moved out of a register it did not make (`\\box9`, a hole), one whose
