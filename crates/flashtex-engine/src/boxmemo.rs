@@ -856,6 +856,28 @@ fn next_version(parent: i32, change: [i32; 4]) -> i32 {
         .or_insert_with(fresh_version)
 }
 
+/// The number that names font key `key` (`Globals::bm_font_key`): the same
+/// number for the same words and another for any other key, the keys
+/// compared in full (an interned table, as `next_version`'s is; BOX-MEMO.md
+/// §3: no hash stands for a key, so two fonts cannot share a number).
+fn font_key_number(key: Vec<u64>) -> i32 {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static TABLE: Mutex<Option<HashMap<Box<[u64]>, i32>>> = Mutex::new(None);
+    let mut t = TABLE.lock().unwrap_or_else(|e| e.into_inner());
+    let t = t.get_or_insert_with(HashMap::new);
+    let n = t.len() as i32;
+    *t.entry(key.into_boxed_slice()).or_insert(n)
+}
+
+thread_local! {
+    /// The font first made at each font number on this thread, by its key's
+    /// number (`font_key_number`; `Globals::flashtex_bm_font_new`). An entry
+    /// is never replaced: a version that no font made at `f` has changed
+    /// then says that `f`, if it is there, is this font.
+    static FONT_FIRST: RefCell<HashMap<i32, i32>> = RefCell::new(HashMap::new());
+}
+
 thread_local! {
     /// Where BOX-MEMO may record (replays are allowed everywhere): `None`
     /// (the command line) anywhere; in the host, only in an edit's window,
@@ -1454,6 +1476,21 @@ impl Globals {
         )
     }
 
+    /// Is a shape in K2 (`\\parshape`, e-TeX's penalty arrays) longer than
+    /// `MAX_LIST` (`-2` in K2, #2194)?
+    fn bm_long_shape(&self) -> bool {
+        std::iter::once(PAR_SHAPE_LOC)
+            .chain(ETEX_PEN_BASE..ETEX_PENS)
+            .any(|p| {
+                // (`bm_shape_words`'s test, without the copy)
+                let e = self.bm_eq(p).hh().rh();
+                e != 0 && {
+                    let n = self.bm_info(e);
+                    n < 0 || (2 * n + 1) as usize > MAX_LIST
+                }
+            })
+    }
+
     /// K2: every `eqtb` entry from `glue_base` to `eqtb_size` but the box
     /// registers, pointers by what they point to.
     fn bm_k2(&self) -> Vec<i32> {
@@ -1504,7 +1541,10 @@ impl Globals {
                                 take(1) == Some(&[v.len() as i32][..])
                                     && take(v.len()) == Some(&v[..])
                             }
-                            None => take(1) == Some(&[-2][..]),
+                            // a shape longer than `MAX_LIST` is `-2` in a
+                            // kept K2, which every other such shape would
+                            // match: it never matches (#2194)
+                            None => false,
                         };
                         if !ok {
                             return false;
@@ -1834,6 +1874,15 @@ impl Globals {
             return;
         }
         let v = self.bm_reg_value(r);
+        // a token list longer than `MAX_LIST` is `-2`, which every other
+        // such list would match: never part of a key (#2194)
+        let toks = match r {
+            RegId::Eqtb(p) => (TOKS_BASE..TOKS_BASE + 256).contains(&p),
+            RegId::Sa(t, _) => t == TOK_VAL,
+        };
+        if toks && v == [-2] {
+            return self.bm_abort("Long");
+        }
         self.bm_with_rec(|rec| rec.kr.push((r, v)));
     }
 
@@ -2435,6 +2484,137 @@ impl Globals {
         self.bm_font_version = next_version(self.bm_font_version, [n, a, b, v]);
     }
 
+    /// Font `f` was made (`read_font_info`, pdfTeX's `auto_expand_font`,
+    /// `letter_space_font`, `copy_font_info`; lane AUDIT-SPANS), and `w` is
+    /// the first word of `font_info` made for it. A font number names a font
+    /// only in its timeline: an edit's restore takes the fonts made after
+    /// its checkpoint away, and the run after it may make another font at
+    /// the same number, while the version, which names only the changes
+    /// made to fonts (`\hyphenchar` on each, as NFSS sets it), stays what
+    /// it was. So a font is named by what it is (`bm_font_key`, compared in
+    /// full), and the first font made at each number on this thread leaves
+    /// the version alone (a cold run's calls keep their hits across its
+    /// font loads), while another one at that number is a change, named by
+    /// the number and the key: two states with one version made the same
+    /// fonts at the same numbers.
+    ///
+    /// The first font stays the first (lane F-FONTKEY): were the entry
+    /// replaced by the latest font, a timeline that made that one again
+    /// would leave the version alone too, and one version would name two
+    /// fonts at `f`.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_font_new(&mut self, f: i32, w: i32) {
+        if f == k::null_font {
+            // (`letter_space_font` when its `read_font_info` found no file:
+            // it then writes on the null font, which no key describes)
+            self.bm_font_version = fresh_version();
+            return;
+        }
+        let id = font_key_number(self.bm_font_key(f, w));
+        let other = FONT_FIRST.with(|t| *t.borrow_mut().entry(f).or_insert(id) != id);
+        if other {
+            self.bm_font_version = next_version(self.bm_font_version, [-3, f, id, 0]);
+        }
+    }
+
+    /// What font `f` is, as the place that made it left it, by value and in
+    /// full (lane F-FONTKEY; it was a 64-bit hash of some of this, which
+    /// two fonts could share, and which left the ligature and kerning
+    /// program, the kerns and the extensible recipes out):
+    /// - its name and area, by their characters;
+    /// - every entry the font arrays hold for it: sizes, check sum,
+    ///   `\hyphenchar` and `\skewchar` (a load takes them from the
+    ///   defaults), the boundary characters, the nine bases and
+    ///   `bchar_label` as they are (places in `font_info`: an expanded font
+    ///   shares its parent's characters, heights, depths, programs and
+    ///   parameters, and the places say whose they are), pdfTeX's font type
+    ///   and expansion entries, and its local fonts when it is a virtual
+    ///   font (a letter-spaced font's is the font it spaces);
+    /// - every word of `font_info` made for it, `w` to `fmem_ptr`: for a
+    ///   font read or copied all of it (character words, widths, heights,
+    ///   depths, italic corrections, the ligature and kerning program, the
+    ///   kerns, the extensible recipes and the parameters), for an expanded
+    ///   font its widths, italic corrections and kerns.
+    ///
+    /// Left out: `font_glue` (a call that shares a font's glue keys its
+    /// fields, `Entry::font_glues`) and what only a shipout reads or sets
+    /// (`font_used`, the PDF resource entries, a virtual font's packets).
+    fn bm_font_key(&self, f: i32, w: i32) -> Vec<u64> {
+        let fu = f as usize;
+        let n = |x: i32| x as u32 as u64;
+        let end = self.fmem_ptr.max(w);
+        let mut k: Vec<u64> = Vec::with_capacity(64 + (end - w) as usize);
+        for s in [self.font_name[fu], self.font_area[fu]] {
+            if s >= 0 && s < self.str_ptr {
+                let (a, b) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
+                k.push(n(b - a));
+                k.extend((a..b).map(|i| n(self.str_pool[i as usize])));
+            } else {
+                // (no length is this large)
+                k.push(u64::MAX);
+                k.push(n(s));
+            }
+        }
+        k.extend(
+            [
+                self.font_size[fu],
+                self.font_dsize[fu],
+                self.font_check[fu].0 as i32,
+                self.font_params[fu],
+                self.font_bc[fu],
+                self.font_ec[fu],
+                self.hyphen_char[fu],
+                self.skew_char[fu],
+                self.font_bchar[fu],
+                self.font_false_bchar[fu],
+                self.bchar_label[fu],
+                self.char_base[fu],
+                self.width_base[fu],
+                self.height_base[fu],
+                self.depth_base[fu],
+                self.italic_base[fu],
+                self.lig_kern_base[fu],
+                self.kern_base[fu],
+                self.exten_base[fu],
+                self.param_base[fu],
+                self.pdf_font_type[fu],
+                self.pdf_font_blink[fu],
+                self.pdf_font_elink[fu],
+                self.pdf_font_stretch[fu],
+                self.pdf_font_shrink[fu],
+                self.pdf_font_step[fu],
+                self.pdf_font_expand_ratio[fu],
+                self.pdf_font_auto_expand[fu] as i32,
+                self.pdf_font_lp_base[fu],
+                self.pdf_font_rp_base[fu],
+                self.pdf_font_ef_base[fu],
+                self.pdf_font_kn_bs_base[fu],
+                self.pdf_font_st_bs_base[fu],
+                self.pdf_font_sh_bs_base[fu],
+                self.pdf_font_kn_bc_base[fu],
+                self.pdf_font_kn_ac_base[fu],
+                self.vf_default_font[fu],
+                self.vf_local_font_num[fu],
+            ]
+            .map(n),
+        );
+        let (d, m) = (self.vf_default_font[fu], self.vf_local_font_num[fu]);
+        for i in d..d.saturating_add(m) {
+            for a in [&self.vf_e_fnts, &self.vf_i_fnts] {
+                k.push(if i >= 0 && (i as usize) < a.len() {
+                    n(a[i as usize])
+                } else {
+                    u64::MAX
+                });
+            }
+        }
+        k.push(n(w));
+        k.push(n(end - w));
+        k.extend((w..end).map(|i| self.font_info[i as usize].0));
+        k
+    }
+
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_font_changed(&mut self) {
@@ -2473,6 +2653,12 @@ impl Globals {
             return self.bm_miss("Preconditions");
         }
         let k1 = self.bm_k1(cs, n);
+        // the body or an argument longer than `MAX_LIST` is `-2` (no token,
+        // length or other marker is), which every other such list would
+        // match: such a call is never a key, and is not recorded (#2194)
+        if k1.contains(&-2) || self.bm_long_shape() {
+            return self.bm_miss("Long");
+        }
         let ctx = self.bm_ctx(scanner);
         // K1 and the context select the variants (by their hash, then in
         // full); K2 and the rest are compared in place, without a copy of
@@ -4282,6 +4468,16 @@ impl Globals {
                         1 => self.eq_word_define(*p, e),
                         2 => self.geq_define(*p, t, e),
                         _ => self.geq_word_define(*p, e),
+                    }
+                    // a macro the call defined (`\def`, `\xdef`): its
+                    // definition site, as the normal path's `\def` noted it
+                    if matches!(v, Val::FreshList(_))
+                        && *kind != 1
+                        && *kind != 3
+                        && Self::bm_is_cs(*p)
+                        && (k::call..=k::long_outer_call).contains(&t)
+                    {
+                        self.dg_def_replayed(e);
                     }
                 }
                 Op::Sa { t, n, v, kind } => {
