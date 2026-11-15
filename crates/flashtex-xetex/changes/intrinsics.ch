@@ -37,11 +37,12 @@
 %   either path wrote, so an in-place change of a node the call found
 %   (|\limits|'s |subtype(tail)|) is a difference.
 %
-% * The high-water marks the final statistics print (|max_in_stack|,
-%   |max_param_stack|, |max_save_stack|, |max_buf_stack|) are reported to
-%   |flashtex_intr_hw| where a recorded run may raise them: a replay is
-%   admitted only where the real path would raise none of them, nor grow
-%   |mem|.
+% * The high-water marks the final statistics print that a replay does not
+%   raise itself (|max_in_stack|, |max_param_stack|, |max_buf_stack|) are
+%   reported to |flashtex_intr_hw| where a recorded run may raise them: a
+%   replay is admitted only where the real path would raise none of them,
+%   nor grow |mem|. (|max_save_stack| needs no hook: a replay saves through
+%   |new_save_level| and |eq_define| as the real path does.)
 %
 % The recordings are kept outside the word space (|Host|), so that they
 % survive a restore; their guard compares every read value in full.
@@ -132,13 +133,6 @@ else if (p>=prim_eqtb_base)and(p<frozen_null_font) then
 else  begin if intr_rec_on then flashtex_intr_name(p);
   print_esc(text(p));
   end;
-@z
-
-@x xetex.web - the save stack's high-water mark (kind 2)
-@d check_full_save_stack==if save_ptr>max_save_stack then
-@y
-@d check_full_save_stack==if intr_rec_on then flashtex_intr_hw(2,save_ptr);
-  if save_ptr>max_save_stack then
 @z
 
 @x xetex.web - a group boundary, for the recording
@@ -252,7 +246,7 @@ if eq_type(cur_cs)=undefined_cs then
 @y
 flush_list(r);
 if intr_rec_on then
-  begin flashtex_intr_hw(3,j); flashtex_intr_lookup(cur_cs);
+  begin flashtex_intr_hw(2,j); flashtex_intr_lookup(cur_cs);
   end;
 if eq_type(cur_cs)=undefined_cs then
 @z
@@ -413,7 +407,7 @@ case subtype(p) of
 @y
   flush_list(n);
   if intr_rec_on then
-    begin flashtex_intr_hw(3,m); flashtex_intr_lookup(cur_cs);
+    begin flashtex_intr_hw(2,m); flashtex_intr_lookup(cur_cs);
     end;
   b:=(eq_type(cur_cs)<>undefined_cs);
 @z

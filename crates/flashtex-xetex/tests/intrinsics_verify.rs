@@ -780,22 +780,10 @@ fn letters(mut k: usize) -> String {
     }
 }
 
-/// The final statistics print the high-water marks of the input, parameter
-/// and save stacks and of the buffer, and the extent of `mem`; a replay
-/// pushes, saves and allocates (almost) nothing. So a variant is admitted
-/// only where the real path would move none of them: here a copy of a
-/// million tokens with no free nodes to hold it (`mem` grows; before, the
-/// replay's log said one word less), a chain of 300 macros called one
-/// input level deeper than it was recorded, and 600 local definitions
-/// called with more on the save stack. Calls where the marks are as high
-/// already still replay.
-#[test]
-fn a_replay_is_refused_where_the_real_path_would_raise_a_high_water_mark() {
-    let Some((on, _)) = modes_agree(&long_doc(false)) else {
-        return;
-    };
-    assert!(count(&on, "missed.HighWater") > 0, "{on}");
-    let chain: String = (0..300)
+/// 300 macros, each calling the next before its own `\relax` (an input
+/// level each).
+fn chain() -> String {
+    (0..300)
         .map(|k| {
             format!(
                 "\\def\\IntrC{}{{\\IntrC{}\\relax}}",
@@ -805,37 +793,114 @@ fn a_replay_is_refused_where_the_real_path_would_raise_a_high_water_mark() {
         })
         .collect::<Vec<_>>()
         .join("\n")
-        + &format!("\\def\\IntrC{}{{\\relax}}", letters(300));
+        + &format!("\\def\\IntrC{}{{\\relax}}", letters(300))
+}
+
+/// A hook of body `body`, called at the top level, then as `deeper`, then
+/// at the top level again.
+fn three_calls(pre: &str, body: &str, deeper: &str) -> String {
+    format!(
+        "\\documentclass{{article}}{pre}\n\
+         \\def\\pdfstringdefPreHook{{{body}}}\n\
+         \\def\\IntrWrap{{\\relax\\pdfstringdefPreHook\\relax}}\n\
+         \\begin{{document}}\\relax\n\\pdfstringdefPreHook\\relax\n{deeper}\n\
+         \\pdfstringdefPreHook\\relax\nx\\end{{document}}\n"
+    )
+}
+
+/// The final statistics print the high-water marks of the input and
+/// parameter stacks and of the buffer, and the extent of `mem`; a replay
+/// pushes and allocates (almost) nothing. So a variant is admitted only
+/// where the real path would move none of them: here a copy of a million
+/// tokens with no free nodes to hold it (`mem` grows; before, the replay's
+/// log said one word less), and a chain of 300 macros called one input
+/// level deeper than it was recorded. Calls where the marks are as high
+/// already still replay. The save stack's mark needs no guard: 600 local
+/// definitions under more saves replay, and verify (which compares every
+/// mark) finds them identical.
+#[test]
+fn a_replay_is_refused_where_the_real_path_would_raise_a_high_water_mark() {
+    let Some((on, _)) = modes_agree(&long_doc(false)) else {
+        return;
+    };
+    assert!(count(&on, "missed.HighWater") > 0, "{on}");
+    let Some((on, verify)) = modes_agree(&three_calls(&chain(), "\\IntrCa", "\\IntrWrap")) else {
+        return;
+    };
+    assert_eq!(count(&on, "missed.HighWater"), 1, "{on}");
+    assert_eq!(count(&on, "replayed"), 1, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 1, "{verify}");
     let saves: String = (0..600)
         .map(|k| format!("\\def\\IntrQ{}{{}}", letters(k)))
         .collect();
-    for (pre, body, deeper) in [
-        (
-            chain.as_str(),
-            "\\IntrCa".to_string(),
-            "\\IntrWrap".to_string(),
-        ),
-        (
-            "",
-            format!("\\begingroup{saves}\\endgroup"),
-            "\\begingroup\\def\\IntrZa{}\\def\\IntrZb{}\\def\\IntrZc{}\\relax\
-             \\pdfstringdefPreHook\\endgroup"
-                .to_string(),
-        ),
-    ] {
-        let Some((on, verify)) = modes_agree(&format!(
-            "\\documentclass{{article}}{pre}\n\
-             \\def\\pdfstringdefPreHook{{{body}}}\n\
-             \\def\\IntrWrap{{\\relax\\pdfstringdefPreHook\\relax}}\n\
-             \\begin{{document}}\\relax\n\\pdfstringdefPreHook\\relax\n{deeper}\n\
-             \\pdfstringdefPreHook\\relax\nx\\end{{document}}\n"
-        )) else {
-            return;
-        };
-        assert_eq!(count(&on, "missed.HighWater"), 1, "{body:.40}: {on}");
-        assert_eq!(count(&on, "replayed"), 1, "{body:.40}: {on}");
-        assert_eq!(count(&verify, "verify.checked"), 1, "{body:.40}: {verify}");
-    }
+    let Some((on, verify)) = modes_agree(&three_calls(
+        "",
+        &format!("\\begingroup{saves}\\endgroup"),
+        "\\begingroup\\def\\IntrZa{}\\def\\IntrZb{}\\def\\IntrZc{}\\relax\
+         \\pdfstringdefPreHook\\endgroup",
+    )) else {
+        return;
+    };
+    assert_eq!(count(&on, "missed.HighWater"), 0, "{on}");
+    assert_eq!(count(&on, "replayed"), 2, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 2, "{verify}");
+}
+
+/// The one-word room a recording keeps counts only cells its run
+/// allocated: a free of a cell from before the run (here `\def\IntrFoo`
+/// freeing the long old value) depends on a reference count or a level the
+/// read set does not hold. At the second call `\IntrFoo` is short and the
+/// free list nearly empty, so the real path's copy of the argument grows
+/// `mem`; the replay must be refused. (Review F-XINTR-REV on #2251: before,
+/// on said 1966749 words of memory where off said 2227664, and verify
+/// passed.)
+#[test]
+fn the_one_word_room_counts_only_the_runs_own_cells() {
+    // \IntrA: 4 * 2^16 = 262144 letters
+    let copy = "\\unexpanded\\expandafter{\\IntrA}";
+    let double = format!("\\edef\\IntrA{{{copy}{copy}}}\n");
+    let Some((on, _)) = modes_agree(&format!(
+        "\\documentclass{{article}}\n\\def\\IntrPa#1{{}}\n\
+         \\begin{{document}}\\relax\n\\def\\IntrA{{aaaa}}\n{}\
+         \\edef\\IntrFoo{{{copy}b}}\n\
+         \\edef\\pdfstringdefPreHook{{\\noexpand\\def\\noexpand\\IntrFoo{{x}}\
+         \\noexpand\\IntrPa{{{copy}}}\\noexpand\\relax}}\n\
+         \\pdfstringdefPreHook\\relax\n\
+         \\edef\\IntrD{{{copy}{copy}{copy}{copy}}}\n\
+         \\def\\IntrT{{abcdefghij}}\\let\\IntrT\\relax\n\
+         \\pdfstringdefPreHook\\relax\n\
+         x\\end{{document}}\n",
+        double.repeat(16)
+    )) else {
+        return;
+    };
+    assert_eq!(count(&on, "replayed"), 0, "{on}");
+    assert_eq!(count(&on, "missed.HighWater"), 1, "{on}");
+}
+
+/// Verify compares the high-water marks and the extent of `mem`: with the
+/// guard's room check switched off (`no-room`), the chain's call one input
+/// level deeper is admitted, and its check differs in `max_in_stack`.
+#[test]
+fn verify_sees_a_replay_that_leaves_a_high_water_mark_lower() {
+    let Some((exe, dir, format)) = setup(&three_calls(&chain(), "\\IntrCa", "\\IntrWrap")) else {
+        return;
+    };
+    let off = run(exe, &dir, &format, Some("off"));
+    let v = run_with(
+        exe,
+        &dir,
+        &format,
+        Opts {
+            mode: Some("verify"),
+            fault: Some("no-room"),
+            ..Opts::default()
+        },
+    );
+    assert_same_output(&off, &v);
+    assert_eq!(count(&v.stats, "verify.differing.scalar"), 1, "{}", v.stats);
+    assert!(v.stats.contains("scalar max_in_stack"), "{}", v.stats);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// A body whose last tokens only expand (`\fi`) is used up inside

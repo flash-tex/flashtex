@@ -1120,9 +1120,6 @@ impl Globals {
         let mut i: quarterword = 0; // §1648
         if (self.cur_level != self.sa_level) {
             {
-                if self.intr_rec_on {
-                    self.flashtex_intr_hw(2i32, self.save_ptr);
-                }
                 if (self.save_ptr > self.max_save_stack) {
                     {
                         self.max_save_stack = self.save_ptr;
@@ -1365,9 +1362,6 @@ impl Globals {
         if self.intr_rec_on {
             self.flashtex_intr_op(3i32, c, 0i32, 0i32);
         }
-        if self.intr_rec_on {
-            self.flashtex_intr_hw(2i32, self.save_ptr);
-        }
         if (self.save_ptr > self.max_save_stack) {
             {
                 self.max_save_stack = self.save_ptr;
@@ -1438,9 +1432,6 @@ impl Globals {
     /// can use the following subroutine.
     // §306
     pub fn eq_save(&mut self, mut p: halfword, mut l: quarterword) {
-        if self.intr_rec_on {
-            self.flashtex_intr_hw(2i32, self.save_ptr);
-        }
         if (self.save_ptr > self.max_save_stack) {
             {
                 self.max_save_stack = self.save_ptr;
@@ -1584,9 +1575,6 @@ impl Globals {
     pub fn save_for_after(&mut self, mut t: halfword) {
         if (self.cur_level > level_one) {
             {
-                if self.intr_rec_on {
-                    self.flashtex_intr_hw(2i32, self.save_ptr);
-                }
                 if (self.save_ptr > self.max_save_stack) {
                     {
                         self.max_save_stack = self.save_ptr;
@@ -4306,7 +4294,7 @@ impl Globals {
                                 self.flush_list(r);
                                 if self.intr_rec_on {
                                     {
-                                        self.flashtex_intr_hw(3i32, j);
+                                        self.flashtex_intr_hw(2i32, j);
                                         self.flashtex_intr_lookup(self.cur_cs);
                                     }
                                 }

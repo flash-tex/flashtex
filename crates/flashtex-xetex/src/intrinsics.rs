@@ -62,12 +62,17 @@
 //! absence).
 //!
 //! Last, the room the real path would need (`Needs`): the final statistics
-//! print the high-water marks of the input, parameter and save stacks and
-//! of the buffer, and the extent of `mem`. A recording keeps how far above
-//! its start its run took each mark (`flashtex_intr_hw`) and how much memory
-//! it needed (`flashtex_intr_cell`); a variant is admitted only where the
-//! real path would raise no mark and grow no part of `mem` (a replay, which
-//! allocates no more than the real path, then grows none either).
+//! print the high-water marks of the input and parameter stacks and of the
+//! buffer, and the extent of `mem`. A recording keeps how far above its
+//! start its run took each mark (`flashtex_intr_hw`) and how much memory it
+//! needed (`flashtex_intr_cell`; one-word cells counted only while the run
+//! holds cells it allocated itself: frees of others depend on reference
+//! counts and levels the read set does not hold); a variant is admitted only
+//! where the real path would raise no mark and grow no part of `mem` (a
+//! replay, which allocates no more than the real path, then grows none
+//! either). The save stack's mark needs no guard: a replay saves through
+//! `new_save_level` and `eq_define` as the real path does. Verify compares
+//! all of these marks and extents.
 //!
 //! # Storage
 //!
@@ -202,6 +207,8 @@ enum Fault {
     /// a replay also flips the subtype of the current list's tail in
     /// place, as `\limits` would (a node the call found, not one it made)
     InPlace,
+    /// the guard admits a variant whatever room its real path needs
+    NoRoom,
 }
 
 fn fault() -> Fault {
@@ -210,6 +217,7 @@ fn fault() -> Fault {
         Ok("skip-read") => Fault::SkipRead,
         Ok("no-ref") => Fault::NoRef,
         Ok("in-place") => Fault::InPlace,
+        Ok("no-room") => Fault::NoRoom,
         _ => Fault::None,
     }
 }
@@ -320,8 +328,8 @@ pub(crate) struct Entry {
 #[derive(Clone, Copy, Debug, Default)]
 struct Needs {
     /// How far above its start the run took each high-water mark
-    /// (`HW_*`), if it offered one at all.
-    hw: [Option<i32>; 4],
+    /// (`HW_KINDS`), if it offered one at all.
+    hw: [Option<i32>; HW_KINDS],
     /// Single-word nodes: the most it held at once beyond its start.
     one: i64,
     /// Variable-size memory: the size of a free block that serves every
@@ -331,15 +339,18 @@ struct Needs {
 
 /// The high-water marks `flashtex_intr_hw` reports: `max_in_stack` (kind 0,
 /// `input_ptr` before a push), `max_param_stack` (1, `param_ptr` after),
-/// `max_save_stack` (2, `save_ptr` at the check), `max_buf_stack` (3, the
-/// end of a `\csname` name in `buffer`). Each is raised where the value
-/// offered exceeds it.
-const HW_KINDS: usize = 4;
+/// `max_buf_stack` (2, the end of a `\csname` name in `buffer`). Each is
+/// raised where the value offered exceeds it.
+const HW_KINDS: usize = 3;
 
 /// What a recorded run allocates and frees (`flashtex_intr_cell`).
 #[derive(Default)]
 struct MemUse {
-    /// Single-word nodes held beyond the start, now and at most.
+    /// Single-word nodes the run allocated and holds: their cells, how many
+    /// now and at most. (A free of a cell from before the run does not
+    /// count: whether it happens depends on a reference count or a level
+    /// the read set does not hold.)
+    own: HashSet<i32>,
     one: i64,
     one_peak: i64,
     /// Variable-size nodes the run holds, in the order allocated; whether
@@ -454,7 +465,7 @@ struct Rec {
     /// A check of the admitted variant `id`: the replay's state.
     verify: Option<(u64, crate::intrinsics_verify::Pending)>,
     /// Where the run starts, for each high-water mark (`HW_KINDS`): the
-    /// input level below the body, `param_ptr`, `save_ptr`, `first`.
+    /// input level below the body, `param_ptr`, `first`.
     hw_base: [i32; HW_KINDS],
     /// The highest value each mark was offered in the run.
     hw_peak: [Option<i32>; HW_KINDS],
@@ -742,7 +753,7 @@ impl Globals {
                 why = "Checkpoint";
                 continue;
             }
-            if !self.intr_room(&e.needs, &hw_now) {
+            if self.host.intrinsics.fault != Fault::NoRoom && !self.intr_room(&e.needs, &hw_now) {
                 if debug() {
                     eprintln!("intrinsics: variant {} needs {:?}", e.id, e.needs);
                 }
@@ -1678,18 +1689,13 @@ impl Globals {
     /// Where a run whose body is pushed at input level `base` starts, for
     /// each high-water mark (`HW_KINDS`).
     fn intr_hw_now(&self, base: i32) -> [i32; HW_KINDS] {
-        [base - 1, self.param_ptr, self.save_ptr, self.first]
+        [base - 1, self.param_ptr, self.first]
     }
 
     /// Would the real path, started at `now`, leave every high-water mark
     /// and the extent of `mem` as they are?
     fn intr_room(&self, n: &Needs, now: &[i32; HW_KINDS]) -> bool {
-        let max = [
-            self.max_in_stack,
-            self.max_param_stack,
-            self.max_save_stack,
-            self.max_buf_stack,
-        ];
+        let max = [self.max_in_stack, self.max_param_stack, self.max_buf_stack];
         for k in 0..HW_KINDS {
             if n.hw[k].is_some_and(|d| now[k] as i64 + d as i64 > max[k] as i64) {
                 return false;
@@ -1742,9 +1748,15 @@ impl Globals {
         };
         let m = &mut rec.mem;
         let w = s.unsigned_abs() as i64;
-        if w == 1 {
-            m.one += s as i64;
-            m.one_peak = m.one_peak.max(m.one);
+        if s == 1 {
+            if m.own.insert(p) {
+                m.one += 1;
+                m.one_peak = m.one_peak.max(m.one);
+            }
+        } else if s == -1 {
+            if m.own.remove(&p) {
+                m.one -= 1;
+            }
         } else if s > 0 {
             m.live.push((p, w));
             m.var += w;

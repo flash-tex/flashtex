@@ -20,9 +20,13 @@
 //!   tokens (the two paths' lists are different nodes, or the same address
 //!   holding other tokens), any other value bit for bit;
 //! * every scalar global by name, except the scanner's result registers,
-//!   allocation state, high-water marks, pseudo-printing scratch, the
-//!   input-stack pointers (compared below) and the intrinsics' and
-//!   checkpoints' own bookkeeping (`EXCLUDED_SCALARS`);
+//!   the free lists and usage counts (`avail`, `rover`, `dyn_used`,
+//!   `var_used`), pseudo-printing scratch, the input-stack pointers
+//!   (compared below) and the intrinsics' and checkpoints' own bookkeeping
+//!   (`EXCLUDED_SCALARS`). So the high-water marks the final statistics
+//!   print and the extent of `mem` (`lo_mem_max`, `hi_mem_min`, `mem_end`)
+//!   are compared: the guard admits a call only where its real path moves
+//!   none of them (`crate::intrinsics`, `Needs`);
 //! * the save stack above C's `save_ptr`, entry by entry, saved macro
 //!   values by their tokens; the input levels still to be read (used-up
 //!   token lists left out) and the macro parameters they use; the
@@ -61,8 +65,7 @@ use std::collections::{BTreeSet, HashMap};
 /// READ-TRACK watch (`dorm_*`, `pop_watch`) counts input pops, which the
 /// replay does not make.
 const EXCLUDED_SCALARS: &str = "cur_cmd cur_chr cur_cs cur_tok cur_val cur_val_level radix \
-    cur_order def_ref long_state avail rover dyn_used var_used lo_mem_max hi_mem_min mem_end \
-    max_in_stack max_param_stack max_buf_stack max_save_stack max_nest_stack tally first_count \
+    cur_order def_ref long_state avail rover dyn_used var_used tally first_count \
     trick_count base_ptr input_ptr param_ptr cur_input warning_index skip_line \
     dorm_fired dorm_level pop_watch";
 
