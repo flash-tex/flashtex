@@ -47,9 +47,9 @@ extension PreviewParityTests {
         defer { DL3Renderer.u1Variant = [] }
         let dir = URL(fileURLWithPath: root)
         let cases: [(String, [Int], [Set<String>])] = [
-            ("preview-probes__pv-pdf-inclusion", Array(0 ..< 9),
-             [[], ["pdf-nolayer"], ["layer-clip-inside"], ["layer-clip-inside", "pdf-layer-rect"], ["layer-clip-twice"]]),
-            ("preview-probes__pv-images", [4, 10, 15], [[], ["bpc1-aa"], ["bpc1-aa", "png-depth-off"]]),
+            ("preview-probes__pv-pdf-inclusion", Array(0 ..< 9), [[]]),
+            ("preview-probes__pv-images", [4, 10, 15],
+             [[], ["bpc1-noaa"], ["iq-none"], ["iq-low"], ["iq-medium"], ["iq-high"], ["bpc1-mask"], ["bpc1-mask", "iq-none"], ["bpc1-mask", "iq-high"]]),
             ("preview-probes__pv-fonts", [0], [[], ["slant-off"]]),
         ]
         for (name, pages, variants) in cases {
@@ -113,14 +113,15 @@ extension PreviewParityTests {
         func line(_ d: [(scale: Double, pixels: Int, maxDelta: Int)]) -> String {
             d.map { "\($0.scale)x px=\($0.pixels) maxD=\($0.maxDelta)" }.joined(separator: " ")
         }
-        let groupVariants: [Set<String>] = [[], ["pdf-nolayer"], ["layer-clip-inside"], ["layer-clip-inside", "pdf-layer-rect"], ["layer-clip-twice"]]
+        let groupVariants: [Set<String>] = [[], ["group-off"], ["group-clip-first"]]
         for v in groupVariants {
             DL3Renderer.u1Variant = v
             let tag = v.sorted().joined(separator: "+")
             print("U1EXP synthetic group p1 [\(tag)] \(line((try? PdfTeXXObjectParityTests.groupedPageDiffs()) ?? []))")
             print("U1EXP synthetic group p5 [\(tag)] \(line((try? PdfTeXXObjectParityTests.groupedCroppedPageDiffs()) ?? []))")
         }
-        let bitVariants: [Set<String>] = [[], ["bpc1-aa"], ["png-depth-off"], ["bpc1-aa", "png-depth-off"]]
+        let bitVariants: [Set<String>] = [[], ["bpc1-noaa"], ["png-depth-off"], ["iq-none"], ["iq-low"], ["iq-medium"], ["iq-high"],
+                                          ["bpc1-mask"], ["bpc1-mask", "iq-none"], ["bpc1-mask", "iq-high"]]
         for v in bitVariants {
             DL3Renderer.u1Variant = v
             print("U1EXP synthetic gray1 [\(v.sorted().joined(separator: "+"))] \(line((try? PdfTeXXObjectParityTests.oneBitGreyDiffs()) ?? []))")

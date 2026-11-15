@@ -971,8 +971,24 @@ public enum DL3Renderer {
                     // apart that way at 1–4.25 px/pt, ~1,500 edge pixels apart
                     // antialiased at the pane's 2.86 px/pt; lane BEAMER-V3).
                     // A rotated image keeps its antialiased edges, as there.
-                    if Self.axisAligned(ctx.ctm) && !(cgImage.bitsPerComponent == 1 && Self.u1Variant.contains("bpc1-aa")) { ctx.setShouldAntialias(false) }
-                    ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+                    // So does a 1-bit image (pdfTeX's `/BitsPerComponent 1`
+                    // for 1-bit grey PNG, which the loader keeps at 1 bit):
+                    // Core Graphics antialiases its edges also when upright
+                    // (pv-images p5 and p16: up to 1,703 px apart, Δ 252,
+                    // with hard edges; run 43750699156).
+                    let oneBit = cgImage.bitsPerComponent == 1 && !Self.u1Variant.contains("bpc1-noaa")
+                    if Self.axisAligned(ctx.ctm) && !oneBit { ctx.setShouldAntialias(false) }
+                    if oneBit && Self.u1Variant.contains("bpc1-mask"), let provider = cgImage.dataProvider,
+                       let mask = CGImage(maskWidth: cgImage.width, height: cgImage.height, bitsPerComponent: 1, bitsPerPixel: 1,
+                                          bytesPerRow: cgImage.bytesPerRow, provider: provider, decode: nil, shouldInterpolate: false) {
+                        // EXPERIMENT: white, then black through the samples as a stencil (0 paints).
+                        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+                        ctx.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+                        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+                        ctx.draw(mask, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+                    } else {
+                        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+                    }
                 case .pdf(let pdfPage, let box, let matrix):
                     // pdfTeX includes a PDF page as a Form XObject: its space
                     // is the page's own coordinates (bp), its /BBox the
@@ -982,18 +998,27 @@ public enum DL3Renderer {
                     // the box, then the page's content stream as it is
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
-                    if !Self.u1Variant.contains("layer-clip-inside") { ctx.clip(to: box) }
-                    // A form with a /Group (LaTeX's pdftex.def gives every
-                    // included page `/Group <</S/Transparency/K false/I
-                    // false>>`) Core Graphics paints through a transparency
-                    // layer: drawn straight, its edge pixels were 1 level
-                    // off (pv-pdf-inclusion p1–p8).
-                    if !img.group || Self.u1Variant.contains("pdf-nolayer") {
+                    if Self.u1Variant.contains("group-clip-first") {
+                        ctx.clip(to: box)
+                        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+                        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+                        ctx.endTransparencyLayer()
+                    } else if !img.group || Self.u1Variant.contains("group-off") {
+                        ctx.clip(to: box)
                         DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                     } else {
-                        if Self.u1Variant.contains("pdf-layer-rect") { ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil) }
-                        else { ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
-                        if Self.u1Variant.contains("layer-clip-inside") || Self.u1Variant.contains("layer-clip-twice") { ctx.clip(to: box) }
+                        // A form with a /Group (LaTeX's pdftex.def gives
+                        // every included page `/Group <</S/Transparency/K
+                        // false/I false>>`) Core Graphics paints through a
+                        // transparency layer, the /BBox clip inside it:
+                        // drawn straight, edge pixels were 1 level off
+                        // (pv-pdf-inclusion p1–p8); clipped before the
+                        // layer, the ink the box cuts was (p5, a crop box
+                        // inside the media box). The layer is the box's
+                        // size, not the whole page's (measured: the same
+                        // pixels; run 43750699156).
+                        ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil)
+                        ctx.clip(to: box)
                         DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                         ctx.endTransparencyLayer()
                     }
