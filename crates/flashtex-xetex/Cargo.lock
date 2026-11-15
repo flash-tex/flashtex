@@ -151,6 +151,7 @@ dependencies = [
  "flashtex-pdf",
  "flashtex-project-manifest",
  "flashtex-xetex-fontlibs",
+ "flashtex-xetex-pplib",
  "flashtex-xetex-teckit",
  "icu_segmenter",
  "libc",
@@ -162,6 +163,14 @@ name = "flashtex-xetex-fontlibs"
 version = "0.1.0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "flashtex-xetex-pplib"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "flashtex-xetex-teckit",
 ]
 
 [[package]]

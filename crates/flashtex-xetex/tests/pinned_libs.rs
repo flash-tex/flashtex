@@ -34,6 +34,10 @@ use sha2::{Digest, Sha256};
 const HARFBUZZ: &str = "12.3.2";
 const FREETYPE: (i32, i32, i32) = (2, 14, 1);
 const TECKIT: &str = "2.5.13";
+/// TeX Live 2026's pplib (third_party/pplib): `libs/pplib/version.ac`, and
+/// the library's own `pplib_version` (ppapi.h).
+const PPLIB: &str = "2.05.0";
+const PPLIB_API: &str = "v2.2";
 /// TeX Live 2026's ICU (third_party/icu): its line-break tables, and the
 /// bidi sources that src/native/ubidi ports (neither is linked).
 const ICU: &str = "78.2";
@@ -83,6 +87,7 @@ fn readmes_pin_the_same_versions() {
     let (a, b, c) = FREETYPE;
     assert_eq!(readme_version("freetype"), format!("{a}.{b}.{c}"));
     assert_eq!(readme_version("teckit"), TECKIT);
+    assert_eq!(readme_version("pplib"), PPLIB);
     assert_eq!(readme_version("icu"), ICU);
 }
 
@@ -92,6 +97,11 @@ fn teckit_runtime_version_is_pinned() {
     let v = unsafe { teckit::TECkit_GetVersion() };
     assert_eq!(v, teckit::kCurrentTECkitVersion);
     assert_eq!(v, 0x0002_0004);
+}
+
+#[test]
+fn pplib_runtime_version_is_pinned() {
+    assert_eq!(flashtex_xetex_pplib::version(), PPLIB_API);
 }
 
 fn files_under(dir: &Path, base: &Path, out: &mut BTreeSet<String>) {
@@ -163,6 +173,11 @@ fn vendored_freetype_matches_sha256sums() {
 #[test]
 fn vendored_teckit_matches_sha256sums() {
     check_sums("teckit", &["TECkit-src", "TLpatches"], 20);
+}
+
+#[test]
+fn vendored_pplib_matches_sha256sums() {
+    check_sums("pplib", &["pplib-src", "tl"], 62);
 }
 
 #[test]
