@@ -26,7 +26,9 @@
 %   |new_save_level|, |unsave|), every command and expandable primitive it
 %   runs, and the points where a run stops being a pure function of what it
 %   read (sparse registers, dimensions, token-register copies, leaving its
-%   own input levels, conditionals or groups); src/intrinsics.rs abandons
+%   own input levels, conditionals or groups, any |error|: in
+%   |error_stop_mode| an error answered at the terminal before the log is
+%   open changes no count and writes no log); src/intrinsics.rs abandons
 %   the recording at any of those.
 %
 % * |intr_watch[p]|, for the guard: nonzero when some recorded run read
@@ -40,6 +42,15 @@
 %   value instead.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
+
+@x pdftex.web l.2030 (after changes/web2c-run.ch) - a recorded run never errs
+if interaction=error_stop_mode then
+  @<Get user's advice and |return|@>;
+@y
+if intr_rec_on then flashtex_intr_abort(5);
+if interaction=error_stop_mode then
+  @<Get user's advice and |return|@>;
+@z
 
 @x pdftex.web l.6601 - a new control sequence may be a registered intrinsic
 text(p):=make_string; pool_ptr:=pool_ptr+d;
