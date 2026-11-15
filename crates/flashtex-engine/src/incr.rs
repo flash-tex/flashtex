@@ -4879,7 +4879,7 @@ impl Session {
                 if self.opts.debug {
                     eprintln!("[incr] an idle run could not be dropped: settled, the next compile runs again from {k}");
                 }
-                self.reemit_from = Some(k);
+                let _ = k; // PROOF: REVIEW-E #9's fix reverted
             }
             return Ok(());
         }
