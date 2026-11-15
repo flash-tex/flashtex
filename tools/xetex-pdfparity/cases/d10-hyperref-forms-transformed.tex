@@ -1,0 +1,19 @@
+% d10-hyperref-forms-transformed: hyperref form fields (pdf:ann @name, the AcroForm's /Fields naming them), links inside \rotatebox and \scalebox, an annotation in a rotated box
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\begin{document}
+\section{Forms}\label{s}
+\begin{Form}[action=https://example.com/submit]
+\TextField[name=t,width=3cm]{Name}\par
+\CheckBox[name=c]{Box}\par
+\ChoiceMenu[name=m,combo]{Menu}{One,Two}\par
+\PushButton[name=p,onclick={app.alert('x')}]{Push}\quad \Submit{Send}\quad \Reset{Clear}
+\end{Form}
+
+Rotated: \rotatebox{90}{\href{https://example.com/r}{up link}} and
+\rotatebox{30}{\hyperref[s]{tilted link}}, scaled \scalebox{2}[0.5]{\url{https://example.com/s}}.
+
+\rotatebox{45}{\TextField[name=rt,width=2cm]{Turned}}
+\end{document}
