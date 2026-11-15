@@ -71,8 +71,9 @@ fn pdf_mode_writes_the_pdf_from_the_display_list() {
     assert_eq!(f.get("Subtype").and_then(Obj::as_name), Some("Type0"));
     assert_eq!(f.get("Encoding").and_then(Obj::as_name), Some("Identity-H"));
     let base = f.get("BaseFont").and_then(Obj::as_name).unwrap();
+    // named with its CMap, as xdvipdfmx names a CIDFontType0's (type0.c)
     assert!(
-        base.ends_with("+LMMono10-Regular") && base.len() == 7 + 16,
+        base.ends_with("+LMMono10-Regular-Identity-H") && base.len() == 7 + 16 + 11,
         "{base}"
     );
     let cid = pdf
