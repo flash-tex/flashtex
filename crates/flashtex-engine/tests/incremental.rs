@@ -6036,7 +6036,11 @@ fn the_recorder_leaves_the_journal_keys_alone() {
         let reference = dir.with_extension("ref");
         copy_dir(&dir, &reference);
         let before = fls_files(&dir);
-        let r = h.cmd(&format!("open {}", s0.display()));
+        // (not `cmd`: an error is an answer here)
+        writeln!(h.stdin, "open {}", s0.display()).unwrap();
+        h.stdin.flush().unwrap();
+        let mut r = String::new();
+        h.stdout.read_line(&mut r).unwrap();
         if recorder {
             assert!(
                 r.contains("\"error\"") && r.contains("-recorder"),
