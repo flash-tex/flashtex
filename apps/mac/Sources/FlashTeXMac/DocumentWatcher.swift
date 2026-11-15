@@ -143,7 +143,9 @@ extension ShellModel {
     /// was in flight is seen without waiting for the next filesystem event.
     private func watcherFired(retry: Bool) {
         if files.helperBusy {
-            guard retry else { pendingWatcherRecheck = true; return }
+            // A background autosave (often the very write that fired this):
+            // checked once it is applied, which runs the parked check.
+            guard retry, !files.backgroundSavesInFlight else { pendingWatcherRecheck = true; return }
             let wait = max(files.helperTimeout, 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
                 MainActor.assumeIsolated { self?.watcherFired(retry: false) }
