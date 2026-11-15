@@ -134,13 +134,16 @@ fn texmf_cnf_texinputs_without_default_path_compiles_as_in_tex_live() {
     }
     std::fs::write(d.join("cnf/texmf.cnf"), "TEXINPUTS.pdftex = ./sub:./\n").unwrap();
     // The installation's own cnf path, after the user's directory.
-    let base = std::env::var("TEXMFCNF").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| {
-        let out = Command::new(texbin.join("kpsewhich"))
-            .args(["-var-value", "TEXMFCNF"])
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    });
+    let base = std::env::var("TEXMFCNF")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            let out = Command::new(texbin.join("kpsewhich"))
+                .args(["-var-value", "TEXMFCNF"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        });
     let cnf = format!("{}:{base}", d.join("cnf").display());
     let run_cnf = |bin: &Path, dir: &Path| {
         let out = Command::new(bin)
