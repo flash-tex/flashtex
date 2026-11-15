@@ -203,6 +203,26 @@ written) and three strings in the string table (`end_name` asks for three whatev
 recording that wrote an array's last place, or came within that slack of the pool's or the string
 table's top, is abandoned. D9 does the same, and also keeps #2265's bounds on the stacks.
 
+**Room in main memory** (#2309, the Commander's ruling there). A replay builds none of the call's
+nodes and scans none of its tokens, so a call recorded with room to spare would replay where its
+normal path stops with `main memory size`. What the normal path needs depends on the free lists,
+which no key holds, so an entry keeps a bound that holds whatever they are (`Need::mem`):
+- the most one-word nodes the call has in use at once above its start, the peak of `dyn_used`
+  (`get_avail` takes the call's own freed words again first);
+- twice the words `get_node` gave it, plus its largest node. `get_node` grows `lo_mem_max` by 1000
+  words only when no free run holds the node, and every word of a grown block but a remainder
+  smaller than that node has been given out since;
+- a 128th of the second and 4096 words on top.
+
+changes/boxmemo.ch keeps the three counts (`cap_dyn_peak`, `cap_var`, `cap_var_max`). An offer
+replays only where `hi_mem_min - lo_mem_max` is at least the bound. Then the normal path cannot
+stop there, so leaving it out is exact. D9 keeps the same bound in its slot.
+
+This does not make a *later* `main memory size` fire where pdfTeX's does: the normal path grows
+`lo_mem_max` for good and a replay does not, in verify mode too. The ruling's second half covers
+that: a run that replayed anything and then stops with `main memory size` is thrown away by the
+host and run again without replays. It is not built yet (#2309).
+
 ## 4. Recording
 
 A recording is the normal expansion, observed. It starts at the hook when no valid entry's key holds,

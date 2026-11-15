@@ -671,6 +671,28 @@ fn a_replay_keeps_the_buffers_and_the_pools_overflows() {
 }
 
 #[test]
+fn a_replay_keeps_main_memorys_overflow() {
+    // (#2309) a replay builds none of the call's nodes: a call that makes a
+    // box of 20,000 kerns (40,000 words), recorded with room to spare, was
+    // replayed where about 18,000 words are left and its normal path stops
+    // with `main memory size` (on main: `[survived]`, exit 0). `\box1`
+    // takes up the words the first calls freed
+    let src = common::memory_case(
+        "measure",
+        "\\def\\kloop{\\ifnum\\count3<20000 \\advance\\count3 1 \\kern0.1pt \\expandafter\\kloop\\fi}\n\
+         \\def\\measure{\\begingroup\\setbox0\\hbox{\\count3=0 \\kloop}\\global\\dimen1=\\wd0 \\endgroup}",
+        "\\count3=0 \\setbox1\\hbox{\\kloop}",
+        485,
+    );
+    let d = scratch("capacity-mem");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "measure");
+    assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
+    let s = check("capacity-mem", &src);
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
     // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
     // assignments local (tex.web §1214), like `\globaldefs>0` makes its

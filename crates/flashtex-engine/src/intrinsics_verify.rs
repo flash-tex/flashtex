@@ -79,6 +79,10 @@ const EXCLUDED_SCALARS: &[&str] = &[
     "max_buf_stack",
     "max_save_stack",
     "max_nest_stack",
+    // the counts of main memory a recording's start sets (src/capacity.rs)
+    "cap_dyn_peak",
+    "cap_var",
+    "cap_var_max",
     "tally",
     "first_count",
     "trick_count",

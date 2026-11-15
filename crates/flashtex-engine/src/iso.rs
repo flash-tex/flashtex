@@ -2043,6 +2043,11 @@ pub fn dead_scalar(n: &str) -> bool {
 /// Scalars that hold pointers only while a command runs (tex.web: set
 /// before every use), so their values between commands are not state.
 const DEAD_SCALARS: &[&str] = &[
+    // changes/boxmemo.ch: the counts of main memory a recording's start
+    // sets before its end reads them (src/capacity.rs)
+    "cap_dyn_peak",
+    "cap_var",
+    "cap_var_max",
     // tex.web §494: set by `pass_text` when skipping begins, read only by
     // the "Incomplete \if" message of that skip
     "skip_line",

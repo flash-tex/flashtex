@@ -476,6 +476,27 @@ fn a_replay_raises_the_stack_statistics_as_its_normal_path() {
     assert!(stat(&on.stats, "replays") >= 2, "{}", on.stats);
 }
 
+#[test]
+fn a_replay_keeps_main_memorys_overflow() {
+    // (#2309) a replay scans none of the call's tokens: a call whose
+    // `\pdfstrcmp` argument is 30,000 tokens long (`\romannumeral`'s `m`s,
+    // in a list and in the list `\pdfstrcmp` scans them into), recorded
+    // with room to spare, was replayed where about 18,000 words are left
+    // and its normal path stops with `main memory size`
+    let src = common::memory_case(
+        "hook",
+        "\\def\\hook{\\begingroup\\global\\count2=1 \\ifnum\\pdfstrcmp{\\romannumeral30000000}{}=0 \\fi\\endgroup}",
+        "",
+        497,
+    );
+    let d = scratch("capacity-mem");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "hook");
+    assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
+    let s = check("capacity-mem", &src);
+    assert!(stat(&s, "replays") >= 2, "{s}");
+}
+
 /// `\globaldefs<0` turns every global assignment local (tex.web §1214): a
 /// replay of the hook's `\global` and `\gdef` operations would be wrong, so
 /// a negative value, like a positive one, is a precondition failure. Inside

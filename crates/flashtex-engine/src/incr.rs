@@ -2147,6 +2147,12 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // name are compared themselves. Two runs that both changed a font
         // after the restart point hold different numbers for equal arrays.
         Some("bm_font_version" | "bm_hyph_version") => return true,
+        // changes/boxmemo.ch: the counts of main memory a recording's start
+        // sets and its end reads (src/capacity.rs), kept between recordings
+        // too and read by nothing else. They hold what the code since the
+        // last recording's start allocated, which two runs that recorded at
+        // different places do not share.
+        Some("cap_dyn_peak" | "cap_var" | "cap_var_max") => return true,
         // pdftex.web l. 9384: `macro_call` sets it from the macro's
         // `eq_type` when it starts to scan parameters ("Scan the parameters
         // and make link(r) point to the macro body"), and it is read only

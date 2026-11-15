@@ -1386,6 +1386,9 @@ impl Globals {
                     self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
                     __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
                     self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                    if (self.dyn_used > self.cap_dyn_peak) {
+                        self.cap_dyn_peak = self.dyn_used;
+                    }
                     self.dl_new_node(q);
                 }
             }
@@ -3515,6 +3518,9 @@ impl Globals {
                                             self.avail = __av_mem[crate::ix::U((__av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].hh().lh()) as usize)].hh().rh();
                                             { let __ix125 = __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].hh().lh(); __av_mem[crate::ix::U((__ix125) as usize)].set_hh_rh(null); }
                                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                            if (self.dyn_used > self.cap_dyn_peak) {
+                                                self.cap_dyn_peak = self.dyn_used;
+                                            }
                                             self.dl_new_node(__av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].hh().lh());
                                         }
                                     }
