@@ -883,4 +883,46 @@ mod tests {
         assert_eq!(g.bbox, [0.0, 3.5, 0.0, 3.5]);
         assert!(metrics(&cs(&[&[5, -10]]), &subr, 2, &mut Vec::new()).is_err());
     }
+
+    /// A flex counts its points as t1_char.c does, with `y +=
+    /// args[2*1+1]` for the second control point's y (a bug kept for
+    /// parity): TeX Live 2026's xdvipdfmx 20260317 gives this `b` an
+    /// Ascent of 660, where the true top of the curve is 635 (review of
+    /// #2479).
+    #[test]
+    fn flex_box_is_dvipdfmxs() {
+        // Subrs 0-2: the flex OtherSubrs, as Type 1 fonts define them
+        let subrs = [
+            cs(&[&[3, 0, -1016], &[-1017], &[-1017], &[-1033], &[-11]]),
+            cs(&[&[0, 1, -1016], &[-11]]),
+            cs(&[&[0, 2, -1016], &[-11]]),
+        ];
+        let subr = move |i: usize| subrs.get(i).cloned();
+        let c = cs(&[
+            &[30, 556, -13],
+            &[0, 0, -21],
+            &[0, 600, -5],
+            &[1, -10],
+            &[10, 5, -21],
+            &[2, -10],
+            &[10, 20, -21],
+            &[2, -10],
+            &[20, 10, -21],
+            &[2, -10],
+            &[20, 0, -21],
+            &[2, -10],
+            &[20, 0, -21],
+            &[2, -10],
+            &[20, -10, -21],
+            &[2, -10],
+            &[10, -25, -21],
+            &[2, -10],
+            &[50, 130, 600, 0, -10],
+            &[0, -600, -5],
+            &[-9],
+            &[-14],
+        ]);
+        let g = metrics(&c, &subr, 3, &mut Vec::new()).unwrap();
+        assert_eq!(g.bbox[3], 660.0);
+    }
 }
