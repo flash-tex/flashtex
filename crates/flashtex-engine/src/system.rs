@@ -2102,6 +2102,19 @@ pub fn find_file(name: &str, format: Format) -> Option<String> {
     p
 }
 
+/// `kpse_find_file(name, format, true)`, as web2c's `open_input` asks for
+/// every file but a TeX input: when the file is not found, kpathsea runs
+/// the format's mktex script (`mktextfm` for a font metric file), takes
+/// what it made, and notes a failure in `missfont.log`. For the XeTeX
+/// port's `open_input` (this engine's own is `Globals::input_path`).
+pub fn find_file_must_exist(name: &str, format: Format) -> Option<String> {
+    let p = resolve_ex(name, format, true);
+    if let Some(p) = &p {
+        read_set_open(p);
+    }
+    p
+}
+
 /// A format file: the resolver's search path first (`TEXFORMATS`, which
 /// starts with the current directory, so a format a build made for itself
 /// wins, as with pdfTeX), then `FLASHTEX_FORMATS` (a colon-separated list

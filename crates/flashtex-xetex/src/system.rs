@@ -1005,9 +1005,18 @@ fn utf16_to_name(units: &[i32]) -> Vec<u8> {
 
 /// The run's file lookup: `kpse_find_file(name, format, must_exist)` the way
 /// web2c's `open_input` asks it, through the pdfTeX engine's resolver.
+///
+/// A font metric file that must exist is asked for with `must_exist`, as
+/// `open_input` asks: kpathsea then runs `mktextfm` for a name it does not
+/// find (an EC or Sauter font at a size without a TFM file is made on the
+/// spot), and writes `mktextfm NAME` to `missfont.log` when that fails.
+/// A format file keeps the plain lookup: for a missing one kpathsea would
+/// run `mktexfmt`, which is not taken up here.
 fn lookup(name: &str, format: Format, must_exist: bool) -> Option<String> {
     if format == Format::Tex && must_exist {
         flashtex_engine::system::find_input(name)
+    } else if format == Format::Tfm && must_exist {
+        flashtex_engine::system::find_file_must_exist(name, format)
     } else {
         flashtex_engine::system::find_file(name, format)
     }
