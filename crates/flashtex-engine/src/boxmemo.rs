@@ -3854,28 +3854,21 @@ impl Globals {
     }
 
     /// The room a finished recording took on TeX's stacks ([`Room`]). What
-    /// a local assignment saves depends on its location's level, which the
-    /// key does not hold (`eq_define`, tex.web §277, and `eq_save`, §276):
-    /// - at the call's own level it saves nothing where the location's
-    ///   level is the current one (or the call is at level one), and one
-    ///   or two words otherwise: up to two more words on another path;
-    /// - in a group of the call's, the first one to a location saves one
-    ///   word where the location's level is `level_zero` (a control
-    ///   sequence never defined) and two otherwise, as after a
-    ///   `\global\let` to an undefined one: up to one more word.
+    /// a local assignment saves depends on its location's level and on
+    /// whether it holds that very value already, which the key does not
+    /// hold (`eq_define`, tex.web §277, `eq_save`, §276, and e-TeX's
+    /// "reassigning"): nothing where the location's level is the current
+    /// one, the call is at level one, or the same pointer is assigned
+    /// again (`\\let\\a\\b` twice); one word for a location at
+    /// `level_zero` (a control sequence never defined); two otherwise. So
+    /// each local assignment, at the call's own level or in a group of its
+    /// own, may take up to two more words on another path.
     fn bm_room_of(&self, rec: &Rec) -> Room {
-        let mut depth = 0i32;
-        let mut more = 0i32;
-        for o in &rec.ops {
-            match o {
-                Op::Begin(_) => depth += 1,
-                Op::End => depth -= 1,
-                Op::Def { kind, .. } | Op::Sa { kind, .. } if *kind < 2 => {
-                    more += if depth <= 0 { 2 } else { 1 }
-                }
-                _ => {}
-            }
-        }
+        let more = 2 * rec
+            .ops
+            .iter()
+            .filter(|o| matches!(o, Op::Def { kind, .. } | Op::Sa { kind, .. } if *kind < 2))
+            .count() as i32;
         let s = &rec.start;
         Room {
             level: rec.peak_level,

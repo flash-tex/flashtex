@@ -323,11 +323,11 @@ tests check them:
 - the deepest `cur_level` at which it opens a group;
 - `save_ptr`, `input_ptr`, `param_ptr` and `nest_ptr`, bounded by the statistics' high-water marks
   at the call's end (`max_save_stack` & co.): exact when the call raised the mark, more than enough
-  when it did not. `save_ptr` gets two words more for each local assignment at the call's own
-  level, which saves the old value or not, depending on that location's level, and one word more
-  for each local assignment in the call's groups, which saves one word for a location at
-  `level_zero` (a control sequence never defined) and two for any other (tex.web §276–§277). The
-  key holds no location's level.
+  when it did not. `save_ptr` gets two words more for each local assignment, at the call's own
+  level or in one of its groups. Such an assignment saves nothing where the location's level is
+  the current one or the same pointer is assigned again (e-TeX's "reassigning"), one word for a
+  location at `level_zero` (a control sequence never defined) and two for any other (tex.web
+  §276–§277). The key holds no location's level and no pointer.
 
 An offer replays only where every limit would hold. Otherwise it is a miss (`Room` in the
 statistics), and the normal path runs, and overflows as pdfTeX does. Where it does not overflow
