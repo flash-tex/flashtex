@@ -1094,7 +1094,8 @@ impl Globals {
         let name = self.raw_file_name();
         let absolute = name.starts_with('/');
         let mut fname = name.clone();
-        if let Some(dir) = run().output_directory {
+        let out_dir = run().output_directory;
+        if let Some(dir) = &out_dir {
             if !absolute {
                 fname = format!("{dir}/{name}");
             }
@@ -1105,6 +1106,15 @@ impl Globals {
             r.guard_out(&fname);
         }
         let mut f = File::create(&fname).ok();
+        if f.is_none() && !absolute {
+            // (the host's runs: `chapters/one.aux` under the output
+            // directory, `flashtex_engine::system::make_output_subdir`)
+            if let Some(dir) = &out_dir {
+                if flashtex_engine::system::make_output_subdir(dir, &name) {
+                    f = File::create(&fname).ok();
+                }
+            }
+        }
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");
@@ -1404,6 +1414,33 @@ impl Globals {
             eprintln!("Please increase buf_size in texmf.cnf.");
             exit_process(self, 1);
         }
+        // `\XeTeXinputnormalization` 1 (NFC) or 2 (NFD): C reads the line
+        // into `utf32Buf` and `apply_normalization` writes the normalized
+        // characters at `first` and sets `last`; any other value reads the
+        // line as it is (TeX Live 2026's xetex leaves the line alone for 3
+        // and -1). TECkit failing, a result longer than the room left in
+        // `buffer` included, is C's `buffer_overflow`.
+        let norm = self.get_input_normalization_state();
+        if norm == 1 || norm == 2 {
+            let text: Vec<u32> = self.buffer[self.first as usize..self.last as usize]
+                .iter()
+                .map(|&c| c as u32)
+                .collect();
+            let room = (buf_size - self.first).max(0) as usize;
+            match self.normalize_utf32(&text, norm == 2, room) {
+                Some(out) => {
+                    for (k, c) in out.iter().enumerate() {
+                        self.buffer[self.first as usize + k] = *c as i32;
+                    }
+                    self.last = self.first + out.len() as i32;
+                }
+                None => {
+                    eprintln!("! Unable to read an entire line---bufsize={buf_size}.");
+                    eprintln!("Please increase buf_size in texmf.cnf.");
+                    exit_process(self, 1);
+                }
+            }
+        }
         if i == b'\r' as i32 {
             f.skip_next_lf = true;
         }
@@ -1515,12 +1552,11 @@ impl Globals {
                 return false;
             }
             self.host.full_name_of_file = Some(s.clone());
-            let Ok(mut child) = std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg(cmd)
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-            else {
+            // texmfmp.c's `runpopen`, as the pdfTeX engine runs it: in
+            // restricted mode (`-shell-restricted`, or texmf.cnf's
+            // `shell_escape = p`) only a command in `shell_escape_commands`
+            // runs; any other is refused, as `\write18` refuses it.
+            let Some(mut child) = flashtex_engine::system::run_popen_in(cmd) else {
                 return false;
             };
             let Some(out) = child.stdout.take() else {
@@ -1528,6 +1564,14 @@ impl Globals {
             };
             f.input = Some(TextIn::Pipe(BufReader::new(out)));
             f.child = Some(child);
+            // texmfmp.c's `u_open_in_or_pipe` sniffs no byte order mark
+            // on a pipe (it cannot rewind one): `AUTO` is UTF-8 there, and
+            // the command's first bytes are the first line's.
+            f.err = 0;
+            f.at_eof = false;
+            let mode = if in_mode == AUTO { UTF8 } else { in_mode };
+            self.set_input_file_encoding(f, mode, encoding_data);
+            return true;
         } else {
             let must_exist = self.host.tex_input_type;
             let Some(name) = self.input_path(Format::Tex, must_exist) else {
