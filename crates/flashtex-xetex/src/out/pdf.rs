@@ -30,7 +30,7 @@
 //! is structural and visual, not byte-level).
 
 use super::agl::Agl;
-use super::doc::{Doc, Named, Supplement};
+use super::doc::{Doc, Named, Outline, Supplement};
 use super::fonts::{FaceData, FontRes, ResKind};
 use super::images::Kind;
 use super::num::{fmt_num, push_num, push_uint};
@@ -469,10 +469,22 @@ impl<'a> Writer<'a> {
         let resources = self.resources(&res, &b.sup)?;
         // annotations
         let mut annots = Vec::new();
+        // dvipdfmx's `pdf_doc_add_annot`: the dictionary as the special gave
+        // it (no `/Type` added) with its `/Rect`.
         for a in &b.sup.annots {
+            // `pdf:ann @name`: the named object, written once wherever it
+            // is named (its dictionary already has the `/Rect`)
+            if let Some(n) = &a.name {
+                if self.resolve(n).is_some() {
+                    if let Some(&o) = self.named.get(n.as_slice()) {
+                        annots.push(o);
+                        continue;
+                    }
+                }
+            }
             let mut d = a.dict.clone();
-            if d.get(b"Type").is_none() {
-                d.0.insert(0, (b"Type".to_vec(), Obj::Name(b"Annot".to_vec())));
+            if let Some(g) = &a.goto {
+                g.apply(&mut d);
             }
             d.set(
                 b"Rect",
@@ -915,6 +927,7 @@ impl<'a> Writer<'a> {
                 n_base,
                 palette,
                 idat,
+                trans,
             }) = png_passthrough(&data)
             {
                 let base = if let Some(icc) = &col.icc {
@@ -952,6 +965,27 @@ impl<'a> Writer<'a> {
                     .unwrap_or("Perceptual");
                     dict.push_str(&format!(" /Intent /{name}"));
                 }
+                match &trans {
+                    PngTrans::None => {}
+                    PngTrans::Key(k) => {
+                        let k: Vec<String> = k.iter().map(u32::to_string).collect();
+                        dict.push_str(&format!(" /Mask [{}]", k.join(" ")));
+                    }
+                    PngTrans::Alpha(a) => {
+                        // the decoded indices: the PNG without its tRNS
+                        let rows = flashtex_pdf::raster::decode_png(&png_without_trns(&data))
+                            .map_err(|e| format!("{}: {e}", img.path))?;
+                        let sm =
+                            png_soft_mask(&rows.samples, rows.bits, rows.width, rows.height, a);
+                        let o = self.alloc();
+                        let d = format!(
+                            " /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceGray /BitsPerComponent 8",
+                            rows.width, rows.height
+                        );
+                        self.stream(o, d.as_bytes(), &sm, true);
+                        dict.push_str(&format!(" /SMask {o} 0 R"));
+                    }
+                }
                 self.stream(num, dict.as_bytes(), &idat, false);
                 return Ok(());
             }
@@ -965,7 +999,13 @@ impl<'a> Writer<'a> {
         let x = match img.kind {
             Kind::Png => flashtex_pdf::images::from_png(&data),
             Kind::Jpeg => flashtex_pdf::images::from_jpeg(&data),
-            Kind::Pdf => flashtex_pdf::images::from_pdf_page(&data, img.page.max(1) as u32),
+            // xdvipdfmx's box (`set_bounding_box`); the placement
+            // (special.rs `place_image`) makes up for /Matrix's convention
+            Kind::Pdf => flashtex_pdf::images::from_pdf_page_box(
+                &data,
+                img.page.max(1) as u32,
+                Some(img.bbox),
+            ),
             Kind::Bmp => Err("BMP images are not written yet".into()),
         };
         let x = match x {
@@ -1112,6 +1152,18 @@ impl<'a> Writer<'a> {
             };
             Some((format!(" /{file_key} {ff} 0 R{cid_set}"), *subset))
         };
+        // a CFF font is named by its CFF's Name INDEX (cidtype0.c
+        // `cff_get_name`), not the `name` table: the faces of a collection
+        // may share one CFF
+        let cff_name = if cff {
+            font.cff_table()
+                .and_then(|t| flashtex_pdf::cff::CffFont::parse(t).ok())
+                .map(|c| c.name())
+                .filter(|n| !n.is_empty())
+        } else {
+            None
+        };
+        let ps_name = cff_name.as_deref().unwrap_or(ps_name);
         // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
         let name = if ps_name.is_empty() { "Font" } else { ps_name };
         let base = match &file {
@@ -1190,10 +1242,13 @@ impl<'a> Writer<'a> {
                 }
             }
         };
-        let tu = match map {
-            Some(map) => {
+        let cmap = map.and_then(|map| {
+            let name = format!("{base}-UTF16");
+            super::tounicode::cmap_stream(name.as_bytes(), &map, true)
+        });
+        let tu = match cmap {
+            Some(cmap) => {
                 let tu = self.alloc();
-                let cmap = to_unicode_cmap(&base, &map, true);
                 self.stream(tu, b"", cmap.as_bytes(), true);
                 format!(" /ToUnicode {tu} 0 R")
             }
@@ -1245,7 +1300,11 @@ impl<'a> Writer<'a> {
         let fd = self.alloc();
         let d = format!(
             "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
-            type1_flags(&r.program, t1.italic_angle().unwrap_or("0")),
+            type1_flags(
+                t1.font_name().unwrap_or(ps_name),
+                t1.italic_angle().unwrap_or("0"),
+                type1_force_bold(&r.program)
+            ),
             bbox[0],
             bbox[1],
             bbox[2],
@@ -1259,11 +1318,18 @@ impl<'a> Writer<'a> {
         self.object(fd, d.as_bytes());
         let first = used.iter().next().copied().unwrap_or(0).min(255);
         let last = used.iter().next_back().copied().unwrap_or(0).min(255);
-        let widths = self.doc.fonts.widths.get(&r.id);
+        // the program's own widths, `ROUND(w, 0.1)`, 0 for codes not used
+        // (type1.c add_metrics; the supported FontMatrix scales by 1)
         let mut wa = String::from("[");
         for c in first..=last {
-            let w = widths.and_then(|m| m.get(&c)).copied().unwrap_or(0.0);
-            let _ = write!(wa, " {}", n(w, 3));
+            let w = if used.contains(&c) {
+                encoding
+                    .get(c as usize)
+                    .map_or(0.0, |g| type1_width(&t1, &String::from_utf8_lossy(g)))
+            } else {
+                0.0
+            };
+            let _ = write!(wa, " {}", n(w, 8));
         }
         wa.push_str(" ]");
         let mut diffs = String::from("[");
@@ -1294,10 +1360,13 @@ impl<'a> Writer<'a> {
                     .map(|n| (c, n.clone()))
             })
             .collect();
-        let tu = match super::tounicode::encoding_to_unicode(&names, &self.agl()) {
-            Some(map) => {
+        let cmap = super::tounicode::encoding_to_unicode(&names, &self.agl()).and_then(|map| {
+            let name = format!("{base}-UTF16");
+            super::tounicode::cmap_stream(name.as_bytes(), &map, false)
+        });
+        let tu = match cmap {
+            Some(cmap) => {
                 let tu = self.alloc();
-                let cmap = to_unicode_cmap(&base, &map, false);
                 self.stream(tu, b"", cmap.as_bytes(), true);
                 format!(" /ToUnicode {tu} 0 R")
             }
@@ -1333,11 +1402,23 @@ impl<'a> Writer<'a> {
         };
         // named destinations
         let mut names = doc.names.clone();
-        if !doc.dests.is_empty() {
-            let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
-            for (k, v) in &doc.dests {
-                sorted.entry(k.clone()).or_insert_with(|| v.clone());
-            }
+        // with dvipdfmx's destination optimisation (`Goto`), only the
+        // destinations a link or an outline entry names, under their new
+        // names (pdfnames.c's `flat_table` with the `gotos` filter), in
+        // the order of the new names (`cmp_key`)
+        let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
+        for (k, v) in &doc.dests {
+            let k = if doc.check_gotos {
+                match doc.gotos.get(k) {
+                    Some(n) => n.clone(),
+                    None => continue,
+                }
+            } else {
+                k.clone()
+            };
+            sorted.entry(k).or_insert_with(|| v.clone());
+        }
+        if !sorted.is_empty() {
             let mut arr = Vec::new();
             for (k, v) in sorted {
                 arr.push(Obj::Str(k));
@@ -1365,8 +1446,13 @@ impl<'a> Writer<'a> {
         };
         // the catalog
         let mut cat = doc.catalog.clone();
-        for k in [&b"Type"[..], b"Pages", b"Outlines", b"Names"] {
+        for k in [&b"Type"[..], b"Pages", b"Names"] {
             cat.remove(k);
+        }
+        // pdf_doc_close_bookmarks replaces `/Outlines` only when there is
+        // an outline: a document's own `/Outlines` stays otherwise
+        if outlines.is_some() {
+            cat.remove(b"Outlines");
         }
         let mut d = format!("<</Type /Catalog /Pages {root} 0 R");
         if let Some(o) = outlines {
@@ -1387,98 +1473,99 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    /// The outline tree from the flat list of `pdf:outline` entries.
+    /// The outline tree, built from the `pdf:outline` entries as
+    /// dvipdfmx's `spc_handler_pdfm_outline` and pdfdoc.c's
+    /// `pdf_doc_bookmarks_up`/`_down`/`_add` build it, and written as
+    /// `flush_bookmarks` writes it:
+    ///
+    /// * a level counts from the lowest level seen so far
+    ///   (`lowest_level`, from 255);
+    /// * a jump of more than one level down fills each level skipped with
+    ///   dvipdfmx's `<No Title>` entry (red, italic, a JavaScript alert);
+    /// * `/Count` of an entry with children is the number of entries
+    ///   visible below it when it is open (its children, and theirs
+    ///   through open children), negated when it is closed;
+    /// * the root has `/First`, `/Last` and `/Count`, and no `/Type`.
+    ///
+    /// An entry's own keys stay unless one of these replaces them.
     fn outlines(&mut self) -> u32 {
-        let doc = self.doc;
-        let n_items = doc.outlines.len();
-        let root = self.alloc();
-        let nums: Vec<u32> = (0..n_items).map(|_| self.alloc()).collect();
-        // parent of each item (None: the root), by levels
-        let mut parent: Vec<Option<usize>> = vec![None; n_items];
-        let mut stack: Vec<usize> = Vec::new();
-        for (i, o) in doc.outlines.iter().enumerate() {
-            while let Some(&top) = stack.last() {
-                if doc.outlines[top].level >= o.level {
-                    stack.pop();
-                } else {
+        let items = outline_items(&self.doc.outlines);
+        // the items with a dictionary in the chain from `first`
+        let chain = |first: Option<usize>| -> Vec<usize> {
+            let mut v = Vec::new();
+            let mut it = first;
+            while let Some(i) = it {
+                if items[i].dict.is_none() {
                     break;
                 }
+                v.push(i);
+                it = items[i].next;
             }
-            parent[i] = stack.last().copied();
-            stack.push(i);
+            v
+        };
+        // flush_bookmarks's count for each item's children: the entries
+        // visible below it when it is open. Children come after their
+        // parent, so from the last item back.
+        let mut below = vec![0i64; items.len()];
+        for i in (0..items.len()).rev() {
+            below[i] = chain(items[i].first)
+                .iter()
+                .map(|&c| 1 + if items[c].is_open != 0 { below[c] } else { 0 })
+                .sum();
         }
-        let children =
-            |p: Option<usize>| -> Vec<usize> { (0..n_items).filter(|&i| parent[i] == p).collect() };
-        // visible descendants (counting through open items)
-        fn visible(
-            i: usize,
-            kids: &dyn Fn(Option<usize>) -> Vec<usize>,
-            open: &dyn Fn(usize) -> bool,
-        ) -> i64 {
-            let c = kids(Some(i));
-            c.iter()
-                .map(|&k| 1 + if open(k) { visible(k, kids, open) } else { 0 })
-                .sum()
+        let root = self.alloc();
+        let top = chain(Some(0));
+        // object numbers, a parent's before its children's; each entry
+        // with its parent's object and its previous sibling
+        let mut nums: Vec<u32> = vec![0; items.len()];
+        let mut order: Vec<(usize, u32, Option<usize>)> = Vec::new();
+        let mut todo = vec![(top.clone(), root)];
+        while let Some((sibs, par)) = todo.pop() {
+            for &i in &sibs {
+                nums[i] = self.alloc();
+            }
+            for (k, &i) in sibs.iter().enumerate() {
+                order.push((i, par, k.checked_sub(1).map(|p| sibs[p])));
+                let kids = chain(items[i].first);
+                if !kids.is_empty() {
+                    todo.push((kids, nums[i]));
+                }
+            }
         }
-        let open = |i: usize| doc.outlines[i].open;
-        for i in 0..n_items {
-            let o = &doc.outlines[i];
-            let mut d = o.dict.clone();
-            for k in [
-                &b"Parent"[..],
-                b"Prev",
-                b"Next",
-                b"First",
-                b"Last",
-                b"Count",
-            ] {
-                d.remove(k);
+        for (i, par, prev) in order {
+            let mut d = items[i].dict.clone().unwrap_or_default();
+            let kids = chain(items[i].first);
+            if let (Some(&f), Some(&l)) = (kids.first(), kids.last()) {
+                d.set(b"First", Obj::Ref(nums[f], 0));
+                d.set(b"Last", Obj::Ref(nums[l], 0));
+                let c = if items[i].is_open != 0 {
+                    below[i]
+                } else {
+                    -below[i]
+                };
+                d.set(b"Count", Obj::Num(c.to_string().into_bytes()));
             }
-            let mut body = b"<<".to_vec();
-            let e = self.ser_dict_entries(&d);
-            body.extend_from_slice(&e);
-            let par = parent[i].map_or(root, |p| nums[p]);
-            let sibs = children(parent[i]);
-            let pos = sibs.iter().position(|&s| s == i).unwrap_or(0);
-            let _ = write!(Bytes(&mut body), " /Parent {par} 0 R");
-            if pos > 0 {
-                let _ = write!(Bytes(&mut body), " /Prev {} 0 R", nums[sibs[pos - 1]]);
+            d.set(b"Parent", Obj::Ref(par, 0));
+            if let Some(p) = prev {
+                d.set(b"Prev", Obj::Ref(nums[p], 0));
             }
-            if pos + 1 < sibs.len() {
-                let _ = write!(Bytes(&mut body), " /Next {} 0 R", nums[sibs[pos + 1]]);
+            if let Some(n) = items[i].next.filter(|&n| items[n].dict.is_some()) {
+                d.set(b"Next", Obj::Ref(nums[n], 0));
             }
-            let kids = children(Some(i));
-            if let (Some(f), Some(l)) = (kids.first(), kids.last()) {
-                let cnt = visible(i, &children, &open);
-                let cnt = if o.open { cnt } else { -(kids.len() as i64) };
-                let _ = write!(
-                    Bytes(&mut body),
-                    " /First {} 0 R /Last {} 0 R /Count {cnt}",
-                    nums[*f],
-                    nums[*l]
-                );
-            }
-            body.extend_from_slice(b">>");
+            let body = self.ser(&Obj::Dict(d));
             self.object(nums[i], &body);
         }
-        let top = children(None);
         let total: i64 = top
             .iter()
-            .map(|&k| {
-                1 + if open(k) {
-                    visible(k, &children, &open)
-                } else {
-                    0
-                }
-            })
+            .map(|&k| 1 + if items[k].is_open != 0 { below[k] } else { 0 })
             .sum();
-        let mut body = b"<</Type /Outlines".to_vec();
-        if let (Some(f), Some(l)) = (top.first(), top.last()) {
+        let mut body = b"<<".to_vec();
+        if let (Some(&f), Some(&l)) = (top.first(), top.last()) {
             let _ = write!(
                 Bytes(&mut body),
-                " /First {} 0 R /Last {} 0 R /Count {total}",
-                nums[*f],
-                nums[*l]
+                "/First {} 0 R /Last {} 0 R /Count {total}",
+                nums[f],
+                nums[l]
             );
         }
         body.extend_from_slice(b">>");
@@ -1561,6 +1648,116 @@ impl<'a> Writer<'a> {
         );
         out
     }
+}
+
+/// An outline item as pdfdoc.c keeps it (`pdf_olitem`): item 0 is the
+/// first item `pdf_doc_init_bookmarks` makes.
+struct OlItem {
+    dict: Option<Dict>,
+    first: Option<usize>,
+    next: Option<usize>,
+    parent: Option<usize>,
+    /// 1 open, 0 closed, -1 the place for a next sibling (which counts as
+    /// open in `flush_bookmarks`'s `if (item->is_open)` if a `<No Title>`
+    /// entry fills it).
+    is_open: i32,
+}
+
+/// dvipdfmx's entry for a level an outline skipped
+/// (`pdf_doc_bookmarks_down`).
+fn no_title_entry() -> Dict {
+    let num = |t: &[u8]| Obj::Num(t.to_vec());
+    let js = b"app.alert(\"The author of this document made this bookmark item empty!\", 3, 0)";
+    Dict(vec![
+        (b"Title".to_vec(), Obj::Str(b"<No Title>".to_vec())),
+        (
+            b"C".to_vec(),
+            Obj::Array(vec![num(b"1"), num(b"0"), num(b"0")]),
+        ),
+        (b"F".to_vec(), num(b"1")),
+        (
+            b"A".to_vec(),
+            Obj::Dict(Dict(vec![
+                (b"S".to_vec(), Obj::Name(b"JavaScript".to_vec())),
+                (b"JS".to_vec(), Obj::Str(js.to_vec())),
+            ])),
+        ),
+    ])
+}
+
+/// The outline items `pdf:outline` entries make, as
+/// `spc_handler_pdfm_outline` moves through levels
+/// (`pdf_doc_bookmarks_up`, `_down`) and `pdf_doc_bookmarks_add` adds an
+/// entry, with TeX Live's `-O 0` (an entry without `[]` is closed).
+fn outline_items(entries: &[Outline]) -> Vec<OlItem> {
+    fn new_item(items: &mut Vec<OlItem>, parent: Option<usize>, is_open: i32) -> usize {
+        items.push(OlItem {
+            dict: None,
+            first: None,
+            next: None,
+            parent,
+            is_open,
+        });
+        items.len() - 1
+    }
+    let mut items = Vec::new();
+    let mut current = new_item(&mut items, None, 1);
+    let mut depth: i64 = 1;
+    let mut lowest: i64 = 255;
+    for o in entries {
+        lowest = lowest.min(o.level as i64);
+        let level = o.level as i64 + 1 - lowest;
+        while depth > level {
+            // up: to the parent's next sibling
+            let Some(parent) = items[current].parent else {
+                break;
+            };
+            current = match items[parent].next {
+                Some(n) => n,
+                None => {
+                    let gp = items[parent].parent;
+                    let n = new_item(&mut items, gp, 0);
+                    items[parent].next = Some(n);
+                    n
+                }
+            };
+            depth -= 1;
+        }
+        while depth < level {
+            // down: a first child, the level filled if it is empty
+            if items[current].dict.is_none() {
+                items[current].dict = Some(no_title_entry());
+            }
+            let f = new_item(&mut items, Some(current), 0);
+            items[current].first = Some(f);
+            current = f;
+            depth += 1;
+        }
+        let mut item = current;
+        if items[item].dict.is_some() {
+            item = match items[item].next {
+                Some(n) => n,
+                None => {
+                    let p = items[item].parent;
+                    let n = new_item(&mut items, p, -1);
+                    items[item].next = Some(n);
+                    n
+                }
+            };
+        }
+        let mut d = o.dict.clone();
+        if let Some(g) = &o.goto {
+            g.apply(&mut d);
+        }
+        items[item].dict = Some(d);
+        items[item].first = None;
+        items[item].is_open = i32::from(o.open);
+        let p = items[item].parent;
+        let n = new_item(&mut items, p, -1);
+        items[item].next = Some(n);
+        current = item;
+    }
+    items
 }
 
 /// The file's first two lines: the version, and a comment of non-ASCII
@@ -2093,14 +2290,52 @@ impl FaceInfo {
     }
 }
 
-/// A Type 1 font's `/Flags`: Symbolic (TeX's fonts are re-encoded), and
-/// FixedPitch and Italic from its `FontInfo`.
-fn type1_flags(program: &[u8], italic_angle: &str) -> u32 {
-    let clear_end = program.len().min(16 * 1024);
-    let clear = &program[..clear_end];
+/// Whether a PFB program's Private dict says `/ForceBold true` (its
+/// eexec-encrypted part, decrypted).
+fn type1_force_bold(pfb: &[u8]) -> bool {
+    let mut at = 0;
+    while pfb.get(at) == Some(&0x80) {
+        let Some(len) = pfb
+            .get(at + 2..at + 6)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        else {
+            return false;
+        };
+        let body = pfb.get(at + 6..at + 6 + len).unwrap_or(&[]);
+        if pfb.get(at + 1) == Some(&2) {
+            let plain = flashtex_pdf::type1::decrypt(body, 55665, 4);
+            return plain.windows(15).any(|w| w == b"/ForceBold true");
+        }
+        at += 6 + len;
+    }
+    false
+}
+
+/// Glyph `name`'s `/Widths` entry as xdvipdfmx's `add_metrics` (type1.c)
+/// writes it: the charstring's width, `ROUND(w, 0.1)`; 0 for a glyph the
+/// program lacks.
+fn type1_width(t1: &flashtex_pdf::type1::Type1Font, name: &str) -> f64 {
+    t1.advance_width(name).map_or(0.0, |w| {
+        ((w.num as f64 / w.den as f64) / 0.1 + 0.5).floor() * 0.1
+    })
+}
+
+/// A Type 1 font's `/Flags` as xdvipdfmx's `get_font_attr` (type1.c) sets
+/// them from its program's `FontName` and `ItalicAngle`: Symbolic, Serif
+/// unless the name contains `Sans`, SmallCap if it contains `Caps`, Italic
+/// for an angle other than 0, ForceBold from the Private dict. (Its
+/// FixedPitch also comes from the Private dict, where a Type 1 font's
+/// `isFixedPitch` is not.)
+fn type1_flags(font_name: &str, italic_angle: &str, force_bold: bool) -> u32 {
     let mut f = 4;
-    if clear.windows(17).any(|w| w == b"/isFixedPitch tru") {
-        f |= 1;
+    if force_bold {
+        f |= 1 << 18;
+    }
+    if !font_name.contains("Sans") {
+        f |= 2;
+    }
+    if font_name.contains("Caps") {
+        f |= 1 << 17;
     }
     if italic_angle.trim().parse::<f64>().is_ok_and(|a| a != 0.0) {
         f |= 64;
@@ -2218,37 +2453,6 @@ fn subset_tag(name: &str, used: &BTreeSet<u16>) -> String {
     d[..6].iter().map(|b| (b'A' + b % 26) as char).collect()
 }
 
-/// A `ToUnicode` CMap: codes (2 bytes for `Identity-H`, else 1) to UTF-16.
-fn to_unicode_cmap(name: &str, map: &BTreeMap<u16, Vec<char>>, two_byte: bool) -> String {
-    let mut s = String::new();
-    let _ = write!(
-        s,
-        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo <</Registry (Adobe) /Ordering (UCS) /Supplement 0>> def\n/CMapName /{name}-UTF16 def\n/CMapType 2 def\n1 begincodespacerange\n{}\nendcodespacerange\n",
-        if two_byte { "<0000> <FFFF>" } else { "<00> <FF>" }
-    );
-    let entries: Vec<_> = map.iter().collect();
-    for chunk in entries.chunks(100) {
-        let _ = writeln!(s, "{} beginbfchar", chunk.len());
-        for (code, chars) in chunk {
-            let mut u = String::new();
-            for ch in chars.iter() {
-                let mut buf = [0u16; 2];
-                for unit in ch.encode_utf16(&mut buf) {
-                    let _ = write!(u, "{unit:04X}");
-                }
-            }
-            if two_byte {
-                let _ = writeln!(s, "<{code:04X}> <{u}>");
-            } else {
-                let _ = writeln!(s, "<{:02X}> <{u}>", *code & 0xFF);
-            }
-        }
-        s.push_str("endbfchar\n");
-    }
-    s.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
-    s
-}
-
 /// What a PNG says about its colours (dvipdfmx's order: `iCCP`, then
 /// `sRGB`, then `cHRM`/`gAMA`).
 #[derive(Default)]
@@ -2269,6 +2473,42 @@ struct PngPass {
     n_base: u8,
     palette: Option<Vec<u8>>,
     idat: Vec<u8>,
+    /// What `tRNS` makes of the image (pngimage.c `check_transparency`).
+    trans: PngTrans,
+}
+
+/// pngimage.c's transparency of an 8-bit-or-less PNG without an alpha
+/// channel (`check_transparency`, `create_ckey_mask`, `create_soft_mask`).
+#[derive(Clone, Debug, PartialEq)]
+enum PngTrans {
+    None,
+    /// `PDF_TRANS_TYPE_BINARY`: `/Mask` with these numbers (a grey or RGB
+    /// image's `tRNS` colour, each twice; a palette's fully transparent
+    /// indices, each twice).
+    Key(Vec<u32>),
+    /// `PDF_TRANS_TYPE_ALPHA`: a palette `tRNS` with partial alpha; an
+    /// 8-bit `/SMask` from these alphas (index `i` < their count, else 255).
+    Alpha(Vec<u8>),
+}
+
+/// pngimage.c `create_soft_mask`'s samples: index `i` of the image is read
+/// at bit `bpc * i` of the decoded rows *as if they were not padded* (the
+/// C's `image_data_ptr[bpc * i / 8] >> (shift - bpc * i % 8)`), so with
+/// rows that do not fill their last byte the mask drifts from the second
+/// row on (measured: a 7-pixel-wide 4-bit palette PNG's pixel 7 takes
+/// index 0 of row 0's padding nibble on TeX Live 2026's xdvipdfmx).
+fn png_soft_mask(rows: &[u8], bpc: u8, width: u32, height: u32, trans: &[u8]) -> Vec<u8> {
+    let bpc = bpc as usize;
+    let mask = 0xffu32 >> (8 - bpc);
+    let shift = 8 - bpc;
+    let n = width as usize * height as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let byte = rows.get(bpc * i / 8).copied().unwrap_or(0) as u32;
+        let idx = ((byte >> (shift - bpc * i % 8)) & mask) as usize;
+        out.push(if idx < trans.len() { trans[idx] } else { 0xff });
+    }
+    out
 }
 
 /// A PNG whose `IDAT` data a PDF can take as it is (8 bits or fewer per
@@ -2281,6 +2521,7 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
     let mut pos = 8;
     let (mut w, mut h, mut bits, mut ctype, mut interlace) = (0u32, 0u32, 0u8, 0u8, 0u8);
     let mut plte: Option<&[u8]> = None;
+    let mut trns: Option<&[u8]> = None;
     let mut idat = Vec::new();
     let mut col = PngColor::default();
     let be32 = |p: usize| -> Option<u32> {
@@ -2299,7 +2540,7 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
                 interlace = body[12];
             }
             b"PLTE" => plte = Some(body),
-            b"tRNS" => return None,
+            b"tRNS" => trns = Some(body),
             b"IDAT" => idat.extend_from_slice(body),
             b"iCCP" => {
                 let z = body.iter().position(|&c| c == 0)?;
@@ -2319,7 +2560,11 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
         }
         pos += 12 + len;
     }
-    if interlace != 0 || bits > 8 || !matches!(ctype, 0 | 2 | 3) {
+    // A 16-bit grey or RGB PNG with a colour key passes through too (PDF
+    // takes 16-bit samples with the PNG predictor): the other route has no
+    // colour keys.
+    let key16 = bits == 16 && matches!(ctype, 0 | 2) && trns.is_some();
+    if interlace != 0 || (bits > 8 && !key16) || !matches!(ctype, 0 | 2 | 3) {
         return None;
     }
     let colors = if ctype == 2 { 3 } else { 1 };
@@ -2331,13 +2576,55 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
     } else {
         None
     };
+    // libpng keeps a tRNS of the right length only (png_handle_tRNS: grey
+    // 2 bytes, RGB 6, a palette's 1 to its entries); a 16-bit sample in
+    // the chunk is the value as written.
+    let be16 = |b: &[u8], i: usize| u16::from_be_bytes([b[i], b[i + 1]]) as u32;
+    let trans = match (ctype, trns) {
+        (0, Some(t)) if t.len() == 2 => PngTrans::Key(vec![be16(t, 0); 2]),
+        (2, Some(t)) if t.len() == 6 => {
+            let (r, g, b) = (be16(t, 0), be16(t, 2), be16(t, 4));
+            PngTrans::Key(vec![r, r, g, g, b, b])
+        }
+        (3, Some(t)) if !t.is_empty() && t.len() <= palette.as_ref().map_or(0, |p| p.len() / 3) => {
+            if t.iter().all(|&a| a == 0x00 || a == 0xff) {
+                let mut k = Vec::new();
+                for (i, &a) in t.iter().enumerate() {
+                    if a == 0 {
+                        k.extend([i as u32, i as u32]);
+                    }
+                }
+                PngTrans::Key(k)
+            } else {
+                PngTrans::Alpha(t.to_vec())
+            }
+        }
+        _ => PngTrans::None,
+    };
     Some(PngPass {
         dict,
         color: col,
         n_base: if ctype == 0 { 1 } else { 3 },
         palette,
         idat,
+        trans,
     })
+}
+
+/// `data` with its `tRNS` chunks left out (a PNG still).
+fn png_without_trns(data: &[u8]) -> Vec<u8> {
+    let mut out = data[..8.min(data.len())].to_vec();
+    let mut pos = 8;
+    while pos + 8 <= data.len() {
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let end = (pos + 12 + len).min(data.len());
+        if &data[pos + 4..pos + 8] != b"tRNS" {
+            out.extend_from_slice(&data[pos..end]);
+        }
+        pos = end;
+    }
+    out
 }
 
 /// A CIE-based space from a PNG's `sRGB` chunk, or its `gAMA` and `cHRM`
@@ -2607,13 +2894,21 @@ mod tests {
         gids: &[u16],
         cache: Option<std::sync::Arc<super::super::fonts::FontCache>>,
     ) -> Vec<u8> {
+        face_glyphs_pdf(path, 0, gids, cache)
+    }
+    fn face_glyphs_pdf(
+        path: &str,
+        index: u32,
+        gids: &[u16],
+        cache: Option<std::sync::Arc<super::super::fonts::FontCache>>,
+    ) -> Vec<u8> {
         let mut doc = Doc::new();
         doc.fonts.cache = cache;
         doc.fonts.define(
             0,
             FontDef::Native(NativeDef {
                 path: path.as_bytes().to_vec(),
-                index: 0,
+                index,
                 size: 10 << 16,
                 flags: 0,
                 rgba: None,
@@ -2687,6 +2982,74 @@ mod tests {
     /// A CID-keyed CFF font (CJK): the content stream draws its glyphs by
     /// their CIDs (the charset), the CIDFont program is the font's CFF, and
     /// `/W` is keyed by CID. TeX Live's HaranoAji Mincho; skipped without it.
+    /// A CFF font is named by its CFF's Name INDEX, as xdvipdfmx names it:
+    /// face 1 of macOS's Hiragino Sans GB (`name` table:
+    /// `.HiraginoSansGBInterface-W3`) shares face 0's CFF, and TeX Live 2026
+    /// xetex + xdvipdfmx names it `HiraginoSansGB-W3` (measured). Skipped
+    /// without the font.
+    #[test]
+    fn cff_fonts_are_named_by_their_cff() {
+        let path = "/System/Library/Fonts/Hiragino Sans GB.ttc";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("skipped: no {path}");
+            return;
+        }
+        let bytes = face_glyphs_pdf(path, 1, &[34], None);
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let page = pdf.pages().unwrap()[0];
+        let f = *pdf.page_fonts(page).values().next().unwrap();
+        let d = pdf
+            .resolve(&f.get("DescendantFonts").and_then(Obj::as_array).unwrap()[0])
+            .as_dict()
+            .unwrap();
+        let base = d.get("BaseFont").and_then(Obj::as_name).unwrap();
+        assert!(base.ends_with("+HiraginoSansGB-W3"), "{base}");
+    }
+
+    #[test]
+    fn type1_widths_and_flags_are_xdvipdfmxs() {
+        // measured (TeX Live 2026 xetex + xdvipdfmx 20260317, `\font\a=cmr10`
+        // etc.): CMR10 /Widths 555 (fi) 750 (H) 444 (e) 277 (l) 500 (o),
+        // /Flags 6; CMTI10 70; CMTT10 6; CMSY10 70; CMBX12 262150 (ForceBold)
+        let font = |name: &str| {
+            let path = std::process::Command::new("kpsewhich")
+                .arg(name)
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|p| !p.is_empty())?;
+            let data = std::fs::read(path).ok()?;
+            Some((flashtex_pdf::type1::Type1Font::parse_pfb(&data).ok()?, data))
+        };
+        let Some((cmr, _)) = font("cmr10.pfb") else {
+            eprintln!("skipped: no cmr10.pfb (TeX Live)");
+            return;
+        };
+        let w: Vec<f64> = ["fi", "H", "e", "l", "o"]
+            .iter()
+            .map(|g| type1_width(&cmr, g))
+            .collect();
+        assert_eq!(w, [555.0, 750.0, 444.0, 277.0, 500.0]);
+        for (name, flags) in [
+            ("cmr10.pfb", 6),
+            ("cmti10.pfb", 70),
+            ("cmtt10.pfb", 6),
+            ("cmsy10.pfb", 70),
+            ("cmbx12.pfb", 262150),
+        ] {
+            let (t1, data) = font(name).unwrap();
+            assert_eq!(
+                type1_flags(
+                    t1.font_name().unwrap(),
+                    t1.italic_angle().unwrap_or("0"),
+                    type1_force_bold(&data)
+                ),
+                flags,
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn cid_keyed_cff_fonts_are_drawn_by_cid() {
         let Some(path) = std::process::Command::new("kpsewhich")
@@ -3043,6 +3406,127 @@ mod tests {
         assert!(image_color_space(Kind::Jpeg, &[0xFF, 0xD8, 0xFF, 0xD9]).is_none());
     }
 
+    /// The outline written for `entries` (level, `[]`, title): the root's
+    /// `/Count`, whether it has `/Type`, and each entry in order as
+    /// "depth title /Count".
+    fn outline_of(entries: &[(i32, bool, &str)]) -> (String, bool, Vec<String>) {
+        use super::super::doc::Outline;
+        use super::super::pdfobj::{Dict as D, Obj as O};
+        let mut doc = Doc::new();
+        for &(level, open, title) in entries {
+            doc.outlines.push(Outline {
+                level,
+                open,
+                dict: D(vec![(b"Title".to_vec(), O::Str(title.as_bytes().to_vec()))]),
+                goto: None,
+            });
+        }
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let root = pdf.resolve(cat.get("Outlines").unwrap()).as_dict().unwrap();
+        fn walk(
+            pdf: &PdfFile,
+            d: &std::collections::BTreeMap<String, Obj>,
+            depth: usize,
+            out: &mut Vec<String>,
+        ) {
+            let mut it = d.get("First").map(|o| pdf.resolve(o));
+            while let Some(e) = it.and_then(Obj::as_dict) {
+                let t = match e.get("Title") {
+                    Some(Obj::String(s)) => String::from_utf8_lossy(s).into_owned(),
+                    _ => "?".into(),
+                };
+                let c = e.get("Count").and_then(Obj::as_number).unwrap_or("");
+                out.push(format!("{depth} {t} {c}").trim_end().to_string());
+                walk(pdf, e, depth + 1, out);
+                it = e.get("Next").map(|o| pdf.resolve(o));
+            }
+        }
+        let mut got = Vec::new();
+        walk(&pdf, root, 1, &mut got);
+        let count = root
+            .get("Count")
+            .and_then(Obj::as_number)
+            .unwrap_or("")
+            .to_string();
+        (count, root.contains_key("Type"), got)
+    }
+
+    /// The outline tree xdvipdfmx (TeX Live 2026, `-O 0`) builds from these
+    /// entries, measured (#2357): a closed entry's `/Count` counts the
+    /// entries visible below it once opened (B: -3, F: -2), a jump of two
+    /// levels (I to J) fills the level skipped with `<No Title>`, and the
+    /// root has no `/Type`.
+    #[test]
+    fn the_outline_tree_is_xdvipdfmxs() {
+        let (count, typed, got) = outline_of(&[
+            (1, true, "A"),
+            (2, false, "B"),
+            (3, true, "C"),
+            (4, true, "D"),
+            (4, false, "E"),
+            (1, false, "F"),
+            (2, true, "G"),
+            (3, true, "H"),
+            (1, false, "I"),
+            (3, false, "J"),
+        ]);
+        assert_eq!(count, "4");
+        assert!(!typed);
+        assert_eq!(
+            got,
+            [
+                "1 A 1",
+                "2 B -3",
+                "3 C 2",
+                "4 D",
+                "4 E",
+                "1 F -2",
+                "2 G 1",
+                "3 H",
+                "1 I -1",
+                "2 <No Title> -1",
+                "3 J",
+            ]
+        );
+    }
+
+    /// Levels count from the lowest seen so far (#2366, measured): A2 and
+    /// B3 start at depth 1 and 2; C1 then lowers the base, so D3 is two
+    /// levels below C1, under a `<No Title>` entry.
+    #[test]
+    fn outline_levels_count_from_the_lowest_so_far() {
+        let (count, _, got) = outline_of(&[
+            (2, true, "A2"),
+            (3, true, "B3"),
+            (1, true, "C1"),
+            (3, true, "D3"),
+            (1, false, "E1"),
+            (2, false, "F2"),
+            (2, false, "G2"),
+        ]);
+        assert_eq!(count, "5");
+        assert_eq!(
+            got,
+            [
+                "1 A2 1",
+                "2 B3",
+                "1 C1 1",
+                "2 <No Title> -1",
+                "3 D3",
+                "1 E1 -2",
+                "2 F2",
+                "2 G2",
+            ]
+        );
+    }
+
     /// RULE_GEOMETRY is the numbers the content stream draws each rule with.
     #[test]
     fn rule_geometry_is_what_the_content_stream_draws() {
@@ -3117,5 +3601,324 @@ mod tests {
         assert!(body.contains("/Transparency"), "{body}");
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
+    }
+
+    /// hyperref's form fields are `pdf:ann @textN …` with the AcroForm's
+    /// `/Fields` naming them (`pdf:put @afields @textN`): the widget is one
+    /// object, in the page's `/Annots` and in `/Fields`, with what `pdf:put
+    /// @textN` added and no `/Type` (dvipdfmx's `spc_push_object` and
+    /// `pdf_doc_add_annot`; xdvipdfmx's PDF of the parity case
+    /// d10-hyperref-forms-transformed). `/Fields` held `null`s before.
+    #[test]
+    fn a_named_annotation_is_the_object_its_name_refers_to() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let mut body = special("pdf:obj @afields []");
+        body.extend(special(
+            "pdf:ann @w width 20pt height 10pt depth 2pt <</Subtype/Widget/FT/Tx/T(w)>>",
+        ));
+        body.extend(special("pdf:put @w <</V(filled)>>"));
+        body.extend(special("pdf:put @afields @w"));
+        body.extend(special(
+            "pdf:put @catalog <</AcroForm<</Fields @afields>>>>",
+        ));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes);
+        let num_after = |key: &str| -> String {
+            let at = text.find(key).unwrap_or_else(|| panic!("no {key}: {text}"));
+            text[at + key.len()..]
+                .trim_start_matches([' ', '['])
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect()
+        };
+        let annot = num_after("/Annots");
+        let fields = num_after("/Fields");
+        let obj = |n: &str| -> String {
+            let i = text
+                .find(&format!("\n{n} 0 obj\n"))
+                .unwrap_or_else(|| panic!("no object {n}: {text}"));
+            let o = &text[i..];
+            o[..o.find("endobj").unwrap()].to_string()
+        };
+        let f = obj(&fields);
+        assert!(f.contains(&format!("{annot} 0 R")), "{f}\n{text}");
+        let w = obj(&annot);
+        assert!(
+            w.contains("/Widget") && w.contains("(filled)") && w.contains("/Rect"),
+            "{w}"
+        );
+        assert!(!w.contains("/Annot"), "{w}");
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        assert_eq!(pdf.pages().unwrap().len(), 1);
+    }
+
+    /// dvipdfmx's destination optimisation, measured with TeX Live 2026's
+    /// xetex and xdvipdfmx on a plain XeTeX file with these specials: the
+    /// GoTo destinations of outline entries and links become `(0)`, `(1)`,
+    /// … in the order they are met (an undefined one takes a number too);
+    /// a destination array, a URI and a GoToR keep theirs; only the
+    /// destinations so named are written, under the new names (here 0, 1,
+    /// 3 and, from page 2, 4: `unused` is dropped). A `dvipdfmx:config C
+    /// 0x0010` on page 2 changes nothing (dvipdfmx reads page 1's); on page
+    /// 1 it keeps every name (hyperref's case).
+    #[test]
+    fn destinations_are_renamed_as_dvipdfmx_does() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let page1 = |config: bool| {
+            let mut body = if config {
+                special("dvipdfmx:config C 0x0010")
+            } else {
+                Vec::new()
+            };
+            for s in [
+                "pdf:dest (alpha) [@thispage /Fit]",
+                "pdf:dest (beta) [@thispage /Fit]",
+                "pdf:dest (unused) [@thispage /FitH 500]",
+                "pdf:dest (gamma) [@thispage /Fit]",
+                "pdf:outline 1 <</Title (One) /A <</S/GoTo/D (alpha)>>>>",
+                "pdf:outline 2 <</Title (Two) /Dest (beta)>>",
+                "pdf:outline 1 <</Title (Three) /Dest [@thispage /Fit]>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoTo/D(beta)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest(alpha)>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/URI/URI(http://x)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoTo/D(missing)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoToR/F(o.pdf)/D(alpha)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest(gamma)>>",
+            ] {
+                body.extend(special(s));
+            }
+            page_bytes(&body)
+        };
+        let mut page2 = special("dvipdfmx:config C 0x0010");
+        page2.extend(special("pdf:dest (delta) [@thispage /Fit]"));
+        page2.extend(special(
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoTo/D(delta)>>>>",
+        ));
+        let page2 = page_bytes(&page2);
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        for config in [false, true] {
+            let mut doc = Doc::new();
+            for (n, b) in [(1, page1(config)), (2, page2.clone())] {
+                let built = Builder::page(&mut doc, &NoTfm, 1000, n, &b).unwrap();
+                doc.pages.push(std::sync::Arc::new(built));
+            }
+            let bytes = write(&doc, &opts).unwrap().0;
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let pdf = PdfFile::parse(&bytes).unwrap();
+            assert_eq!(pdf.pages().unwrap().len(), 2);
+            let gotos: Vec<Option<Vec<u8>>> = doc.pages[0]
+                .sup
+                .annots
+                .iter()
+                .map(|a| a.goto.as_ref().map(|g| g.name.clone()))
+                .collect();
+            let outl: Vec<Option<Vec<u8>>> = doc
+                .outlines
+                .iter()
+                .map(|o| o.goto.as_ref().map(|g| g.name.clone()))
+                .collect();
+            let at = text.find("/Names [").expect("the Dests tree");
+            let dests = &text[at..at + text[at..].find("endobj").unwrap()];
+            if config {
+                assert!(!doc.check_gotos);
+                assert!(gotos.iter().chain(&outl).all(Option::is_none));
+                for n in ["(alpha)", "(beta)", "(unused)", "(gamma)", "(delta)"] {
+                    assert!(dests.contains(n), "{n}: {dests}");
+                }
+                continue;
+            }
+            let s = |v: &str| Some(v.as_bytes().to_vec());
+            assert_eq!(outl, [s("0"), s("1"), None]);
+            assert_eq!(gotos, [s("1"), s("0"), None, s("2"), None, s("3")]);
+            let p2: Vec<_> = doc.pages[1]
+                .sup
+                .annots
+                .iter()
+                .map(|a| a.goto.clone())
+                .collect();
+            assert_eq!(p2[0].as_ref().map(|g| g.name.clone()), s("4"));
+            for n in ["(0)", "(1)", "(3)", "(4)"] {
+                assert!(dests.contains(n), "{n}: {dests}");
+            }
+            for n in ["(2)", "(alpha)", "(beta)", "(unused)", "(gamma)", "(delta)"] {
+                assert!(!dests.contains(n), "{n}: {dests}");
+            }
+            // the GoToR keeps its name; no link names an old one
+            assert_eq!(text.matches("(alpha)").count(), 1, "{text}");
+            assert!(!text.contains("(beta)") && !text.contains("(missing)"));
+        }
+    }
+
+    /// Destinations named through `@name` objects, as `pdf_deref_obj`
+    /// follows them (measured with TeX Live 2026's xetex and xdvipdfmx, a
+    /// plain XeTeX file with these specials): `/Dest @dn` and `/D @dd`
+    /// become the new name in the link (`(0)`, `(2)`); `/A @act` is renamed
+    /// in the named action itself, so a second link to it finds `(1)`, which
+    /// no destination has, and makes it `(3)`; `/Dest @later`, made after
+    /// the link, stays a reference to `(delta)`, which is then not written
+    /// as a destination; the outline's `/Dest @dd` is `(2)`.
+    #[test]
+    fn destinations_through_named_objects_are_renamed_as_dvipdfmx_does() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        use super::super::pdfobj::Obj as P;
+        let mut body = Vec::new();
+        for s in [
+            "pdf:dest (alpha) [@thispage /Fit]",
+            "pdf:dest (beta) [@thispage /Fit]",
+            "pdf:dest (gamma) [@thispage /Fit]",
+            "pdf:dest (delta) [@thispage /Fit]",
+            "pdf:obj @dn (alpha)",
+            "pdf:obj @act <</S/GoTo/D(beta)>>",
+            "pdf:obj @dd (gamma)",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest @dn>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A @act>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A <</S/GoTo/D @dd>>>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest @later>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A @act>>",
+            "pdf:obj @later (delta)",
+            "pdf:outline 1 <</Title (O) /Dest @dd>>",
+        ] {
+            body.extend(special(s));
+        }
+        let mut doc = Doc::new();
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let s = |v: &str| Some(v.as_bytes().to_vec());
+        let gotos: Vec<_> = built
+            .sup
+            .annots
+            .iter()
+            .map(|a| a.goto.as_ref().map(|g| g.name.clone()))
+            .collect();
+        assert_eq!(gotos, [s("0"), None, s("2"), None, None]);
+        assert_eq!(
+            doc.outlines[0].goto.as_ref().map(|g| g.name.clone()),
+            s("2")
+        );
+        let Some(Named::Obj(P::Dict(act))) = doc.named.get(&b"act"[..]) else {
+            panic!("@act");
+        };
+        assert_eq!(act.get(b"D"), Some(&P::Str(b"3".to_vec())));
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let at = text.find("/Names [").expect("the Dests tree");
+        let dests = &text[at..at + text[at..].find("endobj").unwrap()];
+        for n in ["(0)", "(1)", "(2)"] {
+            assert!(dests.contains(n), "{n}: {dests}");
+        }
+        for n in ["(3)", "(alpha)", "(beta)", "(gamma)", "(delta)"] {
+            assert!(!dests.contains(n), "{n}: {dests}");
+        }
+    }
+
+    /// A PNG's chunks with dummy CRCs (png_passthrough does not check them).
+    fn png(ihdr: (u32, u32, u8, u8), extra: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut chunk = |k: &[u8; 4], b: &[u8]| {
+            v.extend((b.len() as u32).to_be_bytes());
+            v.extend(k);
+            v.extend(b);
+            v.extend([0; 4]);
+        };
+        let mut h = ihdr.0.to_be_bytes().to_vec();
+        h.extend(ihdr.1.to_be_bytes());
+        h.extend([ihdr.2, ihdr.3, 0, 0, 0]);
+        chunk(b"IHDR", &h);
+        for (k, b) in extra {
+            chunk(k, b);
+        }
+        chunk(b"IDAT", &[]);
+        chunk(b"IEND", &[]);
+        v
+    }
+
+    /// pngimage.c's transparency, measured on TeX Live 2026's xdvipdfmx
+    /// (lane AUDIT-DVIPDFMX): grey `tRNS` 10 -> `/Mask [10 10]`; RGB
+    /// (0, 255, 0) -> `/Mask [0 0 255 255 0 0]`; palette ff ff 00 -> `/Mask
+    /// [2 2]`; palette 00 ff 00 -> `/Mask [0 0 2 2]`; palette 00 80 ff 40 ->
+    /// an `/SMask`.
+    #[test]
+    fn png_trns_as_xdvipdfmx() {
+        let plte = [0u8; 18];
+        let t = |d: Vec<u8>| png_passthrough(&d).expect("passes through").trans;
+        assert_eq!(
+            t(png((7, 5, 8, 0), &[(b"tRNS", &[0, 10])])),
+            PngTrans::Key(vec![10, 10])
+        );
+        assert_eq!(
+            t(png((7, 5, 8, 2), &[(b"tRNS", &[0, 0, 0, 255, 0, 0])])),
+            PngTrans::Key(vec![0, 0, 255, 255, 0, 0])
+        );
+        assert_eq!(
+            t(png(
+                (7, 5, 4, 3),
+                &[(b"PLTE", &plte), (b"tRNS", &[0xff, 0xff, 0])]
+            )),
+            PngTrans::Key(vec![2, 2])
+        );
+        assert_eq!(
+            t(png(
+                (7, 5, 8, 3),
+                &[(b"PLTE", &plte), (b"tRNS", &[0, 0xff, 0])]
+            )),
+            PngTrans::Key(vec![0, 0, 2, 2])
+        );
+        assert_eq!(
+            t(png(
+                (7, 5, 4, 3),
+                &[(b"PLTE", &plte), (b"tRNS", &[0, 0x80, 0xff, 0x40])]
+            )),
+            PngTrans::Alpha(vec![0, 0x80, 0xff, 0x40])
+        );
+        // a tRNS longer than the palette is dropped by libpng
+        assert_eq!(
+            t(png((7, 5, 4, 3), &[(b"PLTE", &plte), (b"tRNS", &[0; 7])])),
+            PngTrans::None
+        );
+        assert_eq!(t(png((7, 5, 8, 0), &[])), PngTrans::None);
+        // 16-bit grey, tRNS 300: "/BitsPerComponent 16 ... /Mask [300 300]"
+        let d = png((7, 5, 16, 0), &[(b"tRNS", &[1, 44])]);
+        let p = png_passthrough(&d).expect("passes through");
+        assert_eq!(p.trans, PngTrans::Key(vec![300, 300]));
+        assert!(p.dict.contains("/BitsPerComponent 16"), "{}", p.dict);
+        // without a key it still takes the other route
+        assert!(png_passthrough(&png((7, 5, 16, 0), &[])).is_none());
+    }
+
+    /// The soft mask of a 7 x 5, 4-bit palette PNG with `tRNS` 00 80 ff
+    /// 40, as TeX Live 2026's xdvipdfmx writes it (its `/SMask` stream,
+    /// decoded): `create_soft_mask` reads the packed rows as if unpadded.
+    #[test]
+    fn png_soft_mask_reads_rows_unpadded() {
+        let rows = [
+            0x00, 0x12, 0x34, 0x50, 0x12, 0x23, 0x45, 0x00, 0x23, 0x45, 0x50, 0x10, 0x34, 0x50,
+            0x12, 0x20, 0x55, 0x01, 0x23, 0x40,
+        ];
+        let want = [
+            0x00, 0x00, 0x80, 0xff, 0x40, 0xff, 0xff, 0x00, 0x80, 0xff, 0xff, 0x40, 0xff, 0xff,
+            0x00, 0x00, 0xff, 0x40, 0xff, 0xff, 0xff, 0x00, 0x80, 0x00, 0x40, 0xff, 0xff, 0x00,
+            0x80, 0xff, 0xff, 0x00, 0xff, 0xff, 0x00,
+        ];
+        assert_eq!(png_soft_mask(&rows, 4, 7, 5, &[0, 0x80, 0xff, 0x40]), want);
     }
 }
