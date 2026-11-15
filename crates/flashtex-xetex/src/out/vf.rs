@@ -759,8 +759,11 @@ mod tests {
         let vf = Vf::parse(&vf_bytes(&body)).unwrap();
         assert!(vf.packet(b'A' as i32).is_some());
         assert!(vf.packet(b'Z' as i32).is_none());
-        // without the signature the file is read on as it is
-        assert!(Vf::parse(&[op::POST]).unwrap().fonts.is_empty());
+        // without the signature ("VF file may be corrupt") the file is
+        // read on from its second byte: here a packet for `A`
+        let vf = Vf::parse(&[0, 1, b'A', 0, 0, 0, b'B', op::POST]).unwrap();
+        assert_eq!(vf.packet(b'A' as i32).as_deref(), Some(&[b'B'][..]));
+        assert!(Vf::parse(&[op::POST]).is_err());
     }
 
     fn cmds(b: &[u8]) -> Vec<Result<Cmd<'_>, String>> {

@@ -1,0 +1,11 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\pdfpagewidth=612bp \pdfpageheight=792bp
+\baselineskip=60pt \lineskiplimit=-1000pt
+\font\v=fxvf at 12pt
+\font\w=fxvf scaled 2000
+\font\n=fxvfn
+\font\m=fxvfn at 17.3pt
+\shipout\vbox{\hbox{\v abc}\hbox{\v def}\hbox{\v ghi\w ab\v a}\hbox{\n ab}\hbox{\m ab}%
+\hbox{\v a\special{pdf:bann <</Type/Annot/Subtype/Link/Border[0 0 0]/A<</S/URI/URI(https://example.com/)>>>>}%
+\v bc\n a\special{pdf:eann}\v a}}
+\end
