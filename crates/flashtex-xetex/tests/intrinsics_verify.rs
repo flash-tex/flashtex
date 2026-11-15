@@ -262,6 +262,34 @@ fn a_group_end_recorded_at_another_level_is_not_replayed() {
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
 
+/// `new_graf` sets the enclosing list's `prev_graf` to 0 outside
+/// `eq_define`. A call that starts and ends an empty paragraph (here on a
+/// `\vbox`'s list that `\lastbox` has emptied after one line) appends
+/// nothing and leaves mode, nest level and tail alone, so it was kept, and
+/// its replay left `\prevgraf` at 1. The check of each later call differed
+/// (`scalar cur_list`); the pdfTeX side is #2222. Not replayable (#2261).
+/// (The primitives, with the primitive `\everypar` emptied: LaTeX's
+/// paragraph hooks make glue definitions, which are not replayable either.)
+#[test]
+fn a_call_that_starts_an_empty_paragraph_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\n\
+         \\expandafter\\let\\expandafter\\IntrN\\csname tex_noindent:D\\endcsname\n\
+         \\expandafter\\let\\expandafter\\IntrP\\csname tex_par:D\\endcsname\n\
+         \\expandafter\\let\\expandafter\\IntrE\\csname tex_everypar:D\\endcsname\n\
+         \\def\\pdfstringdefPreHook{\\begingroup\\IntrN\\IntrP\\endgroup}\n\
+         \\def\\IntrOne{\\setbox2\\vbox{\\IntrE{}x\\IntrP\\setbox3\\lastbox\\pdfstringdefPreHook\\relax\
+         \\message{[\\the\\prevgraf]}}}\n\
+         \\begin{document}\\relax\n\\IntrOne\\IntrOne\\IntrOne\n\
+         x\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "calls"), 3, "{s}");
+    assert_eq!(count(&s, "not_replayable.State"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+}
+
 /// `\wd` writes the box node in `mem`, which is not compared: a call
 /// that sets it is not replayable (else its check would find no change).
 #[test]
