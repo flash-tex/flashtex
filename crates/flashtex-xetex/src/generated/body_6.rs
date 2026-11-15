@@ -353,7 +353,7 @@ impl Globals {
                                         { let __v1095 = self.hyf_char; self.hu[crate::ix::U((i) as usize)] = __v1095; }
                                         {
                                             if self.intr_churn {
-                                                self.flashtex_intr_cell(hyf_node, 1i32);
+                                                self.flashtex_intr_cell(hyf_node, (1i32).wrapping_neg());
                                             }
                                             { let __v1096 = self.avail; self.mem[crate::ix::U((hyf_node) as usize)].set_hh_rh(__v1096); }
                                             self.avail = hyf_node;

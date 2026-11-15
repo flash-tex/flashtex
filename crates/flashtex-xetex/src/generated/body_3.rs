@@ -2463,7 +2463,7 @@ impl Globals {
                                                 p = self.mem[crate::ix::U((p) as usize)].hh().rh();
                                                 {
                                                     if self.intr_churn {
-                                                        self.flashtex_intr_cell(q, 1i32);
+                                                        self.flashtex_intr_cell(q, (1i32).wrapping_neg());
                                                     }
                                                     { let __v307 = self.avail; self.mem[crate::ix::U((q) as usize)].set_hh_rh(__v307); }
                                                     self.avail = q;
@@ -3564,7 +3564,7 @@ impl Globals {
         q = self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
         {
             if self.intr_churn {
-                self.flashtex_intr_cell(self.def_ref, 1i32);
+                self.flashtex_intr_cell(self.def_ref, (1i32).wrapping_neg());
             }
             { let __ix336 = self.def_ref; let __v337 = self.avail; self.mem[crate::ix::U((__ix336) as usize)].set_hh_rh(__v337); }
             self.avail = self.def_ref;
@@ -3998,7 +3998,7 @@ impl Globals {
                     self.begin_token_list(self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh(), inserted);
                     {
                         if self.intr_churn {
-                            self.flashtex_intr_cell(self.def_ref, 1i32);
+                            self.flashtex_intr_cell(self.def_ref, (1i32).wrapping_neg());
                         }
                         { let __ix352 = self.def_ref; let __v353 = self.avail; self.mem[crate::ix::U((__ix352) as usize)].set_hh_rh(__v353); }
                         self.avail = self.def_ref;
@@ -5395,7 +5395,10 @@ impl Globals {
                             // §1578
                             self.flush_list(n);
                             if self.intr_rec_on {
-                                self.flashtex_intr_lookup(self.cur_cs);
+                                {
+                                    self.flashtex_intr_hw(3i32, m);
+                                    self.flashtex_intr_lookup(self.cur_cs);
+                                }
                             }
                             b = (self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0() != undefined_cs);
                             self.is_in_csname = e;

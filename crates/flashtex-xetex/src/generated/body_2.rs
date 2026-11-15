@@ -778,7 +778,7 @@ impl Globals {
         q = self.mem[crate::ix::U((self.pseudo_files) as usize)].hh().lh();
         {
             if self.intr_churn {
-                self.flashtex_intr_cell(self.pseudo_files, 1i32);
+                self.flashtex_intr_cell(self.pseudo_files, (1i32).wrapping_neg());
             }
             { let __ix142 = self.pseudo_files; let __v143 = self.avail; self.mem[crate::ix::U((__ix142) as usize)].set_hh_rh(__v143); }
             self.avail = self.pseudo_files;
@@ -1120,6 +1120,9 @@ impl Globals {
         let mut i: quarterword = 0; // §1648
         if (self.cur_level != self.sa_level) {
             {
+                if self.intr_rec_on {
+                    self.flashtex_intr_hw(2i32, self.save_ptr);
+                }
                 if (self.save_ptr > self.max_save_stack) {
                     {
                         self.max_save_stack = self.save_ptr;
@@ -1362,6 +1365,9 @@ impl Globals {
         if self.intr_rec_on {
             self.flashtex_intr_op(3i32, c, 0i32, 0i32);
         }
+        if self.intr_rec_on {
+            self.flashtex_intr_hw(2i32, self.save_ptr);
+        }
         if (self.save_ptr > self.max_save_stack) {
             {
                 self.max_save_stack = self.save_ptr;
@@ -1432,6 +1438,9 @@ impl Globals {
     /// can use the following subroutine.
     // §306
     pub fn eq_save(&mut self, mut p: halfword, mut l: quarterword) {
+        if self.intr_rec_on {
+            self.flashtex_intr_hw(2i32, self.save_ptr);
+        }
         if (self.save_ptr > self.max_save_stack) {
             {
                 self.max_save_stack = self.save_ptr;
@@ -1575,6 +1584,9 @@ impl Globals {
     pub fn save_for_after(&mut self, mut t: halfword) {
         if (self.cur_level > level_one) {
             {
+                if self.intr_rec_on {
+                    self.flashtex_intr_hw(2i32, self.save_ptr);
+                }
                 if (self.save_ptr > self.max_save_stack) {
                     {
                         self.max_save_stack = self.save_ptr;
@@ -2143,6 +2155,9 @@ impl Globals {
     // §353
     pub fn begin_token_list(&mut self, mut p: halfword, mut t: quarterword) {
         {
+            if self.intr_rec_on {
+                self.flashtex_intr_hw(0i32, self.input_ptr);
+            }
             if (self.input_ptr > self.max_in_stack) {
                 {
                     self.max_in_stack = self.input_ptr;
@@ -2289,6 +2304,9 @@ impl Globals {
             }
         }
         {
+            if self.intr_rec_on {
+                self.flashtex_intr_hw(0i32, self.input_ptr);
+            }
             if (self.input_ptr > self.max_in_stack) {
                 {
                     self.max_in_stack = self.input_ptr;
@@ -2345,6 +2363,9 @@ impl Globals {
         }
         self.in_open = (self.in_open).wrapping_add(1i32);
         {
+            if self.intr_rec_on {
+                self.flashtex_intr_hw(0i32, self.input_ptr);
+            }
             if (self.input_ptr > self.max_in_stack) {
                 {
                     self.max_in_stack = self.input_ptr;
@@ -3700,7 +3721,7 @@ impl Globals {
                                                 self.mem[crate::ix::U((rbrace_ptr) as usize)].set_hh_rh((268435455i32).wrapping_neg());
                                                 {
                                                     if self.intr_churn {
-                                                        self.flashtex_intr_cell(p, 1i32);
+                                                        self.flashtex_intr_cell(p, (1i32).wrapping_neg());
                                                     }
                                                     { let __v239 = self.avail; self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v239); }
                                                     self.avail = p;
@@ -3710,7 +3731,7 @@ impl Globals {
                                                 { let __v240 = self.mem[crate::ix::U((p) as usize)].hh().rh(); self.pstack[crate::ix::U((n) as usize)] = __v240; }
                                                 {
                                                     if self.intr_churn {
-                                                        self.flashtex_intr_cell(p, 1i32);
+                                                        self.flashtex_intr_cell(p, (1i32).wrapping_neg());
                                                     }
                                                     { let __v241 = self.avail; self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v241); }
                                                     self.avail = p;
@@ -3763,6 +3784,9 @@ impl Globals {
             }
             if (n > 0i32) {
                 {
+                    if self.intr_rec_on {
+                        self.flashtex_intr_hw(1i32, (self.param_ptr).wrapping_add(n));
+                    }
                     if ((self.param_ptr).wrapping_add(n) > self.max_param_stack) {
                         {
                             self.max_param_stack = (self.param_ptr).wrapping_add(n);
@@ -4281,7 +4305,10 @@ impl Globals {
                                 // §406
                                 self.flush_list(r);
                                 if self.intr_rec_on {
-                                    self.flashtex_intr_lookup(self.cur_cs);
+                                    {
+                                        self.flashtex_intr_hw(3i32, j);
+                                        self.flashtex_intr_lookup(self.cur_cs);
+                                    }
                                 }
                                 if (self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0() == undefined_cs) {
                                     {
