@@ -444,8 +444,9 @@ final class ShellModel {
     /// How soon a pass deferred to an unanswered save tries again
     /// (`performAutosave`): at least this, whatever `autosaveDelay` is.
     @ObservationIgnored var autosaveRetryDelay: TimeInterval = 0.25
-    /// When autosave first deferred to an unanswered save (`performAutosave`).
-    @ObservationIgnored private var autosaveDeferredSince: Date?
+    /// When autosave first deferred to an unanswered save, and when it last
+    /// did (`performAutosave`), on the monotonic clock (`systemUptime`).
+    @ObservationIgnored private var autosaveDeferral: (since: TimeInterval, last: TimeInterval)?
     /// Asynchronous (helper-routed) saves per document path — autosave and
     /// Command-S alike — that have not answered yet (`enqueueSave`).
     @ObservationIgnored private var savesInFlight: [String: (id: Int, task: Task<Void, Never>)] = [:]
@@ -874,25 +875,33 @@ final class ShellModel {
     /// skipped here; `enqueueSave` re-arms autosave if it was edited meanwhile.
     private func performAutosave() {
         autosaveWork = nil
-        if documentURL == nil { keepUntitledDraft(); return } // UntitledDrafts.swift
-        guard EditorPreferences.shared.autosave else { return }
+        // A pass that ends here also ends any deferral (below): a start left
+        // behind would make a later, unrelated busy spell restart the helper
+        // at once, the very thing the deferral prevents (S-REVIEW on #2443).
+        if documentURL == nil { autosaveDeferral = nil; keepUntitledDraft(); return } // UntitledDrafts.swift
+        guard EditorPreferences.shared.autosave else { autosaveDeferral = nil; return }
         // A save whose reply is still outstanding (it outlived its wait):
         // the file layer rebinds a busy helper, which would drop that late
         // receipt, and the next save would then call the user's own write an
         // external change. Defer the whole pass; it runs again later. A
         // helper that never answers is still restarted (its recovery), once
-        // two waits have passed.
+        // two waits have passed. The clock is monotonic, and a deferral
+        // nothing continued for that long (no pass ran: autosave was off,
+        // another file was opened) is over: the next one starts afresh.
         if files.helperBusy {
-            let since = autosaveDeferredSince ?? Date()
-            if Date().timeIntervalSince(since) < max(2 * files.helperTimeout, 1) {
-                if autosaveDeferredSince == nil { FlashTeXLog.write("autosave: deferred, a save is still unanswered") }
-                autosaveDeferredSince = since
+            let now = ProcessInfo.processInfo.systemUptime
+            let limit = max(2 * files.helperTimeout, 1)
+            let gap = limit + max(autosaveDelay, autosaveRetryDelay) // longer than any retry's wait
+            let since = autosaveDeferral.flatMap { now - $0.last <= gap ? $0.since : nil } ?? now
+            if now - since < limit {
+                if since == now { FlashTeXLog.write("autosave: deferred, a save is still unanswered") }
+                autosaveDeferral = (since, now)
                 scheduleAutosaveRetry() // never synchronous: see there
                 return
             }
-            FlashTeXLog.write("autosave: the helper has not answered for \(Int(Date().timeIntervalSince(since))) s; saving (it restarts)")
+            FlashTeXLog.write("autosave: the helper has not answered for \(Int(now - since)) s; saving (it restarts)")
         }
-        autosaveDeferredSince = nil
+        autosaveDeferral = nil
         let entry = project.entryPath
         if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil {
             saveEntryTex()
