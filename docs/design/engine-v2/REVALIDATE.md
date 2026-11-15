@@ -203,3 +203,31 @@ compile. That is not done here.
 - `a_kept_destination_shipped_under_a_matrix_after_a_revalidation` (review of #1908): the same
   destination shipped after the edit under a half turn, the matrix there before the edit or put in
   by it; every compile equals scratch runs.
+
+## 7. Line shifts at a revalidated restart point (lane LOG-PARITY, #1896)
+
+An edit that moves lines (DESIGN.md §5.3 rule (c), `crate::lineshift`) is compared at `P1` with
+its shift: a line the state holds (a group's, a paragraph's, a conditional's) of the edited file
+from the shift's `after` on must be the old run's + δ. The restart at `P2` restored the old run's
+state unchanged, which is right only while no such line exists there. A chain of windows makes
+one: the first restarts in the edited file's first reading, before the edit; the next holds over
+the end of that reading (past the edit) and the whole read of a second reading, and restarts in
+the second, before its edit. The group the first reading began below the edit then kept its old
+line, and the log printed it at `\end` (`### semi simple group (level 1) entered at line 121`;
+a scratch run 122).
+
+- **The correction** (`Session::held_shifts`, after the reattach). Every old checkpoint from `P0`
+  to `P2` where each stream on an edited file is before its edit (`streams_before_edits`, as `P2`
+  is) and the shift can be put right (`Shift::dirty`) owes the held lines' shift
+  (`Shift::held_only`: no input level's line moves, since those levels are before the edit). It
+  goes into the checkpoint's `Reloc`, so every restore applies it, `P2`'s first. The other
+  checkpoints are dropped, as a convergence drops the dirty ones. The old run's diagnostics from
+  `P0` to `P2` move too (`diag::move_lines_in`).
+- **The barrier.** What the old run read or printed of a moved line in (`P1`, `P2`] is not put
+  right: the comparison fails then, as `line_barrier` stops a convergence's reuse. So does a dirty
+  `P2`.
+- **At a read point** the comparison corrects the old run's lines by that checkpoint's `Reloc`, as
+  at a page (#1895's first fix, lost in its revert).
+- **Test:** `a_revalidated_restart_in_a_second_reading_moves_the_first_readings_lines`, with one
+  name and with two (a link), each newline followed by an edit late in the document that
+  restarts from the corrected checkpoints. Every compile equals scratch runs.
