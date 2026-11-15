@@ -25,6 +25,7 @@
 
 use super::agl::{encode_char, Agl};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 /// The table `tag` of face `index` of an OpenType file.
 pub fn table<'a>(data: &'a [u8], index: u32, tag: &[u8; 4]) -> Option<&'a [u8]> {
@@ -915,6 +916,177 @@ pub fn cmap_inverse(data: &[u8], index: u32) -> BTreeMap<u16, char> {
     out
 }
 
+/// `CMap_create_stream` (`cmap_write.c`) for a `ToUnicode` CMap named
+/// `name` (`CMap_set_name`'s, `-UTF16` already appended): the CMap file
+/// text, codes 2 bytes (`Identity-H`) or 1 (a Type 1 font's encoding).
+/// `None` when no code has text (an empty value is an invalid mapping
+/// `CMap_add_bfchar` drops, and a CMap with none is not written).
+pub fn cmap_stream(name: &[u8], map: &BTreeMap<u16, Vec<char>>, two_byte: bool) -> Option<String> {
+    // the values, UTF-16BE (`UC_UTF16BE_encode_char`), by code
+    let mut vals: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
+    for (&code, chars) in map {
+        let mut v = Vec::with_capacity(2 * chars.len());
+        for ch in chars {
+            let mut buf = [0u16; 2];
+            for unit in ch.encode_utf16(&mut buf) {
+                v.extend_from_slice(&unit.to_be_bytes());
+            }
+        }
+        if !v.is_empty() {
+            vals.insert(if two_byte { code } else { code & 0xFF }, v);
+        }
+    }
+    if vals.is_empty() {
+        return None; // "Invalid CMap": no mapTbl
+    }
+    let max_in = if two_byte { 2 } else { 1 };
+    let max_out = vals.values().map(Vec::len).max().unwrap_or(0);
+    let mut w = CmapWriter {
+        out: String::from("/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"),
+        wbuf: String::new(),
+        lim: (40960 + 16usize).saturating_sub(2 * (max_in + max_out)),
+        count: 0,
+    };
+    w.out.push_str("/CMapName ");
+    cmap_name(name, &mut w.out);
+    w.out.push_str(" def\n/CMapType 2 def\n");
+    w.out.push_str(
+        "/CIDSystemInfo <<\n  /Registry (Adobe)\n  /Ordering (UCS)\n  /Supplement 0\n>> def\n",
+    );
+    w.out.push_str(if two_byte {
+        "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+    } else {
+        "1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
+    });
+    if two_byte {
+        // the top table: a second-level table for each high byte in use
+        for hi in 0..256u16 {
+            let tbl: Vec<Option<&Vec<u8>>> =
+                (0..256u16).map(|lo| vals.get(&(hi << 8 | lo))).collect();
+            if tbl.iter().any(Option::is_some) {
+                w.write_map(&tbl, Some(hi as u8));
+            }
+            w.flush_if_full();
+        }
+    } else {
+        let tbl: Vec<Option<&Vec<u8>>> = (0..256u16).map(|c| vals.get(&c)).collect();
+        w.write_map(&tbl, None);
+    }
+    if w.count > 0 {
+        w.flush_bfchar();
+    }
+    w.out
+        .push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    Some(w.out)
+}
+
+/// `cmap_write.c`'s state: the stream so far, the pending `bfchar` lines
+/// (`wbuf`, flushed at its limit `limptr`) and their count.
+struct CmapWriter {
+    out: String,
+    wbuf: String,
+    lim: usize,
+    count: usize,
+}
+
+impl CmapWriter {
+    fn flush_bfchar(&mut self) {
+        let _ = writeln!(self.out, "{} beginbfchar", self.count);
+        self.out.push_str(&self.wbuf);
+        self.out.push_str("endbfchar\n");
+        self.wbuf.clear();
+        self.count = 0;
+    }
+
+    /// `write_map`'s "Flush if necessary".
+    fn flush_if_full(&mut self) {
+        if self.count >= 100 || self.wbuf.len() >= self.lim {
+            self.flush_bfchar();
+        }
+    }
+
+    /// `write_map` for one table of 256 codes (`prefix`: the high byte of
+    /// a 2-byte code): a run of three or more codes whose values differ by
+    /// one in their last byte (`block_count`) is a `bfrange`, written
+    /// after the table's `bfchar`s; the others are `bfchar`s, flushed in
+    /// blocks of 100 that may span tables.
+    fn write_map(&mut self, tbl: &[Option<&Vec<u8>>], prefix: Option<u8>) {
+        let mut blocks: Vec<(usize, usize)> = Vec::new();
+        let pre = prefix.map(|p| format!("{p:02X}")).unwrap_or_default();
+        let mut c = 0usize;
+        while c < 256 {
+            if let Some(v) = tbl[c] {
+                let n = block_count(tbl, c);
+                if n >= 2 {
+                    blocks.push((c, n));
+                    c += n;
+                } else {
+                    let _ = write!(self.wbuf, "<{pre}{c:02X}> <");
+                    push_hex(&mut self.wbuf, v);
+                    self.wbuf.push_str(">\n");
+                    self.count += 1;
+                }
+            }
+            self.flush_if_full();
+            c += 1;
+        }
+        if !blocks.is_empty() {
+            if self.count > 0 {
+                self.flush_bfchar();
+            }
+            let _ = writeln!(self.out, "{} beginbfrange", blocks.len());
+            for &(c, n) in &blocks {
+                let _ = write!(self.out, "<{pre}{c:02X}> <{pre}{:02X}> <", (c + n) & 0xFF);
+                if let Some(v) = tbl[c] {
+                    push_hex(&mut self.out, v);
+                }
+                self.out.push_str(">\n");
+            }
+            self.out.push_str("endbfrange\n");
+        }
+    }
+}
+
+/// `block_count`: how many codes after `c` continue its run.
+fn block_count(tbl: &[Option<&Vec<u8>>], c: usize) -> usize {
+    let Some(first) = tbl[c] else { return 0 };
+    let n = first.len() - 1;
+    let mut count = 0;
+    for d in c + 1..256 {
+        let (Some(prev), Some(cur)) = (tbl[d - 1], tbl[d]) else {
+            break;
+        };
+        if prev.len() != cur.len() {
+            break;
+        }
+        if prev[..n] == cur[..n] && prev[n] < 255 && prev[n] + 1 == cur[n] {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
+/// `sputx`, byte by byte.
+fn push_hex(s: &mut String, bytes: &[u8]) {
+    for b in bytes {
+        let _ = write!(s, "{b:02X}");
+    }
+}
+
+/// `cmap_write.c`'s `write_name`.
+fn cmap_name(name: &[u8], s: &mut String) {
+    s.push('/');
+    for &b in name {
+        if !(b'!'..=b'~').contains(&b) || b"#()/<>[]{}%".contains(&b) {
+            let _ = write!(s, "#{b:02X}");
+        } else {
+            s.push(b as char);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,6 +1140,97 @@ mod tests {
         // the 0xFFFF segment maps to glyph 0 (idDelta 1): a code point the
         // writer then refuses for want of a used glyph 0, or writes
         assert_eq!(base[0], 0xFFFF);
+    }
+
+    /// A `ToUnicode` CMap xdvipdfmx 20260317 wrote (TeX Live 2026 `xetex`,
+    /// streams decoded by `qpdf --qdf`) read back to its name, code width
+    /// and mappings.
+    fn read_cmap(text: &str) -> (Vec<u8>, bool, BTreeMap<u16, Vec<char>>) {
+        let name = text
+            .split("/CMapName /")
+            .nth(1)
+            .and_then(|s| s.split(' ').next())
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let two_byte = text.contains("<0000> <FFFF>");
+        let hex = |s: &str| -> Vec<u8> {
+            (0..s.len() / 2)
+                .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+                .collect()
+        };
+        let chars = |v: &[u8]| -> Vec<char> {
+            let units: Vec<u16> = v
+                .chunks(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect();
+            char::decode_utf16(units).map(Result::unwrap).collect()
+        };
+        let mut map = BTreeMap::new();
+        let mut mode = "";
+        for line in text.lines() {
+            if line.ends_with("beginbfchar") || line.ends_with("beginbfrange") {
+                mode = if line.ends_with("char") {
+                    "char"
+                } else {
+                    "range"
+                };
+                continue;
+            }
+            if line.starts_with("end") {
+                mode = "";
+                continue;
+            }
+            let f: Vec<&str> = line
+                .split(' ')
+                .map(|s| s.trim_matches(['<', '>']))
+                .collect();
+            match mode {
+                "char" => {
+                    map.insert(u16::from_str_radix(f[0], 16).unwrap(), chars(&hex(f[1])));
+                }
+                "range" => {
+                    let lo = u16::from_str_radix(f[0], 16).unwrap();
+                    let hi = u16::from_str_radix(f[1], 16).unwrap();
+                    let mut v = hex(f[2]);
+                    for code in lo..=hi {
+                        map.insert(code, chars(&v));
+                        *v.last_mut().unwrap() += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        (name, two_byte, map)
+    }
+
+    /// `CMap_create_stream`'s text, byte for byte: its header, runs of three
+    /// or more as `bfrange`s after each 256-code table's `bfchar`s, `bfchar`
+    /// blocks of at most 100 carried across tables. Oracle streams: a Type 1
+    /// font's 1-byte codes (cmr10: ligatures U+FB00..FB03 as one range),
+    /// ArialMT's codes 32..299 (100-entry blocks), STIX Two Math's
+    /// mathematical alphanumerics (surrogate pairs in ranges), and Latin
+    /// Modern Roman's "ffi" (ff + i, a GSUB ligature's text).
+    #[test]
+    fn cmap_stream_is_cmap_write_text() {
+        for text in [
+            include_str!("testdata/tounicode-cmr10.cmap"),
+            include_str!("testdata/tounicode-arial.cmap"),
+            include_str!("testdata/tounicode-stixtwomath.cmap"),
+            include_str!("testdata/tounicode-lmroman-ligature.cmap"),
+        ] {
+            let (name, two_byte, map) = read_cmap(text);
+            assert!(!map.is_empty());
+            assert_eq!(cmap_stream(&name, &map, two_byte).as_deref(), Some(text));
+        }
+        // an empty text is no mapping; none at all, no CMap
+        let mut m = BTreeMap::new();
+        m.insert(5u16, Vec::new());
+        assert_eq!(cmap_stream(b"X-UTF16", &m, false), None);
+        m.insert(6u16, vec!['a']);
+        let s = cmap_stream(b"X Y-UTF16", &m, false).unwrap();
+        assert!(s.contains("/CMapName /X#20Y-UTF16 def\n"));
+        assert!(s.contains("1 beginbfchar\n<06> <0061>\nendbfchar\n"));
     }
 
     #[test]

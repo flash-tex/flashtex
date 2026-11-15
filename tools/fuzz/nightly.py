@@ -59,6 +59,9 @@ FUZZERS = (
     {"name": "enc", "script": "parsers/fontfiles.py", "args": ("--kind", "enc"),
      "oracle": False, "seeds": False, "timeout": 10.0, "base": 300,
      "offset": 1000000},
+    # differential: --oracle makes it compare exit status, PDF and log
+    {"name": "jbig2", "script": "parsers/jbig2.py", "oracle": True,
+     "seeds": False, "timeout": 10.0, "base": 300, "offset": 1100000},
 )
 
 DONE_RE = re.compile(r"^done: (\d+) iterations:(.*)$")
@@ -380,7 +383,7 @@ def collect_findings(fuzzer_out):
             base = os.path.splitext(path)[0]
             artifact = base + ".json"
             for ext in (".tex", ".tfm", ".pfb", ".png", ".jpg",
-                        ".jpeg", ".pdf", ".ttf", ".otf"):
+                        ".jpeg", ".pdf", ".ttf", ".otf", ".jbig2"):
                 if os.path.isfile(base + ext):
                     artifact = base + ext
                     break

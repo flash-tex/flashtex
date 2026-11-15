@@ -308,7 +308,7 @@ group_args=()
     --disableupdate \
     --unattended \
     --replace \
-    "${group_args[@]}" )
+    ${group_args[@]+"${group_args[@]}"} )
 unset reg_token
 
 # ---------------------------------------------------------------------------

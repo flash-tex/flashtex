@@ -33,11 +33,11 @@ const MAX_SAFE_INTEGER: u64 = (1u64 << 53) - 1;
 // explicit denylist of named control sequences that are independently known
 // to grant filesystem access, shell execution, or the power to change how
 // the rest of the document is parsed (catcodes, primitive/macro
-// redefinition), plus a few purely structural invariants — balanced
-// grouping, no premature `\end{document}`, no bidi/invisible characters that
-// make the reviewed text display differently than it compiles — that have no
-// legitimate use in a small inserted body snippet. Anything not on this list
-// passes through unchanged; a human still reviews the literal `latex` text
+// redefinition). File-reading commands that remain allowed require literal,
+// project-relative arguments. The scan also checks structural invariants —
+// balanced grouping, no premature `\end{document}`, no bidi/invisible
+// characters that make the reviewed text display differently than it compiles.
+// A human still reviews the literal `latex` text
 // (and any `advisories` this scan adds) before `prepare_insert` is approved.
 //
 // Scanning walks `latex` once as a flat `Vec<char>` with plain counters, not
@@ -124,11 +124,388 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "ProvidesExplClass",
     "documentclass",
     "usepackage",
+    "pdfximage",
+    "pdfobj",
+    "pdfmdfivesum",
+    "pdffiledump",
+    "pdffilesize",
+    "pdffilemoddate",
+    // Engine primitives that open a named file (REVIEW-SEC2 on #2005).
+    "XeTeXpicfile",
+    "XeTeXpdffile",
+    "pdfmapfile",
+    "pdfmapline",
 ];
 /// Control words that are only ever a hang risk (not file/shell access) and
 /// are occasionally legitimate in hand-written macros, so they are surfaced
 /// to the human reviewer via `ambiguities` instead of being hard-rejected.
 const SOFT_CONTROL_WORDS: &[&str] = &["loop", "repeat"];
+/// Commands that read a file named by their braced arguments, with the
+/// number of literal arguments required. The bridge has no project root to
+/// resolve links against, so the engine must also confine reads.
+/// `\input`/`\include` and pdfTeX file primitives are denied outright above.
+const FILE_READERS: &[(&str, usize)] = &[
+    ("includegraphics", 1),
+    ("includepdf", 1),
+    ("includesvg", 1),
+    ("includestandalone", 1),
+    ("verbatiminput", 1),
+    ("VerbatimInput", 1),
+    ("lstinputlisting", 1),
+    ("inputminted", 2),
+    ("import", 2),
+    ("subimport", 2),
+    ("includefrom", 2),
+    ("subincludefrom", 2),
+    ("InputIfFileExists", 1),
+    ("IfFileExists", 1),
+    ("graphicspath", 1),
+    ("bibliography", 1),
+    ("addbibresource", 1),
+    // REVIEW-SEC2 on #2005: fancyvrb, moreverb, embedfile/attachfile (copy
+    // the bytes into the PDF), glossaries, datatool, csvsimple, pgf.
+    ("BVerbatimInput", 1),
+    ("LVerbatimInput", 1),
+    ("listinginput", 2),
+    ("verbatimtabinput", 1),
+    ("embedfile", 1),
+    ("attachfile", 1),
+    ("textattachfile", 1),
+    ("loadglsentries", 1),
+    ("DTLloaddb", 2),
+    ("csvautotabular", 1),
+    ("pgfplotstableread", 1),
+    ("pgfimage", 1),
+];
+
+/// `\font\x=<name>`: the font name is a file name TeX opens (a `.tfm`, or
+/// any file by explicit name under XeTeX), scanned up to a space. Require a
+/// control sequence, an optional `=`, and a plain project-relative name.
+fn font_args_ok(chars: &[char], mut i: usize) -> bool {
+    skip_reader_space(chars, &mut i);
+    if chars.get(i) != Some(&'\\') {
+        return false;
+    }
+    i += 1;
+    if chars.get(i).is_some_and(char::is_ascii_alphabetic) {
+        while chars.get(i).is_some_and(char::is_ascii_alphabetic) {
+            i += 1;
+        }
+    } else {
+        i += 1;
+    }
+    skip_reader_space(chars, &mut i);
+    if chars.get(i) == Some(&'=') {
+        i += 1;
+    }
+    skip_reader_space(chars, &mut i);
+    let start = i;
+    while chars
+        .get(i)
+        .is_some_and(|c| !c.is_whitespace() && !matches!(c, '\\' | '{' | '}' | '"'))
+    {
+        i += 1;
+    }
+    let name = &chars[start..i];
+    !matches!(chars.get(i), Some('{' | '"')) && reader_path_ok(name)
+}
+
+/// Letters and digits in any script (so accented file names pass), plus
+/// `.`, `_`, `/`, `+` and `-`. Spaces stay refused: TeX skips a leading
+/// space in a file name, so ` /x` or ` ../x` would escape the checks below.
+fn reader_path_ok(path: &[char]) -> bool {
+    !path.is_empty()
+        && path[0] != '/'
+        && path
+            .iter()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '/' | '+' | '-'))
+        && !path
+            .split(|c| *c == '/')
+            .any(|segment| segment == ['.', '.'])
+}
+
+fn skip_reader_space(chars: &[char], i: &mut usize) {
+    while chars.get(*i).is_some_and(|c| c.is_whitespace()) {
+        *i += 1;
+    }
+}
+
+/// Inline commands whose argument is read with `%` as ordinary text, so a
+/// `%` inside it is not a comment. The scanner keeps the whole argument as
+/// text for comment purposes. Its content is still scanned for control
+/// words, which is stricter than TeX but required: used inside another
+/// command's argument, `\verb` cannot change catcodes and its "content" runs.
+const INLINE_VERBATIM: &[&str] = &[
+    "verb",
+    "Verb",
+    "lstinline",
+    "mintinline",
+    "url",
+    "nolinkurl",
+    "burl",
+    "path",
+    "href",
+];
+
+/// Words that can make `%` ordinary text in a way the scanner does not model
+/// (verbatim environments, short-verb characters, `v`-type xparse arguments,
+/// `\urldef`, comment environments). Checked case-insensitively against
+/// control words and against words that open a brace group (environment
+/// names, `\MakeShortVerb{\|}` arguments).
+fn verbatim_capable(word: &str) -> bool {
+    let w = word.to_ascii_lowercase();
+    [
+        "verb",
+        "lst",
+        "mint",
+        "url",
+        "listing",
+        "comment",
+        "shortinline",
+        "href",
+        "documentcommand",
+        "documentenvironment",
+    ]
+    .iter()
+    .any(|t| w.contains(t))
+        || w == "path"
+}
+
+/// End (exclusive) of an inline verbatim argument starting at `i`, right
+/// after the command name. `None` means the form is ambiguous (whitespace
+/// or end of input before the delimiter, where the delimiter TeX picks
+/// depends on the package). An unclosed argument runs to the end of the
+/// input: the longest reading, so no `%` that TeX treats as text is stripped.
+fn inline_verbatim_end(input: &[char], mut i: usize, word: &str) -> Option<usize> {
+    if matches!(word, "verb" | "Verb") && input.get(i) == Some(&'*') {
+        i += 1;
+    }
+    if matches!(word, "Verb" | "lstinline" | "mintinline") && input.get(i) == Some(&'[') {
+        while i < input.len() && input[i] != ']' {
+            i += 1;
+        }
+        i += 1;
+    }
+    if word == "mintinline" {
+        if input.get(i) != Some(&'{') {
+            return None;
+        }
+        while i < input.len() && input[i] != '}' {
+            i += 1;
+        }
+        i += 1;
+    }
+    let delimiter = *input.get(i)?;
+    if delimiter.is_whitespace() {
+        return None;
+    }
+    i += 1;
+    if delimiter == '{' {
+        let mut depth = 1usize;
+        while i < input.len() {
+            match input[i] {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        return Some(input.len());
+    }
+    while i < input.len() {
+        if input[i] == delimiter {
+            return Some(i + 1);
+        }
+        i += 1;
+    }
+    Some(input.len())
+}
+
+/// Remove `%` comments, except inside the inline verbatim arguments above.
+/// Returns `Err(word)` when a comment was removed and the snippet also uses
+/// a verbatim-capable form the scanner does not model, since TeX might read
+/// that `%` as text and run what follows it.
+fn strip_tex_comments(latex: &str) -> std::result::Result<Vec<char>, String> {
+    let input: Vec<char> = latex.chars().collect();
+    let mut stripped: Vec<char> = Vec::with_capacity(input.len());
+    let mut backslashes = 0usize;
+    let mut in_control_word = false;
+    // Start of the current letter run that is a control word or that opens
+    // a brace group, and whether it is a control word.
+    let mut word: Option<(usize, bool)> = None;
+    let mut unmodeled: Option<String> = None;
+    let mut removed_comment = false;
+    let mut i = 0;
+    while i <= input.len() {
+        let c = input.get(i).copied();
+        if let Some((start, control)) = word {
+            if !c.is_some_and(|c| c.is_ascii_alphabetic()) {
+                word = None;
+                let name: String = input[start..i].iter().collect();
+                if control && INLINE_VERBATIM.contains(&name.as_str()) {
+                    if let Some(end) = inline_verbatim_end(&input, i, &name) {
+                        stripped.extend_from_slice(&input[i..end]);
+                        i = end;
+                        backslashes = 0;
+                        in_control_word = false;
+                        continue;
+                    }
+                    unmodeled.get_or_insert(name);
+                } else if verbatim_capable(&name) && !FILE_READERS.iter().any(|(w, _)| *w == name) {
+                    unmodeled.get_or_insert(name);
+                }
+            }
+        }
+        let Some(c) = c else { break };
+        if word.is_none()
+            && c.is_ascii_alphabetic()
+            && !in_control_word
+            && (!backslashes.is_multiple_of(2) || (i > 0 && input[i - 1] == '{'))
+        {
+            word = Some((i, !backslashes.is_multiple_of(2)));
+        }
+        if c == '%' && backslashes.is_multiple_of(2) {
+            removed_comment = true;
+            while i < input.len() && !matches!(input[i], '\r' | '\n') {
+                i += 1;
+            }
+            if input.get(i) == Some(&'\r') {
+                i += 1;
+            }
+            if input.get(i) == Some(&'\n') {
+                i += 1;
+            }
+            while matches!(input.get(i), Some(' ' | '\t')) {
+                i += 1;
+            }
+            // A comment ends a control word; letters on the next line cannot
+            // extend its name even though the line ending disappears.
+            if in_control_word && input.get(i).is_some_and(char::is_ascii_alphabetic) {
+                stripped.push(' ');
+            }
+            backslashes = 0;
+            in_control_word = false;
+            continue;
+        }
+        stripped.push(c);
+        in_control_word =
+            c.is_ascii_alphabetic() && (in_control_word || !backslashes.is_multiple_of(2));
+        backslashes = if c == '\\' { backslashes + 1 } else { 0 };
+        i += 1;
+    }
+    match unmodeled {
+        Some(name) if removed_comment => Err(name),
+        _ => Ok(stripped),
+    }
+}
+
+fn braced_reader_path_ok(chars: &[char], i: &mut usize, directory: bool, list: bool) -> bool {
+    if chars.get(*i) != Some(&'{') {
+        return false;
+    }
+    *i += 1;
+    let start = *i;
+    while chars.get(*i).is_some_and(|c| *c != '}') {
+        *i += 1;
+    }
+    let path = &chars[start..*i];
+    // `\bibliography{a,b}` names several files; each one is checked alone.
+    let paths_ok = if list {
+        path.split(|c| *c == ',').all(reader_path_ok)
+    } else {
+        reader_path_ok(path)
+    };
+    if chars.get(*i) != Some(&'}') || !paths_ok || (directory && path.last() != Some(&'/')) {
+        return false;
+    }
+    *i += 1;
+    true
+}
+
+/// Accept only literal options and project-relative paths immediately after
+/// a reader command. Two-argument readers require two literal braced values.
+fn readers_args_ok(
+    chars: &[char],
+    mut i: usize,
+    count: usize,
+    graphicspath: bool,
+    list: bool,
+) -> bool {
+    if chars.get(i) == Some(&'*') {
+        i += 1;
+    }
+    skip_reader_space(chars, &mut i);
+    if chars.get(i) == Some(&'[') {
+        i += 1;
+        while let Some(&c) = chars.get(i) {
+            if c == ']' {
+                break;
+            }
+            if c == '\\' {
+                i += 1;
+                let start = i;
+                while chars.get(i).is_some_and(char::is_ascii_alphabetic) {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                if chars.get(i).is_some_and(|c| c.is_alphabetic())
+                    || !matches!(
+                        word.as_str(),
+                        "linewidth"
+                            | "textwidth"
+                            | "columnwidth"
+                            | "textheight"
+                            | "paperwidth"
+                            | "paperheight"
+                            | "hsize"
+                            | "vsize"
+                    )
+                {
+                    return false;
+                }
+                continue;
+            }
+            if matches!(c, '{' | '}' | '%') {
+                return false;
+            }
+            i += 1;
+        }
+        if chars.get(i) != Some(&']') {
+            return false;
+        }
+        i += 1;
+    }
+    skip_reader_space(chars, &mut i);
+    if graphicspath {
+        if chars.get(i) != Some(&'{') {
+            return false;
+        }
+        i += 1;
+        let mut seen = false;
+        loop {
+            skip_reader_space(chars, &mut i);
+            if chars.get(i) == Some(&'}') {
+                return seen;
+            }
+            if !braced_reader_path_ok(chars, &mut i, true, false) {
+                return false;
+            }
+            seen = true;
+        }
+    }
+    for _ in 0..count {
+        if !braced_reader_path_ok(chars, &mut i, false, list) {
+            return false;
+        }
+        skip_reader_space(chars, &mut i);
+    }
+    true
+}
 /// Above this depth, flag for human review: implausible for ordinary math
 /// but not yet clearly abusive.
 const SOFT_GROUP_DEPTH: usize = 20;
@@ -176,14 +553,23 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
     // hex digits or any one character) is reduced while input is read,
     // before control sequence names are scanned: `^^5cinput` and
     // `\in^^70ut` are both `\input` to the engine, so the denylist below
-    // would be blind to them. A transcribed snippet never needs it.
+    // would be blind to them. A transcribed snippet never needs it. This is
+    // the authoritative `^^` check; the file readers' own is a second guard.
     if latex.contains("^^") {
         return Err(invalid(
             "LaTeX uses ^^ character notation, which can spell any control sequence and is not permitted in an inserted snippet",
         ));
     }
 
-    let chars: Vec<char> = latex.chars().collect();
+    // Catcode changes are denied, so comments can be removed before scanning
+    // command names, grouping, and literal reader arguments. `\verb`-style
+    // commands do change `%` to text, so their arguments keep it, and any
+    // other verbatim form refuses comments (REVIEW-SEC2 on #2005).
+    let chars = strip_tex_comments(latex).map_err(|name| {
+        invalid(format!(
+            "LaTeX combines a % comment with `{name}`, which can make % ordinary text so the comment would hide commands from this check; remove the comment"
+        ))
+    })?;
     let mut advisories = Vec::new();
     let mut seen_soft_words = std::collections::BTreeSet::new();
     let mut saw_invisible = false;
@@ -220,6 +606,26 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                         return Err(invalid(format!(
                             "LaTeX uses \\{word}, which is not permitted in an inserted snippet"
                         )));
+                    }
+                    if word == "font" && !font_args_ok(&chars, i) {
+                        return Err(invalid(
+                            "LaTeX uses \\font with an unchecked or non-project-relative font name; only plain project-relative names are permitted in an inserted snippet",
+                        ));
+                    }
+                    if let Some(&(_, count)) = FILE_READERS.iter().find(|(w, _)| *w == word) {
+                        if latex.contains("^^")
+                            || !readers_args_ok(
+                                &chars,
+                                i,
+                                count,
+                                word == "graphicspath",
+                                word == "bibliography",
+                            )
+                        {
+                            return Err(invalid(format!(
+                                "LaTeX uses \\{word} with an unchecked or non-project-relative path; only checkable project-relative reader paths are permitted in an inserted snippet"
+                            )));
+                        }
                     }
                     if SOFT_CONTROL_WORDS.contains(&word.as_str()) {
                         seen_soft_words.insert(word.clone());
@@ -282,6 +688,16 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                                 "LaTeX uses \\{word}{{{name}}}, which names a disallowed control sequence"
                             )));
                         }
+                        // `\begin{X}` runs `\X` on the tokens that follow, so a
+                        // file reader written as an environment would read its
+                        // argument without the path check above. No reader is
+                        // a real environment; refuse the form outright.
+                        let base = name.trim_end_matches('*');
+                        if FILE_READERS.iter().any(|(w, _)| *w == base) {
+                            return Err(invalid(format!(
+                                "LaTeX uses \\{word}{{{name}}}, which runs a file reader as an environment and skips its path check"
+                            )));
+                        }
                         if word == "begin" {
                             envs.push(name);
                         } else {
@@ -319,14 +735,6 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                 }
                 depth -= 1;
                 i += 1;
-            }
-            '%' => {
-                // Default-catcode line comment. Sound only because `\catcode`
-                // itself is denied above, so `%` cannot have been redefined
-                // by this same snippet before this point.
-                while chars.get(i).is_some_and(|&c| c != '\r' && c != '\n') {
-                    i += 1;
-                }
             }
             _ => i += 1,
         }
@@ -623,8 +1031,7 @@ impl CompilerValidator {
                     // The condition clears as soon as that child execs; retry
                     // briefly instead of failing the validation.
                     Err(e)
-                        if e.kind() == std::io::ErrorKind::ExecutableFileBusy
-                            && attempts < 20 =>
+                        if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 =>
                     {
                         attempts += 1;
                         thread::sleep(Duration::from_millis(10));

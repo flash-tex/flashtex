@@ -115,8 +115,13 @@ pub struct Report {
     rec: Option<Rec>,
     /// The latest replayable recording, for the next guarded call.
     /// (`Some`: the group it must replay in.)
+    #[allow(clippy::type_complexity)]
     last: Option<(Option<(i32, i32)>, Vec<Op>)>,
     pub(crate) replaying: bool,
+    /// The cells each path of a check allocated or freed (`[replay, real]`,
+    /// `crate::intrinsics_verify`), and which path is running (0: none).
+    pub(crate) churn: [std::collections::HashSet<i32>; 2],
+    pub(crate) churn_on: u8,
     /// Replayable recordings, and their operations.
     kept: u64,
     kept_ops: u64,
@@ -166,6 +171,7 @@ impl Globals {
             return;
         };
         self.host.intrinsics.last = None;
+        self.intr_churn_stop();
         if let Some(p) = rec.verify {
             *self.host.intrinsics.unverified.entry(why).or_default() += 1;
             self.drop_checkpoint(p.ck());
@@ -305,8 +311,17 @@ impl Globals {
             return;
         }
         let global = k & 8 != 0;
-        let call_level = r.rec.as_ref().expect("checked").at.0;
+        let (call_level, base) = r
+            .rec
+            .as_ref()
+            .map(|rec| (rec.at.0, rec.base))
+            .expect("checked");
         let op = match k {
+            // a token from below the body's level (the body used up, a
+            // look-ahead or a scan reading on): the call reads past itself,
+            // which a replay does not
+            18 if self.input_ptr < base => Err("ReadPast"),
+            18 => return,
             // the input files' positions and encodings are not compared
             16 => Err("FileInput"),
             // an `\aftergroup` token left at the call's level (or below,
@@ -616,5 +631,30 @@ mod tests {
         g.set_intrinsics_verify(false);
         g.restore(s0).unwrap();
         assert!(!g.intr_verify_on);
+    }
+
+    /// A checkpoint taken between a check's C and its end opened a new
+    /// log, so the real path's writes before it are not compared: the
+    /// call counts as `unverified.checkpoint`, not as checked (REVIEW-B on
+    /// #2140). Without one, the same empty check is checked and identical.
+    #[test]
+    fn a_checkpoint_inside_the_window_leaves_the_call_unverified() {
+        let mut g = Globals::new();
+        g.set_intrinsics_verify(true);
+        let p = g.intr_verify_begin(&[]);
+        g.intr_verify_end(p, None);
+        assert_eq!(g.host.intrinsics.checked, 1);
+        assert_eq!(g.host.intrinsics.identical, 1);
+        assert!(g.host.intrinsics.unverified.is_empty());
+
+        let n = g.arena.checkpoint_ids().len();
+        let p = g.intr_verify_begin(&[]);
+        let inner = g.checkpoint();
+        g.intr_verify_end(p, None);
+        assert_eq!(g.host.intrinsics.checked, 1);
+        assert_eq!(g.host.intrinsics.unverified.get("checkpoint"), Some(&1));
+        // C is gone, the inner checkpoint stays
+        assert_eq!(g.arena.checkpoint_ids(), &[inner][..]);
+        assert_eq!(n, 0);
     }
 }
