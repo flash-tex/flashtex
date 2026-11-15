@@ -40,6 +40,34 @@ pub struct Outline {
     /// is closed unless the special says `[]`).
     pub open: bool,
     pub dict: Dict,
+    /// Its destination's new name ([`Doc::add_goto`]).
+    pub goto: Option<Goto>,
+}
+
+/// dvipdfmx's destination optimisation (pdfdoc.c's `pdf_doc_add_goto`, on
+/// unless `dvipdfmx:config C 0x0010`): a link's or outline entry's named
+/// destination, `/Dest (name)` or `/A <</S/GoTo/D (name)>>`, is written
+/// under a new name, the number of names renamed before it in hexadecimal
+/// (`(0)`, `(1)`, …, `(a)`); only destinations so named are written, under
+/// their new names. hyperref sets 0x0010, so its names stay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Goto {
+    /// In `/A`'s `/D` (else the dictionary's own `/Dest`).
+    pub in_action: bool,
+    pub name: Vec<u8>,
+}
+
+impl Goto {
+    /// Write the new name into `d` (a copy of the dictionary as written).
+    pub fn apply(&self, d: &mut Dict) {
+        if self.in_action {
+            if let Some(Obj::Dict(a)) = d.get_mut(b"A") {
+                a.set(b"D", Obj::Str(self.name.clone()));
+            }
+        } else {
+            d.set(b"Dest", Obj::Str(self.name.clone()));
+        }
+    }
 }
 
 /// An annotation of a page, beyond the display list's links: the whole
@@ -50,6 +78,16 @@ pub struct Annot {
     pub rect: [f64; 4],
     /// The display-list link this annotation is, if it is one.
     pub link: Option<usize>,
+    /// Its destination's new name in the PDF ([`Doc::add_goto`]); the
+    /// display list keeps the name the special gave.
+    pub goto: Option<Goto>,
+    /// `pdf:ann @name` (and the first part of `pdf:bann @name`): the
+    /// annotation is the named object `name` of [`Doc::named`], whose
+    /// dictionary (with its `/Rect`, and whatever `pdf:put @name` adds
+    /// later) is written once, for both the page's `/Annots` and every
+    /// `@name` (an AcroForm's `/Fields`), as dvipdfmx's
+    /// `spc_push_object` makes it one object.
+    pub name: Option<Vec<u8>>,
 }
 
 /// Content of a page or form that the display list cannot express (an
@@ -146,6 +184,17 @@ pub struct Tracking {
     /// The rectangle so far on this page (stream space, bp): llx, lly,
     /// urx, ury, or `None` when nothing has been drawn yet.
     pub rect: Option<[f64; 4]>,
+    /// `pdf:bann @name`, until the link's first part is written: that part
+    /// is the named object, and later parts are copies of its dictionary
+    /// (dvipdfmx's `pdf_doc_break_annot`).
+    pub name: Option<Vec<u8>>,
+    /// A part has been written (dvipdfmx's `breaking_state.broken`): only
+    /// the first goes through `pdf_doc_add_goto`.
+    pub broken: bool,
+    /// The first part's new destination name when it is in `/A`, which the
+    /// later parts' copies share (`pdf_merge_dict` links `/A`); a renamed
+    /// `/Dest` is the first part's own.
+    pub goto: Option<Goto>,
 }
 
 /// `dvipdfmx:catch_phantom` (dvipdfmx's dvi.c, `catch_phantom`): whether a
@@ -197,6 +246,12 @@ pub struct Doc {
     /// `pdf:nolink` (until `pdf:link`): what is drawn does not widen the
     /// link being tracked (dvipdfmx's `link_annot` off).
     pub nolink: bool,
+    /// dvipdfmx's destination optimisation is on ([`Goto`]): no
+    /// `dvipdfmx:config C` with 0x0010 on the first page (dvipdfmx.c reads
+    /// the first page's config specials before it opens the document).
+    pub check_gotos: bool,
+    /// The destinations renamed so far: old name to new.
+    pub gotos: HashMap<Vec<u8>, Vec<u8>>,
     /// Specials not understood, by their first word, with their count.
     pub unknown: BTreeMap<String, u32>,
     /// Specials understood but not carried out, by name, with their count.
@@ -223,8 +278,98 @@ impl Doc {
     pub fn new() -> Doc {
         Doc {
             version: (1, 7),
+            check_gotos: true,
             ..Doc::default()
         }
+    }
+
+    /// pdfdoc.c's `pdf_doc_add_goto` for a link annotation's or an outline
+    /// entry's dictionary `d`: its named destination's new name, or none
+    /// (the optimisation off, not a link, a destination array, or another
+    /// action). `@name` references are followed as `pdf_deref_obj` follows
+    /// them: a `/Dest @n` or `/D @n` naming a string is replaced in `d` (the
+    /// returned [`Goto`]); an `/A @n` is the named action itself, renamed in
+    /// place in [`Doc::named`] (so a second link to it finds the new name,
+    /// which no destination has, and takes another: measured, xdvipdfmx
+    /// does the same); a reference to an object not yet made is left (the
+    /// "Cannot optimize" case).
+    pub fn add_goto(&mut self, d: &Dict) -> Option<Goto> {
+        if !self.check_gotos {
+            return None;
+        }
+        let unknown = |doc: &mut Doc| {
+            doc.diag("Unknown PDF annotation format. Output file may be broken.".into());
+            None
+        };
+        let undefined = |doc: &mut Doc| {
+            doc.diag(
+                "Cannot optimize PDF annotations. Output file may be broken. \
+                 Please restart with option \"-C 0x10\""
+                    .into(),
+            );
+            None
+        };
+        // `pdf_deref_obj`: Err for a reference to an object not made yet
+        let deref = |doc: &Doc, o: Option<&Obj>| -> Result<Option<Obj>, ()> {
+            match o {
+                Some(Obj::Named(n)) => match doc.named.get(n) {
+                    Some(Named::Obj(o)) => Ok(Some(o.clone())),
+                    Some(Named::Stream(..)) | Some(Named::Form(_)) | Some(Named::Image(_)) => {
+                        Ok(Some(Obj::Null))
+                    }
+                    None => Err(()),
+                },
+                o => Ok(o.cloned()),
+            }
+        };
+        match deref(self, d.get(b"Subtype")) {
+            Err(()) => return undefined(self),
+            Ok(None) => {}
+            Ok(Some(Obj::Name(n))) if n == b"Link" => {}
+            Ok(Some(Obj::Name(_))) => return None,
+            Ok(Some(_)) => return unknown(self),
+        }
+        let Ok(dest) = deref(self, d.get(b"Dest")) else {
+            return undefined(self);
+        };
+        // where the new name goes: `d` itself, its direct `/A`, or the
+        // named action `/A @n`
+        let named_action = match d.get(b"A") {
+            Some(Obj::Named(n)) => Some(n.clone()),
+            _ => None,
+        };
+        let (in_action, dv) = match deref(self, d.get(b"A")) {
+            Err(()) => return undefined(self),
+            Ok(None) => (false, dest),
+            Ok(Some(Obj::Dict(a))) if dest.is_none() => match deref(self, a.get(b"S")) {
+                Err(()) => return undefined(self),
+                Ok(Some(Obj::Name(s))) if s == b"GoTo" => match deref(self, a.get(b"D")) {
+                    Err(()) => return undefined(self),
+                    Ok(dv) => (true, dv),
+                },
+                Ok(Some(Obj::Name(_))) => return None,
+                Ok(_) => return unknown(self),
+            },
+            Ok(Some(_)) => return unknown(self),
+        };
+        let old = match dv {
+            Some(Obj::Str(s)) => s,
+            Some(Obj::Array(_)) => return None,
+            _ => return unknown(self),
+        };
+        let n = self.gotos.len();
+        let name = self
+            .gotos
+            .entry(old)
+            .or_insert_with(|| format!("{n:x}").into_bytes())
+            .clone();
+        if let (true, Some(an)) = (in_action, &named_action) {
+            if let Some(Named::Obj(Obj::Dict(a))) = self.named.get_mut(an) {
+                a.set(b"D", Obj::Str(name));
+            }
+            return None;
+        }
+        Some(Goto { in_action, name })
     }
 
     pub fn unknown_special(&mut self, what: &str) {

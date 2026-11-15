@@ -31,11 +31,30 @@ name: unicode-m3
 
 on:
   workflow_dispatch:
+  # Push runs only on main and on the lanes that measure with this workflow;
+  # any other branch gets it through its pull request (same paths) or by
+  # `gh workflow run <file> --ref <branch>`. Push runs on every feature
+  # branch were most of a 396-run queue on 2026-11-08.
   push:
-    branches-ignore: [main, "gh-readonly-queue/**"]
+    branches:
+      - main
+      - "agent/*unicode*"
+      - "agent/*unicode*/**"
+      - "agent/daniel-parent/xetex-intr*"
     paths:
       - ".github/workflows/unicode-m3.yml"
       - "tools/unicode-m3/**"
+      - "tools/xetex-lockstep/**"
+      - "tools/xetex-pdfparity/**"
+      - "crates/display-list-v3/**"
+      - "crates/flashtex-xetex/**"
+  pull_request:
+    paths:
+      - ".github/workflows/unicode-m3.yml"
+      - "tools/unicode-m3/**"
+      - "tools/xetex-lockstep/**"
+      - "tools/xetex-pdfparity/**"
+      - "crates/display-list-v3/**"
       - "crates/flashtex-xetex/**"
 
 permissions:
@@ -156,7 +175,7 @@ jobs:
         run: |
           set -o pipefail
           python3 tools/xetex-lockstep/latex.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
-            --cases-dir "$OUT/corpus" --jobs 2 --timeout 3600 --json "$OUT/pt1.json" 2>&1 | tee "$OUT/pt1.txt" || true
+            --cases-dir "$OUT/corpus" --jobs 2 --timeout 3600 --json "$OUT/pt1.json" 2>&1 | tee "$OUT/pt1.txt"
       - name: "export: PDFs against xelatex's (structural)"
         if: matrix.part == 'export'
         run: |
@@ -164,14 +183,14 @@ jobs:
           python3 -m unittest discover -s tools/xetex-pdfparity -p 'test_outline.py'
           python3 tools/xetex-pdfparity/run.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
             --cases-dir "$OUT/corpus" --jobs 4 --timeout 3600 --no-visual \
-            --json "$OUT/export.json" --pdf-dir "$OUT/pdf" 2>&1 | tee "$OUT/export.txt" || true
+            --json "$OUT/export.json" --pdf-dir "$OUT/pdf" 2>&1 | tee "$OUT/export.txt"
       - name: "host: the corpus through flashtex-host-unicode (TeX Live)"
         if: matrix.part == 'host'
         run: |
           set -o pipefail
           python3 tools/unicode-m3/notex_corpus.py --mode texlive --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
             --client "$RUNNER_TEMP/bin/dl3-client" --cases-dir "$OUT/corpus" --out "$OUT/texlive" \
-            --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true
+            --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true  # known red: R1 metric counts xelatex-error cases (see PR body)
       - name: "host: edit sweep (spares against cold)"
         if: matrix.part == 'host'
         run: |
@@ -180,20 +199,20 @@ jobs:
           cp tools/unicode-m3/bench/*.tex "$OUT/bench/"
           python3 tools/unicode-m3/host_sweep.py --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
             --client "$RUNNER_TEMP/bin/dl3-client" --cases-dir "$OUT/bench" --cases-dir "$OUT/corpus" \
-            --json "$OUT/sweep.json" 2>&1 | tee "$OUT/sweep.txt" || true
+            --json "$OUT/sweep.json" 2>&1 | tee "$OUT/sweep.txt"
       - name: "host: latency bench (instructions; wall time is not the reference Mac's)"
-        if: matrix.part == 'host'
+        if: matrix.part == 'host' && !cancelled()
         run: |
           set -o pipefail
           python3 tools/unicode-m3/latency.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
             --host "$RUNNER_TEMP/bin/flashtex-host-unicode" --client "$RUNNER_TEMP/bin/dl3-client" \
-            --json "$OUT/latency-linux.json" 2>&1 | tee "$OUT/latency-linux.txt" || true
+            --json "$OUT/latency-linux.json" 2>&1 | tee "$OUT/latency-linux.txt" || true  # measurement only: hosted timing is noisy, never gates
           python3 tools/unicode-m3/host_startup.py --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
-            --json "$OUT/startup-unicode-linux.json" 2>&1 | tee "$OUT/startup-unicode-linux.txt" || true
+            --json "$OUT/startup-unicode-linux.json" 2>&1 | tee "$OUT/startup-unicode-linux.txt" || true  # measurement only: hosted timing is noisy, never gates
       - uses: dtolnay/rust-toolchain@stable
-        if: matrix.part == 'host'
+        if: matrix.part == 'host' && !cancelled()
       - uses: Swatinem/rust-cache@v2
-        if: matrix.part == 'host'
+        if: matrix.part == 'host' && !cancelled()
         with:
           shared-key: unicode-m3-linux
           save-if: "false"
@@ -201,14 +220,16 @@ jobs:
             crates/flashtex-xetex -> target
             . -> target
       - name: "host: tests/host.rs with TeX Live ([fonts] precedence, spares, cancel)"
-        if: matrix.part == 'host'
+        if: matrix.part == 'host' && !cancelled()
         working-directory: crates/flashtex-xetex
         run: |
           set -o pipefail
-          cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || true
+          cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || true  # known red: #2132 (cancels_are_never_lost)
       - name: report
         if: always()
-        run: python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -283,15 +304,17 @@ jobs:
           python3 tools/unicode-m3/notex_corpus.py --mode notex \
             --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
             --cases-dir "$OUT/corpus" --out "$OUT/notex" --compare-with "$RUNNER_TEMP/cmp" \
-            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true
+            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true  # known red: R1 metric counts xelatex-error cases (see PR body)
       - name: "export: Core Graphics at 2x and 3x (the Linux PDFs)"
         run: |
           set -o pipefail
           python3 tools/unicode-m3/visual.py --pdf-dir "$RUNNER_TEMP/linux-export/pdf" --scales 2 3 \
-            --json "$OUT/visual.json" 2>&1 | tee "$OUT/visual.txt" || true
+            --json "$OUT/visual.json" 2>&1 | tee "$OUT/visual.txt" || true  # measurement only: pixel counts, never gates
       - name: report
         if: always()
-        run: python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

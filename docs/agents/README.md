@@ -49,3 +49,52 @@ Claude usage is prohibited; unverified funding must never fall back to it.
 Claude Code imports the shared instructions through `CLAUDE.md`; Cursor has a
 small always-applied rule under `.cursor/rules/`. These are discovery aids, not a
 replacement for an external supervisor or provider-side spending controls.
+
+## Shared build slots: `scripts/agents/slot.sh`
+
+The Mac build locks and the NixOS PC job slots are shared by every lane. Take them
+with `scripts/agents/slot.sh` so each slot carries an owner, a pid and a time limit,
+and so waiters queue fairly instead of polling `mkdir`.
+
+| Pool | Slots | Where |
+|---|---|---|
+| `mac-build` | 3: `mac-build.lock`, `mac-build.lock2`, `mac-build.lock3` | this Mac |
+| `pc` | 4: `pc-slot1` .. `pc-slot4` | the PC, over `ssh nixos` |
+
+The slot directories are the ones lanes used to `mkdir` by hand, in
+`~/.cache/flashtex-agents/commander/` on each host, so old-style locks and
+`slot.sh` share one pool.
+
+```
+# Hold a slot for exactly one command (preferred; released on exit or Ctrl-C):
+scripts/agents/slot.sh run mac-build <lane> --max-minutes 20 -- nice -n 19 cargo check -p <crate>
+scripts/agents/slot.sh run pc <lane> --max-minutes 45 -- systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=10G nice cargo test ...
+
+# Or acquire and release around several commands (prints the slot name):
+scripts/agents/slot.sh acquire pc <lane> --max-minutes 30 --priority 60 --pid <long-lived pid>
+scripts/agents/slot.sh release pc <lane>
+
+scripts/agents/slot.sh status            # both pools, owners, ages and the queue
+```
+
+- **Owner file.** Each slot dir holds `owner` with `lane`, `pid`, `host`, `start`,
+  `start_utc`, `max_minutes` and `priority`. `release` removes only slots whose owner
+  `lane` matches.
+- **Which pid.** `acquire` records its caller's pid unless `--pid` is given. Agent
+  tool calls each run in a fresh shell that exits at once, so from an agent use
+  `run`, or pass `--pid` of a process that lives as long as the work. Otherwise the
+  slot looks dead and the next waiter breaks it. For the `pc` pool, `run` executes
+  the command on the PC, so the PC can see the pid.
+- **Breaking.** A slot is broken only when its pid is on the same host and dead, or
+  when it is past `max_minutes` + 10 and its pid can't be seen (another host, or a
+  hand-made lock with no owner file, whose age is its mtime and whose limit is 60
+  minutes). A live pid on the same host is never broken. Every break is appended to
+  `slot-breaks.log` in the slot root with the old owner.
+- **Queue.** Waiters drop a ticket in `<pool>.queue/`. The highest `--priority`
+  (default 50) goes first, then the earliest waiter. Tickets of dead waiters are
+  dropped. `--wait-minutes N` gives up after N minutes (exit 3).
+- **Portability.** bash 3.2 and BSD `stat` on macOS, GNU on NixOS. The `pc` pool
+  pipes the script to the PC over ssh, so the PC needs no checkout.
+  `SLOT_PC_HOST=local` (or `SLOT_LOCAL=1`) uses the pool on the current host.
+- **Self-test:** `/bin/bash scripts/agents/slot-selftest.sh` uses a temporary root
+  and no ssh; it passes on macOS bash 3.2 and on the PC.

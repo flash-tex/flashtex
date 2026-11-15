@@ -28,6 +28,7 @@ on:
     paths:
       - ".github/workflows/unicode-m3-bundle.yml"
       - "tools/unicode-m3/bundle_gaps.py"
+      - "tools/bundle/texbundle.py"
       - "tools/bundle/tl2026/**"
 
 permissions:
@@ -142,7 +143,7 @@ jobs:
           set -o pipefail
           python3 tools/unicode-m3/notex_corpus.py --mode texlive \
             --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
-            --cases-dir "$OUT/corpus" --out "$OUT/texlive" --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true
+            --cases-dir "$OUT/corpus" --out "$OUT/texlive" --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true  # known red: R1 metric counts xelatex-error cases (see PR body)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -213,7 +214,7 @@ jobs:
             --url "file://$RUNNER_TEMP/ttb/bundle.ttb" --digest "$DIGEST" \
             --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
             --cases-dir "$OUT/corpus" --out "$OUT/notex" --compare-with "$RUNNER_TEMP/linux/texlive/pdf" \
-            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true
+            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true  # known red: R1 metric counts xelatex-error cases (see PR body)
           { echo '## no TeX Live'; echo '```'; cat "$OUT/notex.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()

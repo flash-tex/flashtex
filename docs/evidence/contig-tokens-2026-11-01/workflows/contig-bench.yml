@@ -1,0 +1,187 @@
+# Lane CONTIG-TOKENS (DESIGN.md §12 P6): cold-compile counters of engine builds on GitHub-hosted
+# Linux. A measurement branch only (never merged): a push to agent/kabir-claude-contig/bench-*
+# builds every `builds` ref of docs/evidence/contig-tokens-2026-11-01/bench.json with
+# `--profile perf` (release codegen, line tables) and runs each `parts` entry with
+# docs/evidence/contig-tokens-2026-11-01/scripts/bench.py: perf counters when the runner's PMU is
+# visible, valgrind cachegrind (exact instruction counts; with `sim`, a simulated M1-like cache),
+# the output hashes. GitHub-hosted only, `contents: read`, no secrets.
+name: contig-bench
+
+on:
+  push:
+    branches: ["agent/kabir-claude-contig/bench-*"]
+
+permissions:
+  contents: read
+
+env:
+  CFG: docs/evidence/contig-tokens-2026-11-01/bench.json
+  S: docs/evidence/contig-tokens-2026-11-01/scripts
+  # scheme-full TeX Live 2026 (nightly.yml's pin): the books and the arXiv papers load packages
+  # scheme-medium lacks
+  TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+  CARGO_TERM_COLOR: never
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.p.outputs.builds }}
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: p
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          c = json.load(open(os.environ['CFG']))
+          print('builds=' + json.dumps([{'name': k, 'ref': v} for k, v in c['builds'].items()]))
+          print('parts=' + json.dumps(c['parts']))
+          EOF
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        b: ${{ fromJSON(needs.plan.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.b.ref }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: contig-bench-perf
+      - name: regenerate src/generated/ (web2rust, the committed configuration)
+        run: |
+          set -euo pipefail
+          cargo run --release --locked -q -p web2rust -- third_party/pdftex/pdftex.web \
+            @crates/flashtex-engine/web2rust-default.args \
+            --out-dir crates/flashtex-engine/src/generated --pool crates/flashtex-engine/pdftex.pool
+          git diff --stat
+          d="$RUNNER_TEMP/bin-${{ matrix.b.name }}"
+          mkdir -p "$d"
+          git diff --binary > "$d/regen.patch"
+      - name: build (release codegen with line tables)
+        run: |
+          set -euo pipefail
+          cargo build --profile perf --locked -p flashtex-engine --bin flashtex-initex
+          d="$RUNNER_TEMP/bin-${{ matrix.b.name }}"
+          cp target/perf/flashtex-initex "$d/"
+          cp crates/flashtex-engine/pdftex.pool "$d/"
+          cp -r crates/flashtex-engine/src "$d/src"
+          { git rev-parse HEAD; rustc --version; } > "$d/BUILD"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.b.name }}
+          path: ${{ runner.temp }}/bin-${{ matrix.b.name }}
+          retention-days: 14
+
+  bench:
+    needs: [plan, build]
+    # a part runs the engines whose build succeeded
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: valgrind, perf
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq valgrind >/dev/null
+          sudo apt-get install -y -qq linux-tools-common "linux-tools-$(uname -r)" >/dev/null 2>&1 || true
+          sudo sysctl -w kernel.perf_event_paranoid=1 || true
+          valgrind --version
+          perf stat -e instructions:u,cycles:u true 2>&1 | tail -6 || true
+          { uname -a; nproc; grep -m1 'model name' /proc/cpuinfo; free -g | head -2; } | tee "$RUNNER_TEMP/machine.txt"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: ${{ runner.temp }}/b
+      - name: what each build is
+        run: |
+          for d in "$RUNNER_TEMP"/b/bin-*; do echo "$d = $(head -1 "$d/BUILD" 2>/dev/null)"; done
+      - name: formats
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
+          for d in "$RUNNER_TEMP"/b/bin-*; do
+            [ -f "$d/flashtex-initex" ] || continue
+            chmod +x "$d/flashtex-initex"
+            ln -sf "$d/flashtex-initex" "$d/pdftex"
+            mkdir -p "$d/fmt"
+            (cd "$d/fmt" && FLASHTEX_POOL="$d/pdftex.pool" "$d/pdftex" -ini -jobname=pdflatex -progname=pdflatex \
+              -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >/dev/null 2>&1) || { tail -20 "$d/fmt/pdflatex.log"; rm -f "$d/fmt/pdflatex.fmt"; continue; }
+            ls -l "$d/fmt/pdflatex.fmt"; sha256sum "$d/fmt/pdflatex.fmt"; cat "$d/BUILD"
+          done
+      - name: documents
+        env:
+          DOCS: ${{ matrix.part.docs }}
+          INCR_BENCH_DIR: /tmp/ib
+        run: |
+          set -euo pipefail
+          case "$DOCS" in
+            arxiv:*) python3 "$S/fetchdocs.py" "$RUNNER_TEMP/corpus" "${DOCS#arxiv:}" > "$RUNNER_TEMP/docs.txt" ;;
+            *) python3 tools/incr-bench/mkbook.py "$DOCS" >/dev/null; echo "/tmp/ib/docs/$DOCS:main.tex" > "$RUNNER_TEMP/docs.txt" ;;
+          esac
+          cat "$RUNNER_TEMP/docs.txt"
+      - name: bench
+        env:
+          PART: ${{ toJSON(matrix.part) }}
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/out/${{ matrix.part.id }}"
+          mkdir -p "$OUT"; cp "$RUNNER_TEMP/machine.txt" "$OUT/"
+          args=()
+          while read -r spec; do args+=("$spec"); done < <(python3 - <<'EOF'
+          import json, os
+          c = json.load(open(os.environ['CFG']))
+          b = os.environ['RUNNER_TEMP'] + '/b/bin-'
+          part = json.loads(os.environ['PART'])
+          for k, e in c['engines'].items():
+              if part.get('engines') and k not in part['engines']:
+                  continue
+              if not os.path.isfile(f"{b}{e['build']}/fmt/pdflatex.fmt"):
+                  continue
+              print('--engine')
+              print(f"{k}={b}{e['build']}" + ''.join(f',{v}={w}' for v, w in e['env'].items()))
+          EOF
+          )
+          mapfile -t docs < "$RUNNER_TEMP/docs.txt"
+          python3 "$S/bench.py" "$OUT" "${args[@]}" --reps "${{ matrix.part.reps }}" --cg "${{ matrix.part.cg }}" "${docs[@]}" \
+            2> >(tee "$OUT/bench.err" >&2)
+          for f in "$OUT"/cg-*.out; do
+            [ -f "$f" ] || continue
+            eng="$(python3 -c "import json,os,sys; c=json.load(open(os.environ['CFG'])); n=sys.argv[1].rsplit('-',1)[1][:-4]; print(c['engines'][n]['build'])" "$f")"
+            python3 "$S/cgsum.py" "$f" "$RUNNER_TEMP/b/bin-$eng/src" > "${f%.out}.sum.txt" || true
+            gzip -9 "$f"
+          done
+          rm -rf "$OUT/work"
+          ls -la "$OUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: out-${{ matrix.part.id }}
+          path: ${{ runner.temp }}/out
+          retention-days: 30
