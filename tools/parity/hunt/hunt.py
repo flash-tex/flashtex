@@ -69,7 +69,10 @@ def select(a):
     subp = os.path.join(HOME, "man", "%s-%d-%d.json" % (m.get("tier", "x"), a.start, a.end or 0))
     json.dump(sub, open(subp, "w"), indent=1)
     env = dict(os.environ, FLASHTEX_PARITY_CACHE=CACHE)
-    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools/parity/corpus.py"), "fetch", "--manifest", subp],
+    # HUNT_CORPUS_TEXMF: the texmf-dist that holds a TeX Live tier's documents (corpus.py --texmf), where this
+    # host's TeX Live has no doc files
+    texmf = ["--texmf", os.environ["HUNT_CORPUS_TEXMF"]] if os.environ.get("HUNT_CORPUS_TEXMF") else []
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools/parity/corpus.py")] + texmf + ["fetch", "--manifest", subp],
                        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     log("\n".join(r.stdout.splitlines()[-3:]))
     tier = m.get("tier") or a.tier
@@ -77,7 +80,8 @@ def select(a):
     rx = re.compile(a.grep) if a.grep else None
     for d in docs:
         src = os.path.join(CACHE, "src", tier, d["id"])
-        entry = d.get("entry")
+        # an e-print names its entry file; a TeX Live document is its path's file, in a copy of its directory
+        entry = d.get("entry") or os.path.basename(d.get("path") or "")
         if not entry or "/" in entry or not os.path.isfile(os.path.join(src, entry)):
             continue
         if rx or a.max_kb:
