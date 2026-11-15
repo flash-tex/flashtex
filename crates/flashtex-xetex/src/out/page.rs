@@ -1527,6 +1527,39 @@ pub(crate) mod tests {
     /// one after `pdf:link` does; `pdf:xann width 50pt height 8pt depth 1pt`
     /// is a 50 by 9 pt rectangle). beamer's navigation symbols are such links
     /// (the export gate's u11-beamer-fontspec).
+    /// A TFM font's character advances with `dvi_right` (dvi.c `dvi_set`),
+    /// so under `catch_phantom` its advance widens a link to the phantom's
+    /// height and depth, not only to the glyph's box. TeX Live 2026 on
+    /// `\font\x=cmr10 \x a` inside a link under `dvipdfmx:catch_phantom
+    /// true height 20pt depth 5pt`: `/Rect [133.768 652.254 138.75
+    /// 677.161]`, 25 pt high (issue #2485, review of #2493).
+    #[test]
+    fn a_tfm_characters_advance_catches_the_phantom() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let mut body = Vec::new();
+        // fnt_def1 0: a TFM font at 10 pt (NoTfm: 5 pt wide, 7 high, 2 deep)
+        body.extend_from_slice(&[243, 0]);
+        body.extend_from_slice(&[0; 4]);
+        body.extend_from_slice(&pt(10.0).to_be_bytes());
+        body.extend_from_slice(&pt(10.0).to_be_bytes());
+        body.extend_from_slice(&[0, 6]);
+        body.extend_from_slice(b"nofont");
+        body.push(171);
+        body.extend(special("dvipdfmx:catch_phantom true height 20pt depth 5pt"));
+        body.extend(link("a"));
+        body.push(b'a');
+        body.extend(special("pdf:eann"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let got = links(&built);
+        assert_eq!(got.len(), 1);
+        let bp = 72.0 / 72.27;
+        let r = got[0].1;
+        let close = |a: f64, b: f64| (a - b).abs() < 2e-5;
+        assert!(close(r[2] - r[0], 5.0 * bp), "{r:?}");
+        assert!(close(r[3] - r[1], 25.0 * bp), "{r:?}");
+    }
+
     #[test]
     fn links_widen_by_phantom_moves_and_not_by_rules() {
         let mut doc = Doc::new();
