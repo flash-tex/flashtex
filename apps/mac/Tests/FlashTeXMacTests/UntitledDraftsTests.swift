@@ -112,4 +112,70 @@ final class UntitledDraftsTests: XCTestCase {
         next.untitledDrafts.directory = dir
         XCTAssertFalse(next.recoverUntitledDraft(isAlive: { _ in false }))
     }
+
+    /// Quitting with two windows (S-REVIEW MAJOR on #2442): Don't Save in A,
+    /// then A's autosave timer fires while B's question is still up (GCD's
+    /// main queue is served in the modal panel's run-loop mode). Before, the
+    /// pass wrote A's draft again after Don't Save had dropped it, and the
+    /// next launch recovered the discarded text as a crash's leftover.
+    func testDontSaveAtQuitKeepsNoDraftWhenATimerFiresWhileALaterWindowAsks() {
+        let a = untitled(), b = untitled()
+        a.updateActiveText(UntitledDocument.text + "Text A, discarded at quit.\n")
+        a.flushPendingAutosave()
+        XCTAssertNotNil(a.untitledDrafts.read(a.untitledDraftID), "kept while A is open")
+        a.updateActiveText(UntitledDocument.text + "Text A, discarded at quit, edited again.\n") // a pass is pending
+        b.updateActiveText(UntitledDocument.text + "Text B.\n")
+
+        let quit = AppDelegate.confirmQuit([a, b]) { model in
+            if model === a { return .discard }
+            a.flushPendingAutosave() // A's timer fires while B asks
+            return .discard
+        }
+        XCTAssertTrue(quit)
+        a.flushPendingAutosave() // and once more after the loop, before the app is gone
+        XCTAssertNil(a.untitledDrafts.read(a.untitledDraftID), "Don't Save in A keeps no draft of A")
+        XCTAssertTrue(UntitledDraftStore(directory: dir).leftovers(isAlive: { _ in false }).isEmpty,
+                      "the next launch recovers nothing that was discarded")
+    }
+
+    /// The same timer of a file-backed window with autosave on: Don't Save
+    /// must not write the user's file while a later window asks.
+    func testDontSaveAtQuitNeverWritesTheFileWhileALaterWindowAsks() throws {
+        EditorPreferences.shared.autosave = true
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("paper.tex")
+        try "one\n".write(to: url, atomically: true, encoding: .utf8)
+        let a = untitled(), b = untitled()
+        a.files.policy = .disabled(reason: "test: no helper binary")
+        XCTAssertEqual(a.openTex(at: url), .opened)
+        a.updateActiveText("two (discarded at quit)\n") // a pass is pending
+        b.updateActiveText(UntitledDocument.text + "Text B.\n")
+
+        let quit = AppDelegate.confirmQuit([a, b]) { model in
+            if model === a { return .discard }
+            a.flushPendingAutosave() // A's timer fires while B asks
+            return .discard
+        }
+        XCTAssertTrue(quit)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "one\n", "Don't Save wrote nothing to the file")
+    }
+
+    /// Don't Save in A, then Cancel in B (S-REVIEW MINOR on #2442): the app
+    /// stays open with A's unsaved text on screen, so A keeps its crash
+    /// draft and its autosave. Before, A's draft was already gone.
+    func testCancelInALaterWindowKeepsTheEarlierWindowsDraft() {
+        let a = untitled(), b = untitled()
+        a.updateActiveText(UntitledDocument.text + "Text A, still open.\n")
+        a.flushPendingAutosave()
+        b.updateActiveText(UntitledDocument.text + "Text B.\n")
+
+        let quit = AppDelegate.confirmQuit([a, b]) { $0 === a ? .discard : .cancel }
+        XCTAssertFalse(quit)
+        XCTAssertEqual(a.untitledDrafts.read(a.untitledDraftID)?.text, UntitledDocument.text + "Text A, still open.\n",
+                       "A is still open: its draft stays")
+        a.updateActiveText(UntitledDocument.text + "Text A, still open, edited.\n")
+        a.flushPendingAutosave()
+        XCTAssertEqual(a.untitledDrafts.read(a.untitledDraftID)?.text, UntitledDocument.text + "Text A, still open, edited.\n",
+                       "A's autosave goes on")
+    }
 }
