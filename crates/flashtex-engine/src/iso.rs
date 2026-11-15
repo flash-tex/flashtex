@@ -2567,7 +2567,15 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                 // for an `\eqno`, and misread the save stack below
                 // (`\label` in `equation`: full-100, sweep budget-d's
                 // verify mode).
-                MATH_GROUP | DISC_GROUP | MATH_CHOICE_GROUP | INSERT_GROUP => 1,
+                MATH_GROUP | DISC_GROUP | MATH_CHOICE_GROUP => 1,
+                // pdfTeX's `begin_insert_or_adjust` saves two words, the
+                // insertion number and `\vadjust pre`'s flag (pdftex.web
+                // `save_ptr := save_ptr + 2`, and `- 2` at the group's end;
+                // `show_save_groups` still reads TeX's one). With one, the
+                // flag was read as the enclosing group's restore entry
+                // (lane AUDIT-MATH: "save entry 5 of type 123" for a call
+                // replayed in a footnote)
+                INSERT_GROUP => 2,
                 VCENTER_GROUP => 2,
                 MATH_SHIFT_GROUP => {
                     let inner_mm =

@@ -650,6 +650,30 @@ fn calls_in_math_groups_compare_their_save_stack() {
 }
 
 #[test]
+fn calls_in_inserts_and_vadjusts_compare_their_save_stack() {
+    // (lane AUDIT-MATH) pdfTeX's `\\insert` and `\\vadjust` save two words
+    // below their group's boundary (the number and `\\vadjust pre`'s flag);
+    // the full verifier read one and took the flag for a restore entry of
+    // the group around them. Whether that misread failed depended on what
+    // the save stack held there before: the box group of an `\\hbox` with a
+    // character in it, as plain.tex's `\\p@renwd` leaves it, makes it fail
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "insert-group",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\f=cmr10 \\setbox0=\\hbox{\\f B}\n\
+         \\def\\measure{\\dimen0=1pt\\relax}\n\
+         \\setbox1\\vbox{\\insert100{\\measure x}\\insert100{\\measure x}\\insert100{\\measure x}}\n\
+         \\setbox1\\vbox{\\noindent\\f x\\vadjust{\\measure x}\\vadjust pre{\\measure x}\\par}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
 fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
     // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
     // assignments local (tex.web §1214), like `\globaldefs>0` makes its
