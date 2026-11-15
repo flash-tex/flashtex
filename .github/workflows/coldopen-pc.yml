@@ -69,3 +69,16 @@ jobs:
       - name: clean up
         if: always()
         run: rm -rf "$RUNNER_TEMP/coldopen"
+
+  # The job above needs a self-hosted runner. Without one it is skipped, and
+  # a run that measured nothing would end green; this job says so (#2116).
+  coldopen-not-run:
+    name: "infdesc-x2 cold open not run (no self-hosted Linux runner)"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: say that nothing ran
+        run: |
+          echo "::warning::The infdesc-x2 cold open on the PC did not run: neither FLASHTEX_SELFHOSTED_LINUX nor FLASHTEX_SELFHOSTED_MAC is 1, so no runner can take it; nothing was measured"
+          echo "The infdesc-x2 cold open on the PC did not run: neither FLASHTEX_SELFHOSTED_LINUX nor FLASHTEX_SELFHOSTED_MAC is 1, so no runner can take it; nothing was measured." >> "$GITHUB_STEP_SUMMARY"

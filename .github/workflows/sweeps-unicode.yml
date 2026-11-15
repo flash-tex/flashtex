@@ -332,6 +332,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: read
+      # the reopen step reads the pull request's file list
+      pull-requests: read
     outputs:
       # "true" when the ref predates unicode_reopen.py: the job then passes
       # without running, and the summary says "not run" (a base ref older
@@ -357,6 +361,11 @@ jobs:
           path: ${{ runner.temp }}/bin
       - name: reopen scenarios
         id: reopen
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           chmod +x "$RUNNER_TEMP"/bin/*
@@ -365,6 +374,17 @@ jobs:
           export FLASHTEX_CACHE_DIR="$RUNNER_TEMP/flashtex-cache"
           mkdir -p "$RUNNER_TEMP/reopen"
           if [[ ! -f tools/incr-bench/unicode_reopen.py ]]; then
+            # A pull request that removes or renames the script would otherwise
+            # turn this leg green without running it (#2116): red then.
+            if [[ "$EVENT" == pull_request ]]; then
+              gone=$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+                --jq '.[] | select(.status == "removed" or .status == "renamed") | (.previous_filename // .filename)' \
+                | grep -cx 'tools/incr-bench/unicode_reopen.py' || true)
+              if [[ "$gone" != 0 ]]; then
+                echo "::error::this pull request removes or renames tools/incr-bench/unicode_reopen.py: the reopen scenarios cannot run; update this workflow with it"
+                exit 1
+              fi
+            fi
             # not a failure: this ref predates the reopen scenarios (#1805)
             echo "::warning::tools/incr-bench/unicode_reopen.py is absent at this ref: the reopen scenarios are not run"
             echo "reopen scenarios: not run (no tools/incr-bench/unicode_reopen.py at this ref)" >> "$GITHUB_STEP_SUMMARY"

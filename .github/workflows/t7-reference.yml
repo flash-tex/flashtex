@@ -159,3 +159,16 @@ jobs:
           path: ${{ steps.t7.outputs.out }}
           if-no-files-found: ignore
           retention-days: 90
+
+  # The job above needs a self-hosted runner. Without one it is skipped, and
+  # a run that measured nothing would end green; this job says so (#2116).
+  t7-not-run:
+    name: "T7 reference not run (no self-hosted Mac)"
+    if: ${{ vars.FLASHTEX_SELFHOSTED_MAC != '1' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: say that nothing ran
+        run: |
+          echo "::warning::T7 reference did not run: FLASHTEX_SELFHOSTED_MAC is not 1, so no runner can take it; nothing was measured"
+          echo "T7 reference did not run: FLASHTEX_SELFHOSTED_MAC is not 1, so no runner can take it; nothing was measured." >> "$GITHUB_STEP_SUMMARY"
