@@ -331,8 +331,11 @@ final class AutosaveTests: XCTestCase {
         m.open(url: file)
         XCTAssertNil(m.openError)
         m.textChanged(base + "Hello.\n", caret: (base as NSString).length + 7)
+        // The file is written off the main actor and `saveState` becomes `.saved` when that
+        // returns to it (`finishSave`): a poll of the file alone can fall between the two
+        // ("saving" is not "saved": main's iPad job, runs 42676708285 and 42730161088).
         let end = Date().addingTimeInterval(5)
-        while (try? onDisk()) != base + "Hello.\n", Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
+        while (try? onDisk()) != base + "Hello.\n" || m.saveState != .saved, Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
         XCTAssertEqual(try onDisk(), base + "Hello.\n")
         XCTAssertEqual(m.saveState, .saved)
     }
@@ -493,7 +496,10 @@ final class AutosaveTests: XCTestCase {
         hold.signal()
         await m.settleSave()
         let end = Date().addingTimeInterval(3)
-        while (try? String(contentsOf: b, encoding: .utf8)) != "B\nedited\n", Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
+        // (the file, and the state that follows it on the main actor: see testEditsReachTheFileWithoutAnyAction)
+        while (try? String(contentsOf: b, encoding: .utf8)) != "B\nedited\n" || m.saveState != .saved, Date() < end {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
         XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "B\nedited\n")
         XCTAssertEqual(m.saveState, .saved)
         XCTAssertEqual(try onDisk(), base + "A\n")
