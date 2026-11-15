@@ -200,6 +200,56 @@ def cmd_xelatex(a, rest):
         return p.wait()
 
 
+def cmd_xsound(a, rest):
+    """Unicode mode's incremental path: tools/incr-bench/unicode.py --verify on each document (keystrokes and
+    random edits through flashtex-host-unicode, each compile compared with a from-scratch one)."""
+    import concurrent.futures
+    tier, docs = select(a)
+    cases = os.path.join(HOME, "xs-cases", a.name)
+    shutil.rmtree(cases, ignore_errors=True)
+    os.makedirs(cases)
+    out = os.path.join(HOME, "out", a.name)
+    os.makedirs(out, exist_ok=True)
+    jobs = []
+    for i, entry, src in docs:
+        job = job_name(i)
+        stage(src, entry, os.path.join(cases, job), job)
+        jobs.append((i, job))
+
+    def one(item):
+        i, job = item
+        cmd = [sys.executable, os.path.join(ROOT, "tools/incr-bench/unicode.py"), os.path.join(BIN, "flashtex-host-unicode"),
+               os.path.join(cases, job), "--doc", job, "--verify", "--at", "mid"] + (rest or ["--keys", "2", "--trials", "3"])
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=int(os.environ.get("HUNT_DOC_TIMEOUT", "1800")))
+        except subprocess.TimeoutExpired:
+            return i, None, [], "timeout"
+        lines = [json.loads(ln) for ln in r.stdout.splitlines() if ln.startswith("{")]
+        summary = lines[-1] if lines and "compiles" in lines[-1] else None
+        return i, summary, lines, (r.stderr.strip().splitlines() or [""])[-1][:300]
+
+    bad = 0
+    with open(os.path.join(out, "xsound.jsonl"), "w") as f, \
+            concurrent.futures.ThreadPoolExecutor(int(os.environ.get("HUNT_J", "2"))) as ex:
+        for i, summary, lines, err in ex.map(one, jobs):
+            for ln in lines:
+                ln["doc"] = i
+                f.write(json.dumps(ln) + "\n")
+            f.flush()
+            if summary is None:
+                bad += 1
+                log("%s: FAILED %s" % (i, err))
+                continue
+            mism = [ln for ln in lines[:-1] if ln.get("mismatch")]
+            bad += len(mism)
+            log("%s: %d compiles, %d mismatches (%d accounting only)" % (i, summary["compiles"], summary["mismatches"],
+                                                                        summary.get("accounting", 0)))
+            for m in mism:
+                log("    %s: %s" % (m.get("tag"), str(m["mismatch"])[:300]))
+    log("xsound: %d documents, %d mismatches or failures" % (len(jobs), bad))
+    return 1 if bad else 0
+
+
 def cmd_suite(a, rest):
     """tools/latex-suites at the pins of --pins, in a copy of the directory (its .cache holds the checkouts)."""
     tools = os.path.join(HOME, "tools")
@@ -247,7 +297,7 @@ def main():
         k = argv.index("--")
         argv, rest = argv[:k], argv[k + 1:]
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("parity", "sound", "xelatex", "suite"))
+    ap.add_argument("mode", choices=("parity", "sound", "xelatex", "xsound", "suite"))
     ap.add_argument("--name", help="the unit's name: its output is HUNT_HOME/out/NAME (default: the mode)")
     ap.add_argument("--manifest", help="a file under tools/parity/corpus/, or a path")
     ap.add_argument("--pins", help="suite: pins that replace PINS.txt's, as REPO:TAG:SHA, comma separated")
@@ -263,7 +313,7 @@ def main():
     if a.mode != "suite" and not a.manifest:
         ap.error("--manifest is required")
     os.makedirs(CACHE, exist_ok=True)
-    return {"parity": cmd_parity, "sound": cmd_sound, "xelatex": cmd_xelatex, "suite": cmd_suite}[a.mode](a, rest)
+    return {"parity": cmd_parity, "sound": cmd_sound, "xelatex": cmd_xelatex, "xsound": cmd_xsound, "suite": cmd_suite}[a.mode](a, rest)
 
 
 if __name__ == "__main__":
