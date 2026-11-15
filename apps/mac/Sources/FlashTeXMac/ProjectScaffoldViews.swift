@@ -51,14 +51,58 @@ final class ProjectScaffoldState {
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    /// Asks before overwriting existing template files (an NSAlert in the app).
-    @ObservationIgnored var confirmOverwrite: ([String]) -> Bool = { paths in
+    /// Asks before overwriting existing template files: tests inject an
+    /// answer; nil is the app's alert (`askOverwrite`), which names the files
+    /// open in this window.
+    @ObservationIgnored var confirmOverwrite: (([String]) -> Bool)?
+
+    private func askOverwrite(_ paths: [String], open: [String]) -> Bool {
+        if let confirmOverwrite { return confirmOverwrite(paths) }
         let alert = NSAlert()
         alert.messageText = "Replace \(paths.joined(separator: ", "))?"
-        alert.informativeText = "The folder already contains these template files. Replacing them overwrites their content; other files in the folder are left alone."
+        alert.informativeText = open.isEmpty
+            ? "The folder already contains these template files. Replacing them overwrites their content; other files in the folder are left alone."
+            : "\(open.joined(separator: ", ")) \(open.count == 1 ? "is" : "are") open in this window: replacing overwrites \(open.count == 1 ? "it" : "them") with the template. "
+                + "The current text is kept as a snapshot (File > Restore Unsaved Snapshot…). Other files in the folder are left alone."
         alert.addButton(withTitle: "Replace")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Whether `a` and `b` are the same file or folder on disk, by file
+    /// identity: APFS is case-insensitive by default, so `~/P/Thesis` is
+    /// `~/P/thesis`, which a path comparison (even with symlinks resolved)
+    /// misses. An item that is not on disk is never the same.
+    static func sameItem(_ a: URL, _ b: URL) -> Bool {
+        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard let x = (try? a.resourceValues(forKeys: key))?.fileResourceIdentifier,
+              let y = (try? b.resourceValues(forKeys: key))?.fileResourceIdentifier else { return false }
+        return x.isEqual(y)
+    }
+
+    /// The template files under `root` that are open in this window (the
+    /// entry, or an open member), by template path.
+    private func openFiles(_ paths: [String], under root: URL) -> [String] {
+        let open = openDocumentURLs()
+        return paths.filter { rel in
+            let url = root.appendingPathComponent(rel)
+            return open.contains { Self.sameItem(url, $0) }
+        }
+    }
+
+    /// Every open document's file (the entry and each member).
+    private func openDocumentURLs() -> [URL] {
+        guard let entry = model.documentURL else { return [] }
+        guard let projectRoot = model.project.projectRoot else { return [entry] }
+        let members = model.documents.map(\.path).filter { $0 != model.project.entryPath }
+        return [entry] + members.map { projectRoot.appendingPathComponent($0) }
+    }
+
+    /// Whether creating the project in `root` writes into this window's open
+    /// project: `root` is its folder, or one of the template files is open.
+    private func writesIntoOpenProject(_ root: URL, conflicts: [String]) -> Bool {
+        if let projectRoot = model.project.projectRoot, Self.sameItem(root, projectRoot) { return true }
+        return !openFiles(conflicts, under: root).isEmpty
     }
 
     @ObservationIgnored unowned let model: ShellModel
@@ -105,9 +149,42 @@ final class ProjectScaffoldState {
     func createProject(dirty: ShellModel.DirtyDisposition = .none) -> NewProjectOutcome {
         guard let folder else { note = "Choose a folder first."; return .refused("no folder") }
         var overwrite = false
-        let conflicts = ProjectScaffold.conflicts(in: folder, name: projectName.trimmingCharacters(in: .whitespacesAndNewlines), template: template)
+        var keptOpen: [String] = []
+        let name = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let conflicts = ProjectScaffold.conflicts(in: folder, name: name, template: template)
+        let root = folder.appendingPathComponent(name)
+        // New Project into the open project's own folder: nothing is written
+        // while any of its documents has unsaved edits, a template file or any
+        // other member (the open below refused only after the template had
+        // replaced main.tex). Save first saves them here, before any write; a
+        // discard is not taken over a write into the same project.
+        if model.hasUnsavedDocuments, writesIntoOpenProject(root, conflicts: conflicts) {
+            guard dirty == .saveFirst else {
+                note = "Not created: \(model.unsavedDocumentsDescription) has unsaved edits and the project would be written into its folder. "
+                    + "Save or discard them first, or choose another folder or name."
+                return .refused("open with unsaved edits")
+            }
+            if case .refused = model.authorizeProjectReplacement(.saveFirst, before: "creating the project") {
+                note = "Not created: " + (model.captureNote ?? "the unsaved edits could not be saved.")
+                return .refused("save failed")
+            }
+        }
         if !conflicts.isEmpty {
-            guard confirmOverwrite(conflicts) else { note = "Not created: \(conflicts.joined(separator: ", ")) kept."; return .cancelled }
+            // A template file that is open in this window (clean by now): its
+            // current text is kept before it is overwritten.
+            let open = openFiles(conflicts, under: root)
+            guard askOverwrite(conflicts, open: open) else { note = "Not created: \(conflicts.joined(separator: ", ")) kept."; return .cancelled }
+            for rel in open {
+                let url = root.appendingPathComponent(rel)
+                guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else { continue }
+                let snapshot = DirtySnapshot(file: url.standardizedFileURL.path, text: text, diskSha256: nil, savedAt: Date(),
+                                             reason: "its text before New Project replaced it")
+                guard model.dirtySnapshots.write(snapshot) != nil else {
+                    note = "Not created: the current text of \(rel) could not be kept (\(model.dirtySnapshots.lastError ?? "snapshot store not writable"))."
+                    return .refused("snapshot not kept")
+                }
+                keptOpen.append(rel)
+            }
             overwrite = true
         }
         switch ProjectScaffold.create(in: folder, name: projectName, template: template, overwrite: overwrite) {
@@ -120,9 +197,11 @@ final class ProjectScaffoldState {
             case .opened:
                 sheet = nil
                 opened.captureNote = "Created \(created.written.count) file\(created.written.count == 1 ? "" : "s") in \(created.root.lastPathComponent): " + created.written.joined(separator: ", ")
+                    + (keptOpen.isEmpty ? "" : "; the previous text of \(keptOpen.joined(separator: ", ")) is kept (File > Restore Unsaved Snapshot…)")
                 // The include tree is in the sidebar already (discovery); open
                 // it so every member compiles and gets a tab.
-                Task { await opened.project.openDiscoveredIncludes() }
+                // (Weak: a window closed before the task runs must not be kept or trap.)
+                Task { [weak opened] in await opened?.project.openDiscoveredIncludes() }
                 return .opened(created.entry)
             case .blockedByUnsavedEdits:
                 note = "The files were written, but the current buffer has unsaved edits. Save or discard it, then open \(created.entry.path) with ⌘O."
