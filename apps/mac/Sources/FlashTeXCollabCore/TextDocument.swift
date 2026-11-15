@@ -741,6 +741,14 @@ public final class TextDocument {
 
     /// FugueMax for a whole run (contract §2.3).
     func integrate(id: CollabID, originLeft: CollabID?, originRight: CollabID?, bytes: [UInt8]) throws {
+        // Every refusal comes before the first split: a refused insert
+        // leaves the runs as they were (#2059), so a peer cannot fragment a
+        // document with operations it knows will be refused. Raw ranks do
+        // not change when a run splits.
+        let leftRank = originLeft.map { rankOf($0) } ?? -1
+        let rightRank = originRight.map { rankOf($0) } ?? root.raw
+        if leftRank >= rightRank { throw CollabError.malformed("origins out of order") }
+        try checkRoom(bytes.count)
         var leftItem: Item? = nil
         if let l = originLeft {
             let (it, off) = lookup(l)!
@@ -758,9 +766,6 @@ public final class TextDocument {
         var cursor: Item? = leftItem.map { next($0) } ?? firstItem
         var dest = cursor
         if cursor !== rightItem {
-            let leftRank = leftItem.map { rank($0) + $0.len - 1 } ?? -1
-            let rightRank = rightItem.map { rank($0) } ?? root.raw
-            if leftRank >= rightRank { throw CollabError.malformed("origins out of order") }
             var scanning = false
             while true {
                 if !scanning { dest = cursor }
@@ -781,7 +786,6 @@ public final class TextDocument {
                 cursor = next(o)
             }
         }
-        try checkRoom(bytes.count)
         insertRun(before: dest, id: id, originLeft: originLeft, originRight: originRight, bytes: bytes)
     }
 
@@ -986,10 +990,16 @@ public final class TextDocument {
         while k < n {
             guard let (it0, off) = lookup(first.offset(k)) else { break }
             let take = min(it0.len - off, Int(n - k))
+            k += UInt64(take)
+            // Skip before splitting: a piece still visible, or one that no
+            // longer fits (§2.4a), makes no operation and must leave the
+            // runs as they were (#2059).
+            guard it0.deleted else { continue }
+            let a = UTF8Scan.byteIndex(it0.bytes, scalar: off)
+            let b = off + take == it0.len ? it0.bytes.count : UTF8Scan.byteIndex(it0.bytes, scalar: off + take)
+            guard hasRoom(b - a, local: true) else { continue }
             let it = off > 0 ? split(it0, at: off) : it0
             if it.len > take { split(it, at: take) }
-            k += UInt64(take)
-            guard it.deleted, hasRoom(it.bytes.count, local: true) else { continue }
             let bytes = it.bytes
             ops.append((it.firstID, localInsert(bytes: bytes, text: String(decoding: bytes, as: UTF8.self),
                                                 left: it, right: next(it))))
