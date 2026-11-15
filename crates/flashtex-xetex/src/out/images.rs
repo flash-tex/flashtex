@@ -276,10 +276,13 @@ mod tests {
 
     fn width(i: &Images, id: u32) -> Option<i64> {
         match &i.get(id)?.info {
-            Json::Obj(kv) => kv.iter().find(|(k, _)| k == "width").and_then(|(_, v)| match v {
-                Json::Int(n) => Some(*n),
-                _ => None,
-            }),
+            Json::Obj(kv) => kv
+                .iter()
+                .find(|(k, _)| k == "width")
+                .and_then(|(_, v)| match v {
+                    Json::Int(n) => Some(*n),
+                    _ => None,
+                }),
             _ => None,
         }
     }
@@ -327,7 +330,11 @@ mod tests {
         );
         assert_ne!(before.ctime_ns, after.ctime_ns);
         assert!(!imgs.fresh(), "the rewritten picture's entry is not fresh");
-        assert_eq!(imgs.load(path, 0, 0).unwrap(), id, "loaded again under its id");
+        assert_eq!(
+            imgs.load(path, 0, 0).unwrap(),
+            id,
+            "loaded again under its id"
+        );
         assert_eq!(width(&imgs, id), Some(2), "the new picture's data");
         assert_ne!(imgs.get(id).unwrap().key, key, "a new key");
         assert!(imgs.fresh());

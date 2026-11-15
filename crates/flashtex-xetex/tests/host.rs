@@ -2867,7 +2867,12 @@ fn a_picture_replaced_in_place_is_sent_again() {
     let id = pdf_b2
         .windows(5)
         .position(|w| w == b"/ID [")
-        .and_then(|i| pdf_b2[i..].iter().position(|&c| c == b'<').map(|k| i + k + 1))
+        .and_then(|i| {
+            pdf_b2[i..]
+                .iter()
+                .position(|&c| c == b'<')
+                .map(|k| i + k + 1)
+        })
         .expect("example-image-b.pdf's /ID");
     pdf_b2[id] = if pdf_b2[id] == b'0' { b'1' } else { b'0' };
     // (file, bytes, whether its modification time is put back)
@@ -2913,7 +2918,11 @@ fn a_picture_replaced_in_place_is_sent_again() {
     let compile = |c: &mut Client, out: &str, id: i64| -> Out {
         c.compile(&request(id, &proj, out)).unwrap();
         let (ev, done) = events(c, id);
-        assert_eq!(done.str_field("status"), Some("ok"), "compile {id}: {done:?}");
+        assert_eq!(
+            done.str_field("status"),
+            Some("ok"),
+            "compile {id}: {done:?}"
+        );
         let starts = done
             .get("starts")
             .and_then(Json::as_array)
