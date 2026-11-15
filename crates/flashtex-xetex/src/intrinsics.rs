@@ -15,7 +15,7 @@
 //! alignment state, strings, errors, mode, list tail, scanner and output as
 //! it found them, and made no glue, shape, box or sparse-register
 //! definition, no write to a `\tracing...` parameter, no `\read`,
-//! `\openin` or `\closein`, and no `\aftergroup` at its own level
+//! `\openin`, `\closein` or `\XeTeXinputencoding`, and no `\aftergroup` at its own level
 //! (`not_replayable.*` otherwise).
 //!
 //! An eligible call with a kept recording from the previous guarded call is
@@ -322,7 +322,7 @@ impl Globals {
             // which a replay does not
             18 if self.input_ptr < base => Err("ReadPast"),
             18 => return,
-            // the input files' positions are not compared
+            // the input files' positions and encodings are not compared
             16 => Err("FileInput"),
             // an `\aftergroup` token left at the call's level (or below,
             // after closing an outer group) is on the save stack after the
