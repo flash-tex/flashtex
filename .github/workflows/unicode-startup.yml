@@ -17,8 +17,23 @@ name: unicode-startup
 
 on:
   workflow_dispatch:
+  # Push runs only on main and on the lanes that measure with this workflow;
+  # any other branch gets it through its pull request (same paths) or by
+  # `gh workflow run <file> --ref <branch>`. Push runs on every feature
+  # branch were most of a 396-run queue on 2026-11-08.
   push:
-    branches-ignore: [main, "gh-readonly-queue/**"]
+    branches:
+      - main
+      - "agent/*unicode*"
+      - "agent/*unicode*/**"
+      - "agent/daniel-parent/xetex-intr*"
+    paths:
+      - ".github/workflows/unicode-startup.yml"
+      - "tools/unicode-m3/profile_startup.py"
+      - "tools/unicode-m3/identical.py"
+      - "crates/flashtex-xetex/**"
+      - "crates/font-discovery/**"
+  pull_request:
     paths:
       - ".github/workflows/unicode-startup.yml"
       - "tools/unicode-m3/profile_startup.py"

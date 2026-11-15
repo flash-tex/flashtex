@@ -84,6 +84,44 @@ import threading
 # which l3kernel's \sys_if_shell reads). `parity.py --shell-escape-flag`
 # overrides it with -shell-restricted, -no-shell-escape or -shell-escape.
 SHELL_ESCAPE = None
+# `-halt-on-error` for BOTH engines (the default). `parity.py --no-halt-on-error`
+# clears it, so a document with recoverable errors (about a quarter of arXiv's
+# e-prints: pdflatex stops at the first `! ` line, yet arXiv and every editor run
+# them in nonstopmode to the end) is measured instead of excluded. Both engines
+# then run on past each error, an exit of 1 with a PDF counts as compiled, and
+# every cache key says so. P-T1 compares the error messages and the recovery
+# like any other line.
+HALT_ON_ERROR = True
+# In every cache key made without HALT_ON_ERROR (none other carries it). 2: the
+# output PDF is removed before each pass (drop_stale_pdf).
+NO_HALT_V = 3
+
+
+def interaction_args():
+    """The interaction flags of every pass of every engine."""
+    return ["-interaction=nonstopmode"] + (["-halt-on-error"] if HALT_ON_ERROR else [])
+
+
+def drop_stale_pdf(pdf):
+    """Without HALT_ON_ERROR, remove the output PDF before a pass, so a pass that
+    exits 1 counts as compiled only with a PDF it wrote itself: a TeX Live doc
+    directory ships its document's PDF beside it (copy_dir), and a fatal error
+    (fontspec under pdfTeX) writes none. Halting passes are left as they were,
+    so their cache entries and verdicts stay valid."""
+    if not HALT_ON_ERROR and os.path.isfile(pdf):
+        os.remove(pdf)
+
+
+def error_count(log_text):
+    """The errors a run's log reports: its lines that begin with `! ` (TeX's
+    `print_err`; `! Emergency stop.` and `! ==> Fatal error` included)."""
+    return len(re.findall(r"^! ", log_text, re.M))
+
+
+def compiled_exit(code):
+    """Whether a pass's exit status is a compile: 0, or with HALT_ON_ERROR off
+    also 1 (pdfTeX's exit after `error_message_issued`), when a PDF was written."""
+    return code == 0 or (not HALT_ON_ERROR and code == 1)
 PROGRAM = "pdftex"  # the name every engine runs under (see engine_link)
 BIN_ROOT = os.path.join(tempfile.gettempdir(), "flashtex-parity-bin")
 
@@ -694,7 +732,7 @@ def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
     stem = os.path.splitext(os.path.basename(tex))[0]
     logp, pdf = os.path.join(workdir, stem + ".log"), os.path.join(workdir, stem + ".pdf")
-    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", first_line(tex, trace=True)]
+    args = interaction_args() + [f"-jobname={stem}", first_line(tex, trace=True)]
     timeout = timeout or TIMEOUT
     raw = None
     if stream:

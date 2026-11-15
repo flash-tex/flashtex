@@ -434,6 +434,7 @@ impl Why {
             2 => Why::TokenCopy,
             3 => Why::Sparse,
             4 => Why::Checkpoint,
+            5 => Why::Error,
             _ => Why::State,
         }
     }
@@ -454,6 +455,8 @@ enum Fault {
     Local,
     /// do not tell L5's read-set what a replay reads
     NoReadset,
+    /// end every list a replay makes afresh with another token
+    Token,
 }
 
 fn fault() -> Fault {
@@ -465,6 +468,7 @@ fn fault() -> Fault {
             Ok("no-ref") => Fault::NoRef,
             Ok("local") => Fault::Local,
             Ok("no-readset") => Fault::NoReadset,
+            Ok("token") => Fault::Token,
             _ => Fault::None,
         },
     )
@@ -870,7 +874,11 @@ impl Globals {
         let mut q = head;
         for i in 0..len {
             let n = self.get_avail();
-            let t = self.intr_data[at + 1 + i];
+            let mut t = self.intr_data[at + 1 + i];
+            if fault() == Fault::Token && i + 1 == len {
+                // (test only) an other character `!`, or `?` if it was one
+                t = if t == 0xc21 { 0xc3f } else { 0xc21 };
+            }
             self.mem[n as usize].set_hh_lh(t);
             self.mem[q as usize].set_hh_rh(n);
             q = n;
@@ -1705,6 +1713,18 @@ impl Globals {
                         self.geq_define(a, t, e)
                     } else {
                         self.eq_define(a, t, e)
+                    }
+                    // a macro the body defined: its definition site, as
+                    // the recorded run's `\def` noted it
+                    // (a control sequence: below `glue_base`, or above
+                    // `eqtb_size` with tex.ch's `hash_extra`)
+                    if k & 0xff == K_FRESH
+                        && !(crate::generated::consts::glue_base
+                            ..=crate::generated::consts::eqtb_size)
+                            .contains(&a)
+                        && (CALL..=LONG_OUTER_CALL).contains(&t)
+                    {
+                        self.dg_def_replayed(e);
                     }
                 }
                 K_WORD => {
