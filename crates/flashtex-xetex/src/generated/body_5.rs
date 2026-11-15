@@ -1054,6 +1054,7 @@ impl Globals {
             // §766
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3206,6 +3207,7 @@ impl Globals {
             if ((self.cur_list.mode_field == mmode) && ((self.cur_list.tail_field != self.cur_list.head_field) || (self.cur_list.aux_field.int() != (268435455i32).wrapping_neg()))) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -3275,6 +3277,7 @@ impl Globals {
                                         } else {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -3325,6 +3328,7 @@ impl Globals {
                                     if (self.cur_cmd == mac_param) {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -3503,6 +3507,7 @@ impl Globals {
                     // §840
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -4046,6 +4051,7 @@ impl Globals {
                     // §1261
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -4069,6 +4075,7 @@ impl Globals {
                         if (self.cur_cmd != math_shift) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -4184,6 +4191,7 @@ impl Globals {
                     self.end_diagnostic(true);
                 }
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {

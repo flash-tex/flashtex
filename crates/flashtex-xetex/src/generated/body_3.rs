@@ -107,6 +107,7 @@ impl Globals {
     // §442
     pub fn mu_error(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -156,6 +157,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > char_class_limit)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -183,6 +185,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > char_class_limit)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -210,6 +213,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 255i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -237,6 +241,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > biggest_usv)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -264,6 +269,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > biggest_char)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -295,6 +301,7 @@ impl Globals {
                 if (self.cur_val != active_math_char) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -318,6 +325,7 @@ impl Globals {
             if (self.math_char_field(self.cur_val) > biggest_usv) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -348,6 +356,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 7i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -377,6 +386,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 255i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -406,6 +416,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 15i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -433,6 +444,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 32767i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -460,6 +472,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 134217727i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -487,6 +500,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > self.max_reg_num)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -518,6 +532,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || ((self.cur_val > 15i32) && (self.cur_val != 18i32))) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -589,6 +604,7 @@ impl Globals {
                 } else {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -662,6 +678,7 @@ impl Globals {
         if (self.cur_val == self.fmem_ptr) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -720,6 +737,7 @@ impl Globals {
                                         if (((self.math_class_field(self.cur_val1) > 7i32) || (self.math_fam_field(self.cur_val1) > 15i32)) || (self.math_char_field(self.cur_val1) > 255i32)) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -752,6 +770,7 @@ impl Globals {
                                         if (self.cur_val1 >= 1073741824i32) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -827,6 +846,7 @@ impl Globals {
                                     if (m == 5664041i32) {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -858,6 +878,7 @@ impl Globals {
                                         } else {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -889,6 +910,7 @@ impl Globals {
                         if (level != tok_val) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -994,6 +1016,7 @@ impl Globals {
                         if ((self.cur_list.mode_field).wrapping_abs() != m) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -1349,6 +1372,7 @@ impl Globals {
                                                             if ((n < 1i32) || (n > 4i32)) {
                                                                 {
                                                                     {
+                                                                        self.dg_mark();
                                                                         if (self.interaction == error_stop_mode) {
                                                                         }
                                                                         if self.file_line_error_style_p {
@@ -2000,6 +2024,7 @@ impl Globals {
                         // §462
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -2150,6 +2175,7 @@ impl Globals {
                     if (self.cur_val > biggest_usv) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -2258,6 +2284,7 @@ impl Globals {
                                                 if OK_so_far {
                                                     {
                                                         {
+                                                            self.dg_mark();
                                                             if (self.interaction == error_stop_mode) {
                                                             }
                                                             if self.file_line_error_style_p {
@@ -2290,6 +2317,7 @@ impl Globals {
                                 // §480
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -2499,6 +2527,7 @@ impl Globals {
                                                             if (self.cur_order == filll) {
                                                                 {
                                                                     {
+                                                                        self.dg_mark();
                                                                         if (self.interaction == error_stop_mode) {
                                                                         }
                                                                         if self.file_line_error_style_p {
@@ -2591,6 +2620,7 @@ impl Globals {
                                     } else {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -2681,6 +2711,7 @@ impl Globals {
                                                                 // §494
                                                                 {
                                                                     {
+                                                                        self.dg_mark();
                                                                         if (self.interaction == error_stop_mode) {
                                                                         }
                                                                         if self.file_line_error_style_p {
@@ -2748,6 +2779,7 @@ impl Globals {
             // §495
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3197,6 +3229,7 @@ impl Globals {
                                             if (self.cur_tok != 25165865i32) {
                                                 {
                                                     {
+                                                        self.dg_mark();
                                                         if (self.interaction == error_stop_mode) {
                                                         }
                                                         if self.file_line_error_style_p {
@@ -3405,6 +3438,7 @@ impl Globals {
                     if b {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -4166,6 +4200,7 @@ impl Globals {
                             if (self.cur_val < 0i32) {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -4194,6 +4229,7 @@ impl Globals {
                             if (self.cur_val < 0i32) {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -4274,6 +4310,7 @@ impl Globals {
                     if ((((self.cur_val < left_brace) || (self.cur_val > active_char)) || (self.cur_val == out_param)) || (self.cur_val == ignore)) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -4581,6 +4618,7 @@ impl Globals {
                                                 if (t == 25165881i32) {
                                                     {
                                                         {
+                                                            self.dg_mark();
                                                             if (self.interaction == error_stop_mode) {
                                                             }
                                                             if self.file_line_error_style_p {
@@ -4604,6 +4642,7 @@ impl Globals {
                                                         if (self.cur_tok != t) {
                                                             {
                                                                 {
+                                                                    self.dg_mark();
                                                                     if (self.interaction == error_stop_mode) {
                                                                     }
                                                                     if self.file_line_error_style_p {
@@ -4648,6 +4687,7 @@ impl Globals {
                             // §510
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -4744,6 +4784,7 @@ impl Globals {
                                         if ((self.cur_tok <= zero_token) || (self.cur_tok > t)) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -4878,6 +4919,7 @@ impl Globals {
                                         {
                                             self.runaway();
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -5152,6 +5194,7 @@ impl Globals {
                             } else {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -5334,6 +5377,7 @@ impl Globals {
                                 // §407
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -5504,6 +5548,7 @@ impl Globals {
                                     break 'l_common_ending_f;
                                 }
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -6356,6 +6401,7 @@ impl Globals {
         }
         if (s == 66169i32) {
             {
+                self.dg_mark();
                 if (self.interaction == error_stop_mode) {
                 }
                 if self.file_line_error_style_p {
@@ -6367,6 +6413,7 @@ impl Globals {
             }
         } else {
             {
+                self.dg_mark();
                 if (self.interaction == error_stop_mode) {
                 }
                 if self.file_line_error_style_p {

@@ -782,11 +782,11 @@ impl Globals {
             .collect()
     }
 
-    fn native_font_of(&self, p: i32) -> i32 {
+    pub(crate) fn native_font_of(&self, p: i32) -> i32 {
         self.mem[(p + 4) as usize].qqqq_b1()
     }
 
-    fn glyph_info_of(&self, p: i32) -> Option<Arc<GlyphInfo>> {
+    pub(crate) fn glyph_info_of(&self, p: i32) -> Option<Arc<GlyphInfo>> {
         self.host
             .handles
             .glyph_info(self.mem[(p + 5) as usize].int())

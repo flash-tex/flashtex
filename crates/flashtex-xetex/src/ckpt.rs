@@ -122,6 +122,9 @@ flashtex_engine::codec_struct!(Record {
     files,
     terminal,
     terminal_len,
+    notes,
+    notes_len,
+    sites,
     run,
     effects,
     engines
@@ -137,6 +140,14 @@ pub struct Record {
     /// starts with them: `restore_record`'s `base`).
     pub terminal: Vec<u8>,
     pub terminal_len: usize,
+    /// The diagnostics side channel's notes (`crate::diag`), as the
+    /// terminal: S₀ keeps them, a page checkpoint their number only (the
+    /// last run's notes start with them: `restore_record`'s `notes`).
+    pub notes: crate::diag::KeptNotes,
+    pub notes_len: usize,
+    /// S₀: the definition sites so far (`crate::diag`), for a persisted
+    /// S₀'s traces.
+    pub sites: Option<crate::diag::Sites>,
     pub run: RunState,
     /// `flashtex_engine::system::external_effects_len()`.
     pub effects: usize,
@@ -340,6 +351,13 @@ impl Globals {
                 vec![]
             },
             terminal_len: self.term_out.captured_bytes().len(),
+            notes: crate::diag::KeptNotes(if keep {
+                self.host.diag.notes_from(0)
+            } else {
+                vec![]
+            }),
+            notes_len: self.host.diag.len(),
+            sites: keep.then(|| self.host.diag.sites()),
             run: RunState::of(self),
             effects: flashtex_engine::system::external_effects_len(),
             engines,
@@ -347,8 +365,22 @@ impl Globals {
     }
 
     /// Put the state outside the word space back as `rec` has it; a record
-    /// that kept only its terminal's length takes that much of `base`.
-    pub fn restore_record(&mut self, rec: &Record, base: Option<&[u8]>) -> Result<(), String> {
+    /// that kept only its terminal's length takes that much of `base`, and
+    /// only its notes' number that many of `notes`.
+    pub fn restore_record(
+        &mut self,
+        rec: &Record,
+        base: Option<&[u8]>,
+        notes: Option<&[std::sync::Arc<flashtex_engine::diag::Note>]>,
+    ) -> Result<(), String> {
+        let kept_notes = if rec.notes.0.len() == rec.notes_len {
+            rec.notes.0.clone()
+        } else {
+            match notes.and_then(|n| n.get(..rec.notes_len)) {
+                Some(n) => n.to_vec(),
+                None => return Err("the notes before the checkpoint are not kept".into()),
+            }
+        };
         let mut v = RestoreFiles {
             snaps: &rec.files,
             i: 0,
@@ -367,6 +399,14 @@ impl Globals {
             }
         };
         self.term_out.set_captured(terminal);
+        self.host.diag.set_notes(kept_notes);
+        if let Some(sites) = &rec.sites {
+            // (a new engine, S₀ opened from its file: an engine that took
+            // S₀ itself has every site since)
+            if self.host.diag.no_sites() {
+                self.host.diag.set_sites(sites);
+            }
+        }
         rec.run.put(self);
         for (h, st) in &rec.engines {
             if let Some(e) = self.layout_engine(*h) {
@@ -886,7 +926,7 @@ mod tests {
         shape(&g.layout_engine(h).unwrap(), "office");
         let shaped = g.layout_engine(h).unwrap().shaping_state();
         assert_ne!(shaped, unshaped);
-        g.restore_record(&rec, None).unwrap();
+        g.restore_record(&rec, None, None).unwrap();
         assert_eq!(g.layout_engine(h).unwrap().shaping_state(), unshaped);
     }
 }

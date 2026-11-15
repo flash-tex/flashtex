@@ -97,6 +97,9 @@ pub struct Old {
     /// its page checkpoints), and its terminal.
     pub old_files: std::collections::HashMap<String, Arc<Vec<u8>>>,
     pub old_terminal: Arc<Vec<u8>>,
+    /// The old run's diagnostics notes (`crate::diag`), at their offsets
+    /// in `old_terminal`.
+    pub old_notes: Arc<Vec<Arc<flashtex_engine::diag::Note>>>,
     /// Where the jump went: (the claim's page, the page it went on from).
     pub jumped: Option<(usize, usize)>,
     /// Why the claim's jump was not made, if it was not.
@@ -415,6 +418,7 @@ impl Globals {
             contents.push((p.clone(), v));
         }
         let term_delta = new_rec.terminal_len as i64 - op.rec.terminal_len as i64;
+        let notes_delta = new_rec.notes_len as i64 - op.rec.notes_len as i64;
         let reads_delta = (
             new_reads.0 as i64 - op.reads.0 as i64,
             new_reads.1 as i64 - op.reads.1 as i64,
@@ -446,6 +450,7 @@ impl Globals {
                 }
             }
             r.terminal_len = (r.terminal_len as i64 + term_delta) as usize;
+            r.notes_len = (r.notes_len as i64 + notes_delta) as usize;
             Ok(r)
         };
         let shift = |n: usize, d: i64| (n as i64 + d) as usize;
@@ -484,6 +489,19 @@ impl Globals {
             return Err("the terminal is not as the records say".into());
         }
         term.extend_from_slice(&c.old_terminal[op.rec.terminal_len..]);
+        // the notes likewise: this run's so far, then the old run's from the
+        // convergence point on, moved as the terminal is
+        if self.host.diag.len() != new_rec.notes_len
+            || c.old_notes.len() < op.rec.notes_len
+            || c.old_notes.len() < l.rec.notes_len
+        {
+            return Err("the notes are not as the records say".into());
+        }
+        let mut notes = self.host.diag.notes_from(0);
+        notes.extend(crate::diag::shifted(
+            &c.old_notes[op.rec.notes_len..],
+            term_delta,
+        ));
         let jo = c.journal.as_ref().ok_or("no journal of the old run")?;
         if flashtex_engine::system::reads_len() != new_reads
             || jo.files.len() < l.reads.0
@@ -535,7 +553,7 @@ impl Globals {
         if let Err(e) = self.restore(l_id) {
             fail("restore", e);
         }
-        if let Err(e) = self.restore_record(&l_rec, Some(&term)) {
+        if let Err(e) = self.restore_record(&l_rec, Some(&term), Some(&notes)) {
             fail("restore the files", e);
         }
         let mut jn = flashtex_engine::system::record_reads_into(None).unwrap_or_default();
