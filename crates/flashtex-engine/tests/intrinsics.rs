@@ -45,9 +45,9 @@ fn run_line(dir: &Path, mode: &str, names: &str, etex: bool, line: &str) -> Run 
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
         .args(if etex {
-            &["-ini", "-etex", line][..]
+            vec!["-ini", "-etex", line]
         } else {
-            &["-ini", line][..]
+            vec!["-ini", line]
         })
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
