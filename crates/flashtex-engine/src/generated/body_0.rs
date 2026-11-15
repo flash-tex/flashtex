@@ -1601,6 +1601,9 @@ impl Globals {
     pub fn print_cs(&mut self, mut p: i32) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
+        if self.bm_rec_on {
+            self.flashtex_bm_print_cs(p);
+        }
         if (p < hash_base) {
             if (p >= single_base) {
                 if (p == null_cs) {
@@ -1649,6 +1652,9 @@ impl Globals {
     /// @<Basic printing procedures
     // §285
     pub fn sprint_cs(&mut self, mut p: halfword) {
+        if self.bm_rec_on {
+            self.flashtex_bm_print_cs(p);
+        }
         if (p < hash_base) {
             if (p < single_base) {
                 self.print((p).wrapping_sub(1i32));
