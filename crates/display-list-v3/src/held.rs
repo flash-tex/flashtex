@@ -118,11 +118,14 @@ impl Model {
             Event::Font(f) => {
                 self.fonts.insert(f.id, f.key);
             }
-            Event::Image(j) => {
-                let id = j.int_field("id").unwrap_or(-1) as u32;
-                let key = j.str_field("key").unwrap_or("").to_string();
-                self.images.insert(id, key);
-            }
+            Event::Image(j) => match (j.int_field("id"), j.str_field("key")) {
+                (Some(id), Some(key)) if (0..=u32::MAX as i64).contains(&id) => {
+                    self.images.insert(id as u32, key.to_string());
+                }
+                _ => self
+                    .violations
+                    .push(format!("IMAGE without a valid id and key: {j}")),
+            },
             Event::Sources(s) => {
                 for (i, p) in s.files {
                     self.files.insert(i, p);
@@ -160,9 +163,18 @@ impl Model {
             Event::Done(d) => {
                 self.pay("DONE");
                 if d.str_field("status") != Some("cancelled") {
-                    let n = d.int_field("pages").unwrap_or(0) as usize;
-                    self.count = n;
-                    self.pages.retain(|&i, _| (i as usize) < n);
+                    // a DONE without `pages` (an engine that died) says
+                    // nothing of the document: the pages held stay
+                    match d.int_field("pages") {
+                        Some(n) if n >= 0 => {
+                            let n = n as usize;
+                            self.count = n;
+                            self.pages.retain(|&i, _| (i as usize) < n);
+                        }
+                        _ => self
+                            .violations
+                            .push(format!("DONE without a page count: {d}")),
+                    }
                 }
                 return Some(d);
             }

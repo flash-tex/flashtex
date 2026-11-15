@@ -299,3 +299,34 @@ fn verdict_requires_ok_and_pages() {
     assert!(bad.iter().any(|b| b == "client: no DONE"), "{bad:?}");
     assert!(bad.iter().any(|b| b == "scratch: no DONE"), "{bad:?}");
 }
+
+#[test]
+fn held_model_records_an_image_without_id_or_key() {
+    // S-REVIEW NIT 7 on #2397: was bound as id u32::MAX / key "" silently
+    let mut m = Model::default();
+    m.apply(Event::Image(obj([("key", s("ab"))])));
+    m.apply(Event::Image(obj([("id", Json::Int(0))])));
+    assert_eq!(m.violations.len(), 2, "{:?}", m.violations);
+    assert!(m.images.is_empty());
+    m.apply(Event::Image(obj([("id", Json::Int(0)), ("key", s("ab"))])));
+    assert_eq!(m.images.get(&0).map(String::as_str), Some("ab"));
+}
+
+#[test]
+fn held_model_keeps_its_pages_on_a_done_without_pages() {
+    // S-REVIEW MINOR 5 on #2397: a DONE without `pages` dropped every page
+    let mut m = Model::default();
+    m.apply(Event::Page(Page::new(StreamKind::Page, 0)));
+    m.apply(Event::Done(obj([
+        ("id", Json::Int(1)),
+        ("status", s("ok")),
+        ("pages", Json::Int(1)),
+    ])));
+    assert_eq!((m.count, m.pages.len()), (1, 1));
+    m.apply(Event::Done(obj([
+        ("id", Json::Int(2)),
+        ("status", s("failed")),
+    ])));
+    assert_eq!((m.count, m.pages.len()), (1, 1));
+    assert_eq!(m.violations.len(), 1, "{:?}", m.violations);
+}
