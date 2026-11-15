@@ -795,7 +795,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let Some(v) = self.doc.fonts.vfs.get(vf).cloned() else {
             return;
         };
-        let name = String::from_utf8_lossy(&v.name).into_owned();
+        let msg = |what: std::fmt::Arguments| {
+            format!("virtual font {}: {what}", String::from_utf8_lossy(&v.name))
+        };
         let ptsize = v.ptsize;
         // dvi_vf_init: the state is pushed, w, x, y and z are zero, and
         // the font is the first the VF file defines (none if it has none)
@@ -817,17 +819,16 @@ impl<'a, M: Metrics> Builder<'a, M> {
         }
         self.font = v.dev.first().map(|d| FontRef::Located(d.1));
         match v.vf.packet(ch) {
-            None => self.doc.diag(format!(
-                "virtual font {name}: char=0x{ch:x}({ch}): Tried to set a nonexistent character in a virtual font"
-            )),
+            None => self.doc.diag(msg(format_args!(
+                "char=0x{ch:x}({ch}): Tried to set a nonexistent character in a virtual font"
+            ))),
             Some(packet) => {
                 let mut p = Packet::new(&packet);
                 while let Some(cmd) = p.next() {
                     let cmd = match cmd {
                         Ok(c) => c,
                         Err(e) => {
-                            self.cur()
-                                .unsupported(format!("virtual font {name}: {e}"), None);
+                            self.cur().unsupported(msg(format_args!("{e}")), None);
                             break;
                         }
                     };
@@ -877,7 +878,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
                             Some(d) => self.font = Some(FontRef::Located(d.1)),
                             None => self
                                 .doc
-                                .diag(format!("virtual font {name}: Font_id: {id} not found in VF")),
+                                .diag(msg(format_args!("Font_id: {id} not found in VF"))),
                         },
                         // vf_xxx
                         Cmd::Special(s) => {
@@ -885,13 +886,13 @@ impl<'a, M: Metrics> Builder<'a, M> {
                                 self.special(s);
                             }
                         }
-                        Cmd::BadSpecial(len) => self.doc.diag(format!(
-                            "virtual font {name}: VF: Special with {len} bytes???"
-                        )),
+                        Cmd::BadSpecial(len) => self
+                            .doc
+                            .diag(msg(format_args!("VF: Special with {len} bytes???"))),
                         // pTeX's vertical writing
                         Cmd::Dir(0) => {}
                         Cmd::Dir(d) => self.cur().unsupported(
-                            format!("virtual font {name}: direction {d} (vertical writing)"),
+                            msg(format_args!("direction {d} (vertical writing)")),
                             None,
                         ),
                     }
