@@ -55,22 +55,26 @@ impl two_halves {
     #[inline(always)]
     pub fn from_bits(v: u64) -> Self { two_halves(v as u64) }
     #[inline(always)]
-    pub fn rh(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
+    pub fn rh(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 0 } else { 4 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_rh(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 0 } else { 4 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u32) } }
     #[inline(always)]
-    pub fn lh(&self) -> i32 { ((self.0 >> 32) & 4294967295) as u32 as i32 }
+    pub fn lh(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 4 } else { 0 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_lh(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 4 } else { 0 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u32) } }
     #[inline(always)]
-    pub fn b1(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
+    pub fn b1(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_b1(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn b0(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
+    pub fn b0(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_b0(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
@@ -88,22 +92,26 @@ impl four_quarters {
     #[inline(always)]
     pub fn from_bits(v: u64) -> Self { four_quarters(v as u64) }
     #[inline(always)]
-    pub fn b0(&self) -> i32 { ((self.0 >> 0) & 65535) as i32 }
+    pub fn b0(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 0 } else { 6 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_b0(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 0 } else { 6 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn b1(&self) -> i32 { ((self.0 >> 16) & 65535) as i32 }
+    pub fn b1(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 2 } else { 4 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_b1(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 2 } else { 4 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn b2(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
+    pub fn b2(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_b2(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn b3(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
+    pub fn b3(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_b3(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
@@ -129,7 +137,8 @@ impl memory_word {
     #[inline(always)]
     pub fn from_bits(v: u64) -> Self { memory_word(v as u64) }
     #[inline(always)]
-    pub fn int(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
+    pub fn int(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 0 } else { 4 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_int(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 0 } else { 4 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u32) } }
@@ -138,42 +147,50 @@ impl memory_word {
     #[inline(always)]
     pub fn set_gr(&mut self, v: f64) { self.0 = v.to_bits().rotate_right(32) as u64; }
     #[inline(always)]
-    pub fn hh_rh(&self) -> i32 { ((self.0 >> 0) & 4294967295) as u32 as i32 }
+    pub fn hh_rh(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 0 } else { 4 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_hh_rh(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 0 } else { 4 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u32) } }
     #[inline(always)]
-    pub fn hh_lh(&self) -> i32 { ((self.0 >> 32) & 4294967295) as u32 as i32 }
+    pub fn hh_lh(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 4 } else { 0 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_hh_lh(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 4 } else { 0 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u32; // SAFETY: the field is bytes k..k+4 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u32) } }
     #[inline(always)]
-    pub fn hh_b1(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
+    pub fn hh_b1(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_hh_b1(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn hh_b0(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
+    pub fn hh_b0(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_hh_b0(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn qqqq_b0(&self) -> i32 { ((self.0 >> 0) & 65535) as i32 }
+    pub fn qqqq_b0(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 0 } else { 6 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_qqqq_b0(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 0 } else { 6 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn qqqq_b1(&self) -> i32 { ((self.0 >> 16) & 65535) as i32 }
+    pub fn qqqq_b1(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 2 } else { 4 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_qqqq_b1(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 2 } else { 4 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn qqqq_b2(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
+    pub fn qqqq_b2(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_qqqq_b2(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 4 } else { 2 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
     #[inline(always)]
-    pub fn qqqq_b3(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
+    pub fn qqqq_b3(&self) -> i32 { ({ let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows.
+        unsafe { p.read_unaligned() } }) as i32 }
     #[inline(always)]
     pub fn set_qqqq_b3(&mut self, v: i32) { let k = if cfg!(target_endian = "little") { 6 } else { 0 }; let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut u16; // SAFETY: the field is bytes k..k+2 of this record, which `self` borrows mutably.
         unsafe { p.write_unaligned(v as u16) } }
