@@ -804,6 +804,186 @@ pub fn metrics(
     Ok(cd)
 }
 
+/// t1_char.c's `put_numbers`: Type 2 operands (16.16 fixed for a value
+/// more than 3e-5 from an integer).
+fn put_numbers(args: &[f64], out: &mut Vec<u8>) -> Result<(), Fatal> {
+    for &value in args {
+        let ivalue = (value + 0.5).floor() as i32;
+        if value >= 32768.0 || value <= -32769.0 {
+            return Err("Argument value too large. (This is bug)".into());
+        } else if (value - ivalue as f64).abs() > 3.0e-5 {
+            let m = value.floor() as i32;
+            let f = ((value - m as f64) * 65536.0) as i32;
+            out.extend_from_slice(&[255, (m >> 8) as u8, m as u8, (f >> 8) as u8, f as u8]);
+        } else if (-107..=107).contains(&ivalue) {
+            out.push((ivalue + 139) as u8);
+        } else if (108..=1131).contains(&ivalue) {
+            let v = 0xf700 + ivalue - 108;
+            out.extend_from_slice(&[(v >> 8) as u8, v as u8]);
+        } else if (-1131..=-108).contains(&ivalue) {
+            let v = 0xfb00 - ivalue - 108;
+            out.extend_from_slice(&[(v >> 8) as u8, v as u8]);
+        } else {
+            out.extend_from_slice(&[28, (ivalue >> 8) as u8, ivalue as u8]);
+        }
+    }
+    Ok(())
+}
+
+const T2_HSTEMHM: u8 = 18;
+const T2_HINTMASK: u8 = 19;
+const T2_VSTEMHM: u8 = 23;
+
+/// `t1char_encode_charpath`: the glyph (after `do_postproc`, its stems
+/// sorted) as a Type 2 charstring.
+fn encode(
+    cd: &Glyph,
+    default_width: f64,
+    nominal_width: f64,
+    warn: &mut Vec<String>,
+) -> Result<Vec<u8>, Fatal> {
+    let mut out = Vec::new();
+    if cd.sbw[2] != default_width {
+        put_numbers(&[cd.sbw[2] - nominal_width], &mut out)?;
+    }
+    let hm = cd.flags & FLAG_USE_HINTMASK != 0;
+    let stems = &cd.stems;
+    let n = stems.len();
+    let first = cd.path.first().map(|p| p.ty);
+    let mut num_h = 0;
+    let mut reset = true;
+    let mut i = 0;
+    while i < n && stems[i].horizontal {
+        num_h += 1;
+        let pos = if reset {
+            stems[i].pos
+        } else {
+            stems[i].pos - (stems[i - 1].pos + stems[i - 1].del)
+        };
+        put_numbers(&[pos, stems[i].del], &mut out)?;
+        reset = false;
+        if 2 * num_h > CS_ARG_STACK_MAX - 3 {
+            out.push(if hm { T2_HSTEMHM } else { HSTEM as u8 });
+            reset = true;
+        }
+        i += 1;
+    }
+    if !reset {
+        out.push(if hm { T2_HSTEMHM } else { HSTEM as u8 });
+    }
+    reset = true;
+    if n > num_h {
+        let mut num_v = 0;
+        for i in num_h..n {
+            num_v += 1;
+            let pos = if reset {
+                stems[i].pos
+            } else {
+                stems[i].pos - (stems[i - 1].pos + stems[i - 1].del)
+            };
+            put_numbers(&[pos, stems[i].del], &mut out)?;
+            reset = false;
+            if 2 * num_v > CS_ARG_STACK_MAX - 3 {
+                out.push(if hm { T2_VSTEMHM } else { VSTEM as u8 });
+                reset = true;
+            }
+        }
+        if !reset {
+            if hm || cd.flags & FLAG_USE_CNTRMASK != 0 {
+                // the vstem operator may be left out when a hintmask or
+                // cntrmask follows the declarations directly
+                if first != Some(CS_HINT_DECL) && first != Some(CNTRMASK) {
+                    out.push(T2_VSTEMHM);
+                }
+            } else {
+                out.push(VSTEM as u8);
+            }
+        }
+    }
+    let index_of = |id: f64| {
+        stems
+            .iter()
+            .position(|s| s.id == id as usize)
+            .unwrap_or(0)
+    };
+    let mask_len = n.div_ceil(8);
+    let mut k = 0;
+    while k < cd.path.len() {
+        let p = &cd.path[k];
+        match p.ty {
+            CS_HINT_DECL => {
+                let mut mask = vec![0u8; mask_len];
+                while k < cd.path.len() && cd.path[k].ty == CS_HINT_DECL {
+                    let i = index_of(cd.path[k].args[0]);
+                    mask[i / 8] |= 1 << (7 - i % 8);
+                    k += 1;
+                }
+                if hm {
+                    out.push(T2_HINTMASK);
+                    out.extend_from_slice(&mask);
+                }
+            }
+            CNTRMASK => {
+                let mut mask = vec![0u8; mask_len];
+                for &a in &p.args {
+                    let i = index_of(a);
+                    mask[i / 8] |= 1 << (7 - i % 8);
+                }
+                out.push(CNTRMASK as u8);
+                out.extend_from_slice(&mask);
+                k += 1;
+            }
+            RMOVETO | HMOVETO | VMOVETO | RLINETO | HLINETO | VLINETO | RRCURVETO | HVCURVETO
+            | VHCURVETO | RLINECURVE | RCURVELINE => {
+                put_numbers(&p.args, &mut out)?;
+                out.push(p.ty as u8);
+                k += 1;
+            }
+            FLEX | HFLEX | HFLEX1 => {
+                put_numbers(&p.args, &mut out)?;
+                out.extend_from_slice(&[ESCAPE, (p.ty - 1000) as u8]);
+                k += 1;
+            }
+            t => return Err(format!("Unknown Type 2 charstring command: {t}")),
+        }
+    }
+    if let Some(s) = cd.seac.filter(|_| cd.flags & FLAG_USE_SEAC != 0) {
+        put_numbers(
+            &[s.adx, s.ady, s.bchar as f64, s.achar as f64],
+            &mut out,
+        )?;
+        warn.push(
+            "Obsolete four arguments of \"endchar\" will be used for Type 1 \"seac\" operator."
+                .into(),
+        );
+    }
+    out.push(ENDCHAR as u8);
+    Ok(out)
+}
+
+/// `t1char_convert_charstring`: the charstring as Type 2 (Subrs and
+/// OtherSubrs resolved, the width relative to `nominal_width` and left out
+/// when it is `default_width`), with the glyph's metrics.
+pub fn convert(
+    cs: &[u8],
+    subr: &dyn Fn(usize) -> Option<Vec<u8>>,
+    nsubrs: usize,
+    default_width: f64,
+    nominal_width: f64,
+    warn: &mut Vec<String>,
+) -> Result<(Vec<u8>, Glyph), Fatal> {
+    let mut cd = metrics(cs, subr, nsubrs, warn)?;
+    // SORT_STEMS: horizontal first, then by position and width
+    cd.stems.sort_by(|a, b| {
+        b.horizontal
+            .cmp(&a.horizontal)
+            .then(a.pos.partial_cmp(&b.pos).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.del.partial_cmp(&b.del).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    let out = encode(&cd, default_width, nominal_width, warn)?;
+    Ok((out, cd))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
