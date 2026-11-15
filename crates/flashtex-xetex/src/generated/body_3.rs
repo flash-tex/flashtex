@@ -5396,7 +5396,7 @@ impl Globals {
                             self.flush_list(n);
                             if self.intr_rec_on {
                                 {
-                                    self.flashtex_intr_hw(3i32, m);
+                                    self.flashtex_intr_hw(2i32, m);
                                     self.flashtex_intr_lookup(self.cur_cs);
                                 }
                             }
