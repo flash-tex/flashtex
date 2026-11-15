@@ -839,6 +839,7 @@ impl FormatCache {
         self.cnf_paths = command_progname(&command)
             .map(|p| user_cnf_paths(r, p))
             .unwrap_or_default();
+        self.cnf_paths.clear(); // VARIANT: without the #2327 fix
         let (v, m) = self.validate(&slot, &engine, &command, progname, r);
         if let (Validity::Valid { refresh }, Some(m)) = (&v, &m) {
             if *refresh {
