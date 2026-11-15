@@ -2847,6 +2847,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// #1559: another program's write within the file's time tick, to the
+    /// same length, after the host's (or between the host's write and its
+    /// signature) leaves the stat fields the host's copy was signed with.
+    /// The next edit applies to the file as it is, not to the stale copy;
+    /// and once the tick has passed, the copy is signed again without the
+    /// bytes being compared at every edit.
+    #[test]
+    fn an_edit_applies_to_another_program_s_write_within_the_tick() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        let dir = std::env::temp_dir().join(format!("ftx-apply-racy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("m.tex");
+        let edit = |at: i64, ins: &str| {
+            obj([(
+                "edits",
+                Json::Arr(vec![obj([
+                    ("path", js("m.tex")),
+                    ("offset", Json::Int(at)),
+                    ("delete", Json::Int(0)),
+                    ("insert", js(ins)),
+                ])]),
+            )])
+        };
+        std::fs::write(&path, "one two three\n").unwrap();
+        let mut written = super::Written::new();
+        super::apply_changes(&dir, &edit(3, "!"), &mut written).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"one! two three\n");
+        // Another program writes the same length; the signature the host
+        // took is put back over the file's (what a write within the tick
+        // leaves: the same fields, and racy).
+        std::fs::write(&path, "ONE! TWO THREE\n").unwrap();
+        let s = crate::system::StatSig::of(&path.to_string_lossy()).unwrap();
+        assert!(s.racy, "just written");
+        let (_, copy) = written.remove(&path).unwrap();
+        written.insert(path.clone(), (s, copy));
+        super::apply_changes(&dir, &edit(0, "<"), &mut written).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"<ONE! TWO THREE\n",
+            "the edit applied to the host's stale copy"
+        );
+        let (_, held) = written.get(&path).unwrap();
+        assert_eq!(held.as_slice(), b"<ONE! TWO THREE\n");
+        // Under a signature taken after the tick the bytes are not compared
+        // (the cost of an edit): a copy put in its place is used as it is,
+        // and only the edit's bytes are written.
+        let (mut s, copy) = written.remove(&path).unwrap();
+        s.racy = false;
+        let stale = b"<one! two three\n".to_vec();
+        assert_eq!(stale.len(), copy.len());
+        written.insert(path.clone(), (s, std::sync::Arc::new(stale)));
+        super::apply_changes(&dir, &edit(16, ">"), &mut written).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"<ONE! TWO THREE\n>");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Edits that shrink, grow and keep a file, near and across the cut's
     /// 16 KB boundaries (`CUT_ALIGN`), leave it holding exactly the edited
     /// text, and the host's copy (`written`) the same bytes.
