@@ -1,0 +1,15 @@
+% d08-beamer-fontspec-nav: beamer with fontspec, Madrid's footline, frame breaks across slides, vertical navigation symbols, slide-navigation links
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Madrid}
+\usepackage{fontspec}
+\usepackage{pgffor}
+\setbeamertemplate{navigation symbols}[vertical]
+\title{Nav}\author{A}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\section{S}
+\begin{frame}[allowframebreaks]{Long}
+\foreach \i in {1,...,30} {Line \i.\par}
+\end{frame}
+\begin{frame}{Last}\hyperlinkslideprev{prev} \hyperlinkslidenext{next} \hyperlinkframestart{start} \hyperlinkpresentationend{end}\end{frame}
+\end{document}

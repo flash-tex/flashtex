@@ -129,6 +129,10 @@ pub struct State {
     /// `ttf_cmap_tree` (writettf.c): the `cmap` subtables read so far, by
     /// (font file name, platform id, encoding id); code to glyph index.
     pub ttf_cmaps: BTreeMap<(Vec<u8>, i32, i32), Vec<i32>>,
+    /// writet3.c's `static integer t3_b0, t3_b1, t3_b2, t3_b3`: the last
+    /// Type 3 font's bounding box. Only a written glyph sets it, so a Type 3
+    /// font with none keeps the previous font's.
+    pub t3_bbox: [i32; 4],
     /// writettf.c's `static TTF_USHORT upem`: set by `ttf_read_head`, it
     /// keeps its value from one font to the next, so an OpenType font
     /// without a `head` table scales its `hhea`/`PCLT` metrics by the
@@ -145,6 +149,7 @@ crate::codec_struct!(State {
     fo_tree,
     t1,
     ttf_cmaps,
+    t3_bbox,
     ttf_upem
 });
 

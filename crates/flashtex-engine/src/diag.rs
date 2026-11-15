@@ -383,6 +383,12 @@ pub fn append(v: &[Arc<Note>], shift: i64) {
 /// convergence test made sure the old run read no moved line into what the
 /// note says.)
 pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
+    move_lines_in(from, usize::MAX, shifts)
+}
+
+/// [`move_lines`] for the notes from `from` up to `to` (excluded): a
+/// READ-REVALIDATE restart kept the old run's notes there (#1896).
+pub fn move_lines_in(from: usize, to: usize, shifts: &[crate::lineshift::Shift]) {
     if shifts.is_empty() {
         return;
     }
@@ -397,7 +403,7 @@ pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
         d != 0
     };
     with(|s| {
-        for n in s.notes.iter_mut().skip(from) {
+        for n in s.notes.iter_mut().take(to).skip(from) {
             let mut m = (**n).clone();
             let mut moved = m.pos.as_mut().is_some_and(mv);
             for f in m.frames.iter_mut() {
@@ -1218,6 +1224,32 @@ impl Globals {
         if enabled() {
             let here = self.dg_here();
             with(|s| s.def_at = here);
+        }
+    }
+
+    /// A replay (BOX-MEMO's or a D9 intrinsic's) made token list `p` a
+    /// macro's meaning, as a `\def` in the replayed call's body did on the
+    /// normal path. There the `\def` was read from a token list (the
+    /// body), so its site is the innermost file level's line with no
+    /// column (`dg_here`); a replay runs where that body was used up, at
+    /// the same file level, which may be `cur_input` itself.
+    pub fn dg_def_replayed(&mut self, p: i32) {
+        if enabled() {
+            let is_file = |r: &crate::generated::types::in_state_record| {
+                r.state_field != 0 && r.name_field > 19
+            };
+            let rec = if is_file(&self.cur_input) {
+                Some(self.cur_input)
+            } else {
+                self.file_level(&DEF_LEVEL, is_file)
+            };
+            let here = rec.map(|r| {
+                let index = r.index_field;
+                let name = self.full_source_filename_stack[index as usize];
+                (self.dg_name_id(name), self.dg_level_line(index), -1)
+            });
+            with(|s| s.def_at = here);
+            self.dg_def(p);
         }
     }
 
