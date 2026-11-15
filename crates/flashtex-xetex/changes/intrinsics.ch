@@ -152,6 +152,14 @@ exit: if intr_verify_on then flashtex_intr_op(18,0,0,0);
 end;
 @z
 
+@x xetex.web - a body used up inside |big_switch|'s |get_x_token| ends its recording (#2210)
+  end_token_list; goto restart; {resume previous level}
+@y
+  end_token_list;
+  if intr_verify_on then if intr_in_switch then flashtex_intr_popped;
+  goto restart; {resume previous level}
+@z
+
 @x xetex.web - expansion other than big_switch's direct macro
 reswitch:
 if cur_cmd<call then @<Expand a nonmacro@>
@@ -185,7 +193,8 @@ get_x_token;@/
 @y
 big_switch: flashtex_poll; if ckpt_request<>0 then flashtex_checkpoint_hook;
 if intr_verify_on then flashtex_intr_switch;
-intr_at_switch:=intr_verify_on; get_x_token; intr_at_switch:=false;@/
+intr_at_switch:=intr_verify_on; intr_in_switch:=intr_verify_on;
+get_x_token; intr_at_switch:=false; intr_in_switch:=false;@/
 @z
 
 @x xetex.web - \wd, \ht, \dp write |mem|: not replayable (kind 6)
@@ -258,10 +267,12 @@ add_sa_ref(p);
 @<Glob...@>=
 @!intr_verify_on:boolean; {verify/report mode; output stays the real path's}
 @!intr_at_switch:boolean; {this macro came directly from |big_switch|}
+@!intr_in_switch:boolean; {|big_switch|'s |get_x_token| is running}
 
 @ @<Declare the routines of \XeTeX's C parts@>=
 procedure flashtex_intr_observe; external;
 procedure flashtex_intr_switch; external;
+procedure flashtex_intr_popped; external;
 procedure flashtex_intr_op(@!k,@!p,@!t,@!e:integer); external;
 procedure flashtex_intr_cell(@!p,@!s:integer); external;
 procedure flashtex_intr_flush(@!p:integer); external;

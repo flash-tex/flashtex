@@ -398,6 +398,27 @@ fn a_check_whose_real_path_is_not_replayable_is_no_pass() {
     assert_eq!(count(&s, "semantic.differing.not_replayable"), 1, "{s}");
 }
 
+/// A body whose last tokens only expand (`\fi`) is used up inside
+/// `big_switch`'s `get_x_token`, which reads the token after the call: the
+/// recording ends where the body is popped, before that `\relax` (or
+/// `\count1=1`) is read, where the replay's state was taken. Compared after
+/// the command, the file position (and the count) differed on a correct
+/// replay (#2210).
+#[test]
+fn a_body_ending_in_an_expansion_is_compared_at_its_end() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\ifx aa\\fi}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\relax\n\\pdfstringdefPreHook\\relax\n\
+         \\pdfstringdefPreHook\\count1=1 \\pdfstringdefPreHook\\count1=2 \\pdfstringdefPreHook\\relax\n\
+         x\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 4, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 4, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+}
+
 /// A reason that only means the recorder could not keep the real path
 /// (`TooManyOps`: the loop makes 10,006 assignments) is no difference when
 /// the states agree: everything such a path changes is compared, and here
