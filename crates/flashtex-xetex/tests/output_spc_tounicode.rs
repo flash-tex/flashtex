@@ -95,7 +95,10 @@ fn tounicode_utf8_ucs2() {
     );
     let pdf = PdfFile::parse(&bytes).unwrap();
     let info = pdf.info().unwrap();
-    assert_eq!(info.get("Title"), Some(&hex("feff00430061006600e900202211")));
+    assert_eq!(
+        info.get("Title"),
+        Some(&hex("feff00430061006600e900202211"))
+    );
     assert_eq!(info.get("Author"), Some(&Obj::String(b"plain".to_vec())));
     assert_eq!(info.get("Foo"), Some(&hex("436166c3a9")));
     assert_eq!(info.get("Subject"), Some(&hex("feff00610073006300690069")));
@@ -108,7 +111,10 @@ fn tounicode_utf8_ucs2() {
         Some(&hex("feff0070006c00610069006e002000610073006300690069"))
     );
     let page = pdf.pages().unwrap()[0];
-    let annots = pdf.page_attr(page, "Annots").and_then(Obj::as_array).unwrap();
+    let annots = pdf
+        .page_attr(page, "Annots")
+        .and_then(Obj::as_array)
+        .unwrap();
     let a0 = pdf.resolve(&annots[0]).as_dict().unwrap();
     let a1 = pdf.resolve(&annots[1]).as_dict().unwrap();
     assert_eq!(a0.get("Contents"), Some(&hex("feff006e006100ef00760065")));

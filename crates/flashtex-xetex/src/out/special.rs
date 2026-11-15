@@ -737,8 +737,7 @@ impl<M: Metrics> Builder<'_, M> {
         tu.cmap = None;
         tu.unescape_backslash = false;
         if p.at_end() {
-            self.doc
-                .diag("Missing CMap name for pdf:tounicode.".into());
+            self.doc.diag("Missing CMap name for pdf:tounicode.".into());
             return;
         }
         let st = p.i;
@@ -1597,11 +1596,13 @@ fn text_strings_of(
             }
             Ok(())
         }
-        Obj::Array(a) => a.iter_mut().try_for_each(|e| text_strings_of(k, e, cx, warn)),
-        Obj::Dict(d) => d
-            .0
+        Obj::Array(a) => a
             .iter_mut()
-            .try_for_each(|(k, v)| text_strings_of(k, v, cx, warn)),
+            .try_for_each(|e| text_strings_of(k, e, cx, warn)),
+        Obj::Dict(d) => {
+            d.0.iter_mut()
+                .try_for_each(|(k, v)| text_strings_of(k, v, cx, warn))
+        }
         _ => Ok(()),
     }
 }

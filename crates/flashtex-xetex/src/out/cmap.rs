@@ -119,7 +119,8 @@ impl CMap {
             let mut overlap = true;
             let mut j = 0;
             while j < clo.len().min(dim) && overlap {
-                overlap = (lo[j] >= clo[j] && lo[j] <= chi[j]) || (hi[j] >= clo[j] && hi[j] <= chi[j]);
+                overlap =
+                    (lo[j] >= clo[j] && lo[j] <= chi[j]) || (hi[j] >= clo[j] && hi[j] <= chi[j]);
                 j += 1;
             }
             if overlap {
@@ -149,7 +150,11 @@ impl CMap {
     }
 
     /// `locate_tbl`: the table holding `code`'s last byte.
-    fn locate<'a>(map: &'a mut Box<Table>, code: &[u8], warn: &mut Vec<String>) -> Option<&'a mut Table> {
+    fn locate<'a>(
+        map: &'a mut Box<Table>,
+        code: &[u8],
+        warn: &mut Vec<String>,
+    ) -> Option<&'a mut Table> {
         let mut cur: &mut Table = map;
         for &c in &code[..code.len() - 1] {
             let e = &mut cur.0[c as usize];
@@ -296,7 +301,8 @@ impl CMap {
             if let Some(u) = &self.use_cmap {
                 return u.decode_char(d);
             }
-            d.warn.push("No mapping available for this character.".into());
+            d.warn
+                .push("No mapping available for this character.".into());
             return self.handle_undefined(d);
         };
         let mut t: &Table = root;
@@ -394,7 +400,10 @@ fn is_space(c: u8) -> bool {
 }
 
 fn is_delim(c: u8) -> bool {
-    matches!(c, b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'%')
+    matches!(
+        c,
+        b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'%'
+    )
 }
 
 fn xtoi(c: u8) -> Option<u8> {
@@ -661,7 +670,11 @@ impl Lexer<'_> {
                             cur += 1;
                         }
                         b'\r' => {
-                            cur += if cur + 1 < s.len() && s[cur + 1] == b'\n' { 2 } else { 1 };
+                            cur += if cur + 1 < s.len() && s[cur + 1] == b'\n' {
+                                2
+                            } else {
+                                1
+                            };
                         }
                         b'\n' => cur += 1,
                         _ => {
@@ -750,7 +763,13 @@ fn sv(t: &Tok) -> Result<Vec<u8>, Fatal> {
         Tok::Name(v) | Tok::Str(v) | Tok::Unknown(v) => v.clone(),
         Tok::Int(i) => i.to_string().into_bytes(),
         Tok::Real => b"0".to_vec(),
-        Tok::Bool(b) => if *b { b"true".to_vec() } else { b"false".to_vec() },
+        Tok::Bool(b) => {
+            if *b {
+                b"true".to_vec()
+            } else {
+                b"false".to_vec()
+            }
+        }
         Tok::Null => b"null".to_vec(),
         Tok::Mark => return Err("typecheck: object not of type".into()),
     })
@@ -837,9 +856,9 @@ impl Reader<'_, '_> {
                 (b"bfrange", Tok::Str(dst)) if !dst.is_empty() => {
                     self.cmap.add_bfrange(&lo, &hi, &dst, &mut self.warn)
                 }
-                (b"bfrange", Tok::Str(_)) => {
-                    self.warn.push("Invalid CMap mapping entry. (ignored)".into())
-                }
+                (b"bfrange", Tok::Str(_)) => self
+                    .warn
+                    .push("Invalid CMap mapping entry. (ignored)".into()),
                 (b"bfrange", Tok::Mark) => {
                     if lo.is_empty() {
                         return Err("Invalid code range.".into());
@@ -852,7 +871,8 @@ impl Reader<'_, '_> {
                             None => return Ok(false),
                             Some(Tok::Str(dst)) => {
                                 if dst.is_empty() {
-                                    self.warn.push("Invalid CMap mapping entry. (ignored)".into());
+                                    self.warn
+                                        .push("Invalid CMap mapping entry. (ignored)".into());
                                 } else {
                                     self.cmap.add_bfrange(&code, &code, &dst, &mut self.warn);
                                 }
@@ -860,7 +880,9 @@ impl Reader<'_, '_> {
                             Some(Tok::Name(_)) => {
                                 return Err("CMap_parse: Mapping to charName not supported.".into())
                             }
-                            Some(_) => return Err("CMap_parse: Invalid CMap mapping record.".into()),
+                            Some(_) => {
+                                return Err("CMap_parse: Invalid CMap mapping record.".into())
+                            }
                         }
                         code[n - 1] = code[n - 1].wrapping_add(1);
                     }
@@ -899,7 +921,8 @@ impl Reader<'_, '_> {
             match (kind, t1, t2) {
                 (b"bfchar", Tok::Str(src), Tok::Str(dst)) => {
                     if src.is_empty() || dst.is_empty() {
-                        self.warn.push("Invalid CMap mapping entry. (ignored)".into());
+                        self.warn
+                            .push("Invalid CMap mapping entry. (ignored)".into());
                     } else {
                         self.cmap.add_bfrange(&src, &src, &dst, &mut self.warn);
                     }
@@ -910,7 +933,8 @@ impl Reader<'_, '_> {
                 (b"cidchar" | b"notdefchar", Tok::Str(src), Tok::Int(v)) => {
                     if (0..=CID_MAX).contains(&v) {
                         if src.is_empty() {
-                            self.warn.push("Invalid CMap mapping entry. (ignored)".into());
+                            self.warn
+                                .push("Invalid CMap mapping entry. (ignored)".into());
                         } else if kind == b"cidchar" {
                             self.cmap.add_cidrange(&src, &src, v, &mut self.warn);
                         } else {
@@ -955,7 +979,9 @@ impl Reader<'_, '_> {
                         continue;
                     };
                     let good = match (&t2, n.as_slice()) {
-                        (Tok::Str(_), b"Registry" | b"Ordering") | (Tok::Int(_), b"Supplement") => true,
+                        (Tok::Str(_), b"Registry" | b"Ordering") | (Tok::Int(_), b"Supplement") => {
+                            true
+                        }
                         _ => false,
                     };
                     if !good || (!simple && !self.next_is(b"def")?) {
@@ -1094,13 +1120,18 @@ impl Cache {
     /// `CMap_cache_find`: the CMap's id, `None` when there is no such CMap
     /// file (or it does not look like one), an `Err` when it fails to parse.
     pub fn find(&mut self, name: &[u8], warn: &mut Vec<String>) -> Result<Option<usize>, Fatal> {
-        if let Some(id) = self.cmaps.iter().position(|c| c.name.as_deref() == Some(name)) {
+        if let Some(id) = self
+            .cmaps
+            .iter()
+            .position(|c| c.name.as_deref() == Some(name))
+        {
             return Ok(Some(id));
         }
         let Ok(n) = std::str::from_utf8(name) else {
             return Ok(None);
         };
-        let Some(path) = flashtex_engine::system::find_file(n, flashtex_engine::resolver::Format::Cmap)
+        let Some(path) =
+            flashtex_engine::system::find_file(n, flashtex_engine::resolver::Format::Cmap)
         else {
             return Ok(None);
         };
@@ -1166,7 +1197,10 @@ endcmap CMapName currentdict /CMap defineresource pop end end\n";
         let id = cache.load(UTF8, &mut Vec::new()).unwrap().unwrap();
         assert_eq!(cache.find(b"T", &mut Vec::new()).unwrap(), Some(id));
         let c = cache.get(id).clone();
-        assert_eq!(decode(&c, b"a\xc3\xa9"), Some(b"\xfe\xff\x00a\x00\xe9".to_vec()));
+        assert_eq!(
+            decode(&c, b"a\xc3\xa9"),
+            Some(b"\xfe\xff\x00a\x00\xe9".to_vec())
+        );
         assert_eq!(decode(&c, b""), Some(b"\xfe\xff".to_vec()));
         // as xdvipdfmx (measured: `x𝔸` through UTF8-UCS2 is
         // <feff0078fffdfffdfffdfffd>): each byte outside the codespace is
@@ -1187,6 +1221,9 @@ endcmap CMapName currentdict /CMap defineresource pop end end\n";
 
     #[test]
     fn signature() {
-        assert!(Cache::default().load(b"%!PS-Adobe-3.0 Resource-Font", &mut Vec::new()).unwrap().is_none());
+        assert!(Cache::default()
+            .load(b"%!PS-Adobe-3.0 Resource-Font", &mut Vec::new())
+            .unwrap()
+            .is_none());
     }
 }
