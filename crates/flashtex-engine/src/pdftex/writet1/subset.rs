@@ -26,6 +26,7 @@ use crate::pdftex::writefont::{
     FdEntry, FONTBBOX1_CODE, FONTNAME_CODE, FONT_KEYS, ITALIC_ANGLE_CODE, STEMV_CODE,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 
 const CHARSTRINGS: &[u8] = b"/CharStrings";
 const SUBRS: &[u8] = b"/Subrs";
@@ -871,10 +872,23 @@ impl Type1<'_, '_> {
             host: &mut *self.host,
         };
         self.cs.mark(&mut env, Target::Glyph(NOTDEF))?;
-        // the glyph set as it is now: a `seac` adds to it as the walks go
-        let glyphs: Vec<Vec<u8>> = env.glyph_set.iter().flatten().cloned().collect();
-        for glyph in &glyphs {
-            self.cs.mark(&mut env, Target::Glyph(glyph))?;
+        // libavl's traverser over the live tree: a `seac` adds its base and
+        // accent as the walks go, and after an insertion `avl_t_next`
+        // refreshes, so a name added after the current one is visited too
+        // (marking a glyph that is not in the font warns again: "glyph
+        // `acute' undefined" twice), one added before it is not
+        let mut cur: Option<Vec<u8>> = None;
+        loop {
+            let next = env.glyph_set.as_ref().and_then(|set| match &cur {
+                None => set.first().cloned(),
+                Some(c) => set
+                    .range::<[u8], _>((Bound::Excluded(c.as_slice()), Bound::Unbounded))
+                    .next()
+                    .cloned(),
+            });
+            let Some(glyph) = next else { break };
+            self.cs.mark(&mut env, Target::Glyph(&glyph))?;
+            cur = Some(glyph);
         }
         Ok(())
     }
