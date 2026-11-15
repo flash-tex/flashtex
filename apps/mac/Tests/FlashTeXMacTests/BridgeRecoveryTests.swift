@@ -938,4 +938,99 @@ final class BridgeRecoveryTests: XCTestCase {
             model.detachBridge()
         }
     }
+
+    // MARK: helpers that stay alive but stop answering
+
+    /// Waits for `cond`; a timeout fails the test (it is the bug under test, not a slow machine).
+    private func expectWithin(_ seconds: TimeInterval, _ what: String, _ cond: @escaping () -> Bool) async -> Bool {
+        let start = Date()
+        while !cond() {
+            if Date().timeIntervalSince(start) > seconds { XCTFail("not within \(Int(seconds)) s: \(what)"); return false }
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        return true
+    }
+
+    /// The bridge takes `capture_applied` and never answers (alive, not
+    /// reading). Without a deadline the transaction stayed pending forever:
+    /// every keystroke was held back for it and later captures were refused
+    /// (`transactionPending`). Now the receipt times out, the bridge is
+    /// restarted, the receipt is settled from the edit ledger, and the reopen
+    /// carries the text typed meanwhile.
+    func testABridgeThatStopsAnsweringTheReceiptIsRestartedAndTheReceiptSettled() async throws {
+        let captureId = "hang-applied-once-1"
+        let store = try BridgeClientTests.tempStore()
+        let model = ShellModel()
+        model.autoCompile = false
+        var notes: [String] = []
+        let proposal = try await stage(model, store: store, captureId: captureId)
+        let bridge = try XCTUnwrap(model.bridge)
+        bridge.receiptTimeout = 1
+        bridge.onRelaunched = { notes.append($1) }
+        let outcome = await model.approveBridgeProposal(proposal, latex: proposal.latex)
+        XCTAssertEqual(outcome, .inserted(byteOffset: 5), model.captureNote ?? "")
+        let after = "Hello\\fakecapture{\(captureId)} FlashTeX.\n"
+        model.editApplied(try XCTUnwrap(model.pendingEdit), newText: after)
+        XCTAssertEqual(bridge.transactionTrace, ["ledger", "receipt"])
+        // Typing while the receipt is unanswered: held back for it.
+        model.updateActiveText(after + "typed\n")
+        model.updateActiveText(after + "typed twice\n")
+        XCTAssertEqual(bridge.deferredEditCount, 2)
+        guard await expectWithin(60, "the unanswering bridge is restarted and reconciled", {
+            bridge.relaunchCount[.bridge] == 1 && bridge.relaunching == nil
+        }) else { model.detachBridge(); return }
+        XCTAssertTrue(bridge.log.contains { $0.contains("capture_applied unanswered") }, bridge.log.joined(separator: "\n"))
+        XCTAssertTrue(bridge.log.contains { $0.contains("receipt for capture-\(captureId) was in flight when the bridge exited") }, bridge.log.joined(separator: "\n"))
+        XCTAssertNil(bridge.pendingTransaction)
+        XCTAssertEqual(bridge.deferredEditCount, 0)
+        XCTAssertNotEqual(bridge.capture(captureId)?.state, .applied, bridge.capture(captureId)?.note ?? "")
+        XCTAssertEqual(model.activeText, after + "typed twice\n", "inserted exactly once, the typing kept")
+        XCTAssertEqual(bridge.shadow["main.tex"]?.text, after + "typed twice\n")
+        XCTAssertTrue(bridge.status.contains("open at revision \(model.editorRevision)"), bridge.status)
+        XCTAssertTrue(bridge.running)
+        model.detachBridge()
+    }
+
+    /// The edit ledger takes `apply` and never answers (alive, not reading),
+    /// before or after its durable commit. Without a deadline the approval
+    /// never returned. Now it times out, the helper is stopped and the store
+    /// reopened: a committed edit is adopted once; an uncommitted one is not
+    /// inserted and its retry inserts once.
+    func testALedgerThatStopsAnsweringApplyEndsTheApprovalAndInsertsExactlyOnce() async throws {
+        for captureId in ["hang-after-commit-1", "hang-before-commit-1"] {
+            let store = try BridgeClientTests.tempStore()
+            let model = ShellModel()
+            model.autoCompile = false
+            let proposal = try await stage(model, store: store, captureId: captureId)
+            let bridge = try XCTUnwrap(model.bridge)
+            bridge.ledgerApplyTimeout = 1
+            let hung = bridge.ledger
+            let after = "Hello\\fakecapture{\(captureId)} FlashTeX.\n"
+            var first: ShellModel.ApproveOutcome?
+            Task { first = await model.approveBridgeProposal(proposal, latex: proposal.latex) }
+            guard await expectWithin(60, "\(captureId): the approval returns", { first != nil }) else { model.detachBridge(); return }
+            XCTAssertFalse(hung?.isRunning ?? false, "the unanswering helper was stopped")
+            XCTAssertFalse(bridge.ledger === hung)
+            XCTAssertTrue(bridge.log.contains { $0.contains("no reply within 1 s") }, bridge.log.joined(separator: "\n"))
+            var outcome = first!
+            if captureId.hasPrefix("hang-before-commit") {
+                XCTAssertEqual(outcome, .refused("ledger"), model.captureNote ?? "")
+                XCTAssertNil(model.pendingEdit)
+                XCTAssertNil(bridge.pendingTransaction)
+                XCTAssertTrue(bridge.ledgerUsable, bridge.ledgerStatus)
+                let pending = try await bridge.ledger!.status().pendingReceipts
+                XCTAssertEqual(pending, [], "nothing committed")
+                model.enqueue(proposal)
+                outcome = await model.approveBridgeProposal(proposal, latex: proposal.latex)
+            }
+            XCTAssertEqual(outcome, .inserted(byteOffset: 5), "\(captureId): \(model.captureNote ?? "")")
+            XCTAssertTrue(bridge.ledgerUsable, bridge.ledgerStatus)
+            XCTAssertEqual(bridge.durable?.text, after)
+            model.editApplied(try XCTUnwrap(model.pendingEdit), newText: after)
+            guard await expectWithin(30, "\(captureId): confirmed", { model.bridgeCaptures.last?.state == .confirmed }) else { model.detachBridge(); return }
+            XCTAssertEqual(model.activeText, after, "\(captureId): inserted exactly once")
+            XCTAssertNil(bridge.pendingTransaction)
+            model.detachBridge()
+        }
+    }
 }

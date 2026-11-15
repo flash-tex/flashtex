@@ -174,7 +174,10 @@ final class BridgeSession {
             note(status)
             // `expectedApplication` is kept: an adoption the editor performs while
             // the bridge is down is recognized after the relaunch, not sent as an edit.
-            scheduleRelaunch(.bridge, afterExit: code)
+            // One stopped for not answering relaunches whatever its status.
+            let unresponsive = restartingUnresponsiveBridge
+            restartingUnresponsiveBridge = false
+            scheduleRelaunch(.bridge, afterExit: unresponsive && code == 0 ? SIGTERM : code)
         }
         onChange()
     }
@@ -537,8 +540,11 @@ final class BridgeSession {
     /// the rename may or may not have completed) and re-reads the durable state.
     private func reopenLedger(timeout: TimeInterval = 15) async -> Bool {
         guard let launch = ledgerLaunch else { return false }
-        ledger?.terminate()
-        ledger = nil
+        let old = ledger
+        ledger = nil // (its exit, if still to come, is not ours: no relaunch)
+        // One that stopped answering (`ledgerApplyTimeout`) may still run and
+        // hold the store's lock: it is gone before the new one opens the store.
+        await old?.terminateAndWait()
         ledgerError = nil
         do {
             var events: ((EditLedgerClient.Event) -> Void)?
@@ -837,8 +843,24 @@ final class BridgeSession {
     private(set) var pendingTransaction: Transaction?
     /// Bridge edits held back until the pending receipt is acknowledged.
     private var deferredEdits: [TransferV1.DocumentEdit] = []
+    var deferredEditCount: Int { deferredEdits.count }
     /// Whole-document adoption the shell is about to perform (not an ordinary edit).
     private var expectedAdoption: String?
+
+    /// The longest the helper may take to commit one approved edit. A helper
+    /// that is alive but does not answer is then handled as one whose reply
+    /// was lost: it is stopped and the store reopened to read what is durable
+    /// (`reopenLedger`), so the approval ends either way.
+    var ledgerApplyTimeout: TimeInterval = 30
+    /// The longest the bridge may take to acknowledge `capture_applied`. A
+    /// bridge that is alive but does not answer is restarted
+    /// (`restartUnresponsiveBridge`): the receipt is then in flight at an exit,
+    /// which the relaunch settles from the edit ledger, and the reopen carries
+    /// the newest text (the edits held back meanwhile).
+    var receiptTimeout: TimeInterval = 30
+    /// The bridge is being restarted because it stopped answering: its exit
+    /// relaunches it whatever its status (a clean exit at SIGTERM too).
+    private var restartingUnresponsiveBridge = false
 
     /// Step 3 (helper side): commits the verified edit durably — source and
     /// applied ID together, fsynced — and returns the durable document the
@@ -852,7 +874,7 @@ final class BridgeSession {
             throw LedgerError.alreadyApplied(edit.editId)
         }
         do {
-            let applied = try await l.apply(edit)
+            let applied = try await l.apply(edit, timeout: ledgerApplyTimeout)
             durable = applied.document
             transactions[edit.editId] = .init(edit: edit, receipt: applied.receipt, documentBefore: nil,
                                               documentAfterSha256: applied.document.sourceSha256, confirmed: false)
@@ -973,9 +995,19 @@ final class BridgeSession {
     }
 
     private func sendApplied(_ receipt: TransferV1.CaptureApplied) {
-        client.send(.captureApplied, receipt, as: TransferV1.CaptureApplied.self) { [weak self] result in
+        let c = client
+        c.send(.captureApplied, receipt, as: TransferV1.CaptureApplied.self, timeout: receiptTimeout) { [weak self] result in
             guard let self else { return }
             switch result {
+            case .failure(.timeout(let s)):
+                // Alive but not answering: whether it recorded the receipt is
+                // unknown, and every edit typed meanwhile is held back for it.
+                // The receipt stays in flight; the restart settles it.
+                if var tx = self.pendingTransaction { tx.lastFailure = LineProcessFailure.timeout(s).text; self.pendingTransaction = tx }
+                self.setCapture(receipt.captureId, .applied, "durable locally; the bridge did not acknowledge the receipt within \(Int(s)) s; restarting it")
+                self.status = "capture_applied unanswered for \(Int(s)) s — restarting the bridge to settle the receipt from the edit ledger"
+                self.note(self.status)
+                if self.client === c { self.restartUnresponsiveBridge(c) }
             case .success(let ack):
                 self.pendingTransaction = nil
                 self.transactionTrace.append("confirmed")
@@ -992,6 +1024,16 @@ final class BridgeSession {
             }
             self.onChange()
         }
+    }
+
+    /// Stops a bridge that is alive but does not answer. Its exit takes the
+    /// crash path (`handle(.exited)` → `scheduleRelaunch` → `relaunch`): the
+    /// receipt in flight is marked uncertain and settled from the edit ledger
+    /// (`markInFlightUncertain`, `reconcile`), the held-back edits are dropped
+    /// and the document is reopened with the newest text.
+    private func restartUnresponsiveBridge(_ c: BridgeClient) {
+        restartingUnresponsiveBridge = true
+        Task { await c.terminateAndWait() }
     }
 
     /// Exact bridge acknowledgement → helper drops the recovery snapshot.

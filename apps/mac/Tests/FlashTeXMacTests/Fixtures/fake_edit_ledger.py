@@ -21,6 +21,9 @@ in the store makes the identical retry proceed normally):
                     commit the edit durably, then exit before replying, once
     replace_document whose text contains `%ledger-crash-once`
                     exit before committing, once per distinct text
+    apply with edit.capture_id `hang-before-commit-*` / `hang-after-commit-*`
+                    stay alive but never answer (nor read again), before
+                    anything is written / after the durable commit, once
     operation `crash`
                     exit immediately (idle crash)
 """
@@ -30,6 +33,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 
 CRASH_STATUS = 3
 
@@ -37,6 +41,18 @@ CRASH_STATUS = 3
 def crash():
     sys.stdout.flush()
     os._exit(CRASH_STATUS)
+
+
+def hang_once(root, key):
+    """Alive, answering nothing, until killed: the first time only (a marker file)."""
+    marker = os.path.join(root, "fake_hung_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16])
+    if os.path.exists(marker):
+        return
+    with open(marker, "w") as f:
+        f.write(key)
+    sys.stdout.flush()
+    while True:
+        time.sleep(3600)
 
 
 def crash_once(root, key):
@@ -186,6 +202,8 @@ class Store:
             raise Err("edit_id_conflict", "edit ID already binds different prepared fields")
         if edit["capture_id"].startswith("crash-before-commit-"):
             crash_once(self.root, "apply-before:" + edit["edit_id"])
+        if edit["capture_id"].startswith("hang-before-commit-"):
+            hang_once(self.root, "apply-before:" + edit["edit_id"])
         if any(t["edit"]["capture_id"] == edit["capture_id"] for t in txs.values()):
             raise Err("capture_id_conflict", "capture already applied under another edit ID")
         doc = self.state["document"]
@@ -214,6 +232,8 @@ class Store:
         self.commit(state)
         if edit["capture_id"].startswith("crash-after-commit-"):
             crash_once(self.root, "apply-after:" + edit["edit_id"])
+        if edit["capture_id"].startswith("hang-after-commit-"):
+            hang_once(self.root, "apply-after:" + edit["edit_id"])
         return receipt
 
     def replace_document(self, expected_revision, expected_sha256, text):

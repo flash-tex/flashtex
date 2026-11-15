@@ -146,6 +146,26 @@ final class LineProcessClient {
         if process.isRunning { process.terminate() }
     }
 
+    /// `terminate()`, then waits until the process has exited: SIGKILL after
+    /// `grace` seconds, then up to 2 s more. A helper that stopped answering
+    /// may still hold what its successor needs (the edit ledger's store lock).
+    func terminateAndWait(grace: TimeInterval = 2) async {
+        terminate()
+        if await waitForExit(within: grace) { return }
+        let pid = process.processIdentifier
+        if process.isRunning, pid > 0 { kill(pid, SIGKILL) }
+        _ = await waitForExit(within: 2)
+    }
+
+    private func waitForExit(within seconds: TimeInterval) async -> Bool {
+        let end = Date().addingTimeInterval(seconds)
+        while process.isRunning {
+            if Date() >= end { return false }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return true
+    }
+
     /// A fresh request id for this process.
     func makeID() -> String { stateLock.withLock { defer { nextID += 1 }; return "\(label)-\(nextID)" } }
 
