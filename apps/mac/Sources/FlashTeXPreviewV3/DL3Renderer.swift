@@ -984,6 +984,24 @@ public enum DL3Renderer {
         return openPDF(data: data)
     }
 
+    /// Whether `data` ends as a whole PDF from the engine does: `%%EOF`, then
+    /// only ends of line (never the spaces a blanked end is made of). The
+    /// host writes the compile's PDF in place: a cold run truncates it and
+    /// writes it from the start, and a resident run blanks the old run's last
+    /// 1,024 bytes (`BLANK_END` in the engine's system.rs) before it writes
+    /// over the old bytes. `%%EOF` is the last thing a run writes, so bytes
+    /// read while the next compile was writing do not end in it. Opened
+    /// anyway, CGPDF repairs such a file from its objects and can draw a
+    /// page that mixes two runs' objects (REVIEW-B on #1971): not a missing
+    /// page, a wrong one.
+    public static func endsWhole(_ data: Data) -> Bool {
+        let eof = Array("%%EOF".utf8)
+        var end = data.endIndex
+        while end > data.startIndex, data[end - 1] == 0x0A || data[end - 1] == 0x0D { end -= 1 }
+        guard end - data.startIndex >= eof.count else { return false }
+        return data[(end - eof.count) ..< end].elementsEqual(eof)
+    }
+
     public static func openPDF(data: Data) -> CGPDFDocument? {
         guard let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider) else { return nil }
         DL3PDFBytes.attach(DL3PDFBytes(data), to: doc)
