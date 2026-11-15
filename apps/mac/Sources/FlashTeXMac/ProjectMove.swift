@@ -398,7 +398,7 @@ extension ProjectDocuments {
         var failed: [String] = []
         for edit in diskEdits {
             guard case .file(let url) = Self.rootedFile(edit.path, under: root),
-                  let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8),
+                  let data = try? Data(contentsOf: url), let text = String(exactUTF8: data),
                   let r = text.rangeOfUTF8(start: edit.byteRange.lowerBound, end: edit.byteRange.upperBound),
                   String(text[r]).sameBytes(as: edit.before) else { failed.append(edit.path); continue }
             let rewritten = (text as NSString).replacingCharacters(in: NSRange(r, in: text), with: edit.text)
@@ -423,7 +423,7 @@ extension ProjectDocuments {
                   case .file(let url) = Self.rootedFile(p, under: root),
                   let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
                   (attrs[.size] as? Int ?? 0) <= ProjectIncludes.maxDocumentBytes,
-                  let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else { continue }
+                  let data = try? Data(contentsOf: url), let text = String(exactUTF8: data) else { continue }
             out.append(.init(path: p, text: text))
         }
         return out

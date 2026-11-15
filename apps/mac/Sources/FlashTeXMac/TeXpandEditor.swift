@@ -298,7 +298,7 @@ final class TeXpandEditor {
         let path = T.rootPath(current: project.activePath, currentText: current, projectMain: project.entryPath)
         if path == project.activePath { return (path, true, current) }
         if let open = project.text(path) { return (path, false, open) }
-        if let root = project.root, let disk = try? String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) {
+        if let root = project.root, let disk = (try? Data(contentsOf: root.appendingPathComponent(path))).flatMap(String.init(exactUTF8:)) {
             return (path, false, disk)
         }
         return (path, false, "")

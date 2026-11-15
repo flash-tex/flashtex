@@ -545,7 +545,7 @@ final class ProjectDocuments {
               let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               (attrs[.size] as? Int ?? 0) <= ProjectIncludes.maxDocumentBytes,
               let data = try? Data(contentsOf: url) else { return nil }
-        return String(data: data, encoding: .utf8)
+        return String(exactUTF8: data)
     }
 
     /// The transitive `\input`/`\include` closure of the entry document
@@ -663,7 +663,7 @@ final class ProjectDocuments {
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
                   (attrs[.size] as? Int ?? 0) <= ProjectIncludes.maxDocumentBytes,
                   let data = try? Data(contentsOf: url),
-                  let text = String(data: data, encoding: .utf8) else { continue }
+                  let text = String(exactUTF8: data) else { continue }
             out.append(ImplicitDocument(path: path, text: text))
         }
         rearmImplicitWatchers(urls)
@@ -875,7 +875,7 @@ final class ProjectDocuments {
         if let size = attrs[.size] as? Int, size > ProjectIncludes.maxDocumentBytes {
             return note(.refused("cannot open \(path): \(size) bytes exceeds the \(ProjectIncludes.maxDocumentBytes)-byte document limit"))
         }
-        guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else {
+        guard let data = try? Data(contentsOf: url), let text = String(exactUTF8: data) else {
             return note(.refused("cannot open \(path): not readable as UTF-8"))
         }
         insert(path: path, text: text, role: role, origin: .disk, diskSHA256: SourceDigest.sha256Hex(text))
@@ -1074,7 +1074,7 @@ final class ProjectDocuments {
             return "cannot reload \(path): \(size) bytes exceeds the \(ProjectIncludes.maxDocumentBytes)-byte document limit"
         }
         guard let data = try? Data(contentsOf: url) else { return "cannot reload \(path): it is not on disk" }
-        guard let disk = String(data: data, encoding: .utf8) else { return "cannot reload \(path): not readable as UTF-8" }
+        guard let disk = String(exactUTF8: data) else { return "cannot reload \(path): not readable as UTF-8" }
         if isDirty(path), case .failed(let why) = model.preserveDiscardedText(doc.text, at: url, reason: "discarded by a reload of \(path) from disk") {
             return "not reloaded: the unsaved edits to \(path) could not be kept (\(why))"
         }

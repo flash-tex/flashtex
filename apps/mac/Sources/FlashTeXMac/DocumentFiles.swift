@@ -547,13 +547,16 @@ final class DocumentFilesState {
     // MARK: direct (no helper) path
 
     private func readDirect(_ url: URL) -> ReadResult {
+        let data: Data
         do {
-            return .text(try String(contentsOf: url, encoding: .utf8))
+            data = try Data(contentsOf: url)
         } catch let e as NSError where e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoSuchFileError {
             return .missing
         } catch {
             return .failed(error.localizedDescription)
         }
+        guard let text = String(exactUTF8: data) else { return .failed("\(url.lastPathComponent) is not UTF-8 text") }
+        return .text(text)
     }
 
     private func statusDirect(_ url: URL, expectedSha256: String?) -> ProjectFilesV1.Status {
@@ -1424,5 +1427,19 @@ extension ShellModel {
             captureNote = "Save failed: \(reason)"
             return false
         }
+    }
+}
+
+extension String {
+    /// `data` as UTF-8, byte for byte, or nil when it is not valid UTF-8.
+    /// Foundation's `String(data:encoding: .utf8)` / `contentsOf:` drop a
+    /// leading byte-order mark, so the text no longer hashed to the file
+    /// (the helper keeps it): a BOM file read as "modified on disk" from the
+    /// moment it opened and every save was refused. The mark stays in the
+    /// buffer (U+FEFF, as the helper reads it) and is written back.
+    init?(exactUTF8 data: Data) {
+        let s = String(decoding: data, as: UTF8.self)
+        guard s.utf8.count == data.count, s.utf8.elementsEqual(data) else { return nil } // invalid bytes became U+FFFD
+        self = s
     }
 }
