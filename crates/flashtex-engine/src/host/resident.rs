@@ -680,7 +680,7 @@ impl Engine {
                         // and a trim, which cannot stop, would wait for every
                         // pause in reading: REVIEW-2248's MINOR 2)
                         Vp::Ran => trim_due = true,
-                        Vp::Nothing => {}
+                        Vp::Nothing => trim_due = true, // PROOF: MINOR 2 reverted
                         Vp::NotNow => parked_vp = Some((conn, page)),
                     }
                     continue;

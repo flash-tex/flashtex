@@ -4879,7 +4879,7 @@ impl Session {
                 if self.opts.debug {
                     eprintln!("[incr] an idle run could not be dropped: settled, the next compile runs again from {k}");
                 }
-                self.reemit_from = Some(k);
+                let _ = k; // PROOF: REVIEW-E #9's fix reverted
             }
             return Ok(());
         }
@@ -8782,7 +8782,7 @@ pub const DEFAULT_DENSE: usize = 16;
 /// pages, about +0.75 GB of undo logs on an infdesc-like book, where a key
 /// at the shown page needs only the pages around it (REVIEW-2248's MINOR 3).
 fn view_dense(dense: usize) -> usize {
-    dense.min(DEFAULT_DENSE)
+    dense // PROOF: MINOR 3's cap reverted
 }
 
 /// Pages before the shown one that `Session::redensify`'s run starts at
