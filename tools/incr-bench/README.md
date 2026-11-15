@@ -47,16 +47,36 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `unicode.py HOST SRC [--keys N] [--trials N] [--verify]` | **Unicode mode** (`flashtex-host-unicode`, lane XETEX-INCR): a cold compile, then keystrokes (`--keys`, at `--at end|mid|FRAC`) or random edits and reverts (`--trials`, edits.py's kinds); each compile's first page, edited page, `DONE` and the host's instructions; `--verify` compares every compile (output files byte for byte, every frame) with a from-scratch compile by a second host whose runs are processes of their own |
 | `unicode_sweep.py HOST [-j 2]` | `unicode.py --verify` over `unicode-corpus/` (the four keystroke benchmarks, polyglossia, xeCJK, beamer with fontspec), the PDF parity cases (`tools/xetex-pdfparity/cases`) and the lockstep's LaTeX cases; exit 1 on any mismatch |
 
-## Sweeps on hosted runners
+## Sweeps in CI
 
-**Lanes run the soundness sweeps on GitHub-hosted runners, not on the NixOS PC:**
+**Lanes run the soundness sweeps through `sweeps.yml`, not by hand on the NixOS PC:**
 
 ```sh
 gh workflow run sweeps.yml -f ref=<branch>                         # every sweep
 gh workflow run sweeps.yml -f ref=<branch> -f gates=sound-a,span   # some
 gh workflow run sweeps.yml -f ref=<branch> -f base_ref=main        # plus main's rows (A/B)
+gh workflow run sweeps.yml -f ref=<branch> -f host=hosted          # on GitHub-hosted runners
 gh run list --workflow sweeps.yml --limit 3                        # then: gh run watch <id>
 ```
+
+Where (lane CI-SWEEPS, 2026-11-08): a dispatch runs on the NixOS PC's three runners
+(`flashtex-linux`) when `FLASHTEX_SELFHOSTED_LINUX` is 1, with the PC's own TeX Live 2026, each job
+in a `flashtex.slice` scope of its own (MemoryMax 10G); `-f host=hosted`, the switch off, and every
+`run-sweeps` label run (DESIGN §9.3: no self-hosted runner for a pull request) use ubuntu-latest.
+With the switch on and the PC busy or offline, a dispatch waits for it; `host=hosted` goes around.
+On the PC, `ref` and `base_ref` must be this repository's: a branch or tag, a branch's head or a
+commit of main, or `refs/pull/N/head` of a pull request from a branch here. A fork's pull request
+or commit stops the run (DESIGN §9.3); run it with `host=hosted`.
+
+The from-scratch references of a verified run go 3 at a time beside the host
+(`INCR_BENCH_REF_JOBS`, which sweeps.py sets; incr_bench.py's default is 1): the same comparisons,
+in a third of the time for a unit whose references dominate. BOX-MEMO's verify mode is one: a cold
+compile runs the full verifier on every call it replays (beamer-polish: 1289 a compile, 16 s against
+0.8 s; #2145). The plan knows it: with `-f boxmemo=verify` it reads `sweeps-costs-verify.json`
+(sound-a measured in verify mode) over `sweeps-costs.json`, and scales any other unit (beamer
+fixtures by 15, the rest by 2), so sound-a's verify sweep is 6 shards, not one of 90+ minutes.
+Refresh it from a verify run's `costs.json` (`sweeps.py costs` writes measured seconds whatever the
+mode).
 
 `ref` is a branch, a SHA or `refs/pull/N/head` (a fork's pull request). Adding the `run-sweeps`
 label to a pull request does the same for its head, once its branch has the workflow. The run's
@@ -164,8 +184,10 @@ codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
   p95** (the app's ≤ 4 ms share is the app benchmark's). Viewport set to the edited page,
   keystrokes `--gap-ms` (300) apart after each `DONE`, the host's keep-warm default (decision 10) on.
 - **Typing** (`typing@50ms`, `@60ms`, `@80ms`, `@100ms`, `@150ms`; 50 ms ≈ 240 wpm, the owner's
-  2026-10-06 bar): letter@middle's edit typed on a clock
-  (`dl3-keys --interval-ms`), whatever the host is doing, 40 keystrokes (`--typing-keys`). Most
+  2026-10-06 bar): at letter@middle's place, two letters typed and deleted in turn on a clock
+  (`dl3-keys --interval-ms`: "x", "xy", "y", none, so that no key's text is that of the three before
+  it, as a user's keys rarely are), whatever the host is doing, 40 keystrokes (`--typing-keys`, a
+  multiple of 4). Most
   arrive while the previous compile's background work runs (re-typesetting to convergence, the
   tests, the jump, the next restore prepared), as when a user types. The in-body rows never meet
   that case, since each of their keystrokes waits for `DONE` and 300 ms more. A keystroke's time

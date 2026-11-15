@@ -14,6 +14,8 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo::rustc-check-cfg=cfg(flashtex_images)");
     println!("cargo::rustc-check-cfg=cfg(flashtex_regex)");
+    // cargo-llvm-cov's (`host::crash`, the host tests' `Drop`)
+    println!("cargo::rustc-check-cfg=cfg(coverage)");
     // `\pdfmatch`: regcomp/regexec behind a shim (csrc/flashtex_regex.c),
     // because regex_t and regmatch_t differ between C libraries. The
     // regcomp is pdfTeX's own: the C library's on Unix; on Windows, whose C
