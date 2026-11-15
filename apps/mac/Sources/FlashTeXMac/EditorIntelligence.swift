@@ -96,7 +96,7 @@ enum EditorIntelligence {
         guard h.length == text.length, h.lineCount > 0 else { return nil }
 
         let line0 = h.line(at: utf16)
-        switch h.modes[line0] {
+        switch h.lineState(line0, text: text).mode {
         case .text, .inlineMath, .parenMath: break
         default: return nil // display math, a math environment, or verbatim: not inline
         }
@@ -105,7 +105,7 @@ enum EditorIntelligence {
         // plain text — a safe restart point, since no open formula's start
         // can cross a `.text`-mode line start.
         let lowest = max(0, line0 - 2)
-        guard let ln1 = (lowest...line0).first(where: { h.modes[$0] == .text }) else { return nil } // already unclosed for 2+ lines
+        guard let ln1 = (lowest...line0).first(where: { h.lineState($0, text: text).mode == .text }) else { return nil } // already unclosed for 2+ lines
         let lastLine = min(h.lineCount - 1, line0 + 2)
 
         var open: (run: SyntaxHighlighter.Run, close: String)?

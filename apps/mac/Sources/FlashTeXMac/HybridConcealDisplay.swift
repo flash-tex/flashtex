@@ -245,7 +245,16 @@ final class ConcealController {
         guard d.length > 0 else { return }
         let first = table.line(at: d.location)
         let last = table.line(at: max(d.location, NSMaxRange(d) - 1))
-        let editedLast = min(last, max(first, table.line(at: min(lastEditEnd, whole.length))))
+        let editLine = table.line(at: min(lastEditEnd, whole.length))
+        if first > editLine {
+            // A catch-up step of a bounded re-lex (`SyntaxPainter.catchUpStep`,
+            // or scrolling past the stale point): no line here was edited, but
+            // every one of them, `first` included, may have changed mode.
+            for line in first...last { cache.removeValue(forKey: line) }
+            invalidate(d, in: tv, layoutManager: lm)
+            return
+        }
+        let editedLast = min(last, max(first, editLine))
         let edited = NSUnionRange(table.lineRange(first), table.lineRange(editedLast))
         var target: NSRange?
         if editedLinesHadConceal || !concealedSpans(in: edited).isEmpty { target = edited }

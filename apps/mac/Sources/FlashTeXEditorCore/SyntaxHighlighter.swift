@@ -582,6 +582,18 @@ public struct SyntaxHighlighter {
     public private(set) var length = 0
     /// Lines re-lexed by the last `edit` (evidence for tests/benchmarks).
     public private(set) var lastEditLinesLexed = 0
+    /// Lines after which the stored start states (`modes`, `atLetters`) may
+    /// be out of date, ascending. An `edit` given a line budget stops
+    /// re-lexing there instead of running to convergence (an opened
+    /// `\begin{verbatim}` or `\begin{comment}` changes every line to the end
+    /// of the buffer); `catchUp` continues. The state stored *at* a point is
+    /// current; between two points the stored states are one consistent lex,
+    /// so agreeing with them anywhere there is convergence up to the next
+    /// point. Readers (`runs`, `state`, `lineState`) answer correctly either
+    /// way.
+    public private(set) var stalePoints: [Int] = []
+    /// The first stale point, nil when every stored state is current.
+    public var staleFrom: Int? { stalePoints.first }
     /// What the buffer is lexed as; fixed for the model's life
     /// (`SyntaxPainter.language` swaps the model).
     public let language: Language
@@ -618,6 +630,7 @@ public struct SyntaxHighlighter {
         modes = [language.initialMode]
         atLetters = [language.initialAtLetter]
         lastEditLinesLexed = 0
+        stalePoints = []
         guard length > 0 else { return }
         let package = language == .package
         withUnits(of: text, range: NSRange(location: 0, length: length)) { units in
@@ -640,11 +653,18 @@ public struct SyntaxHighlighter {
     /// units; `text` is the new text. Re-lexes from the first affected line
     /// until the line-start modes converge. Returns the line-aligned range
     /// (new coordinates) whose runs may have changed.
-    public mutating func edit(range: NSRange, replacementLength: Int, text: NSString) -> NSRange {
+    ///
+    /// `lineBudget` bounds the re-lex: after that many lines without
+    /// convergence it stops and records `staleFrom` (nil: run to convergence).
+    public mutating func edit(range: NSRange, replacementLength: Int, text: NSString, lineBudget: Int? = nil) -> NSRange {
         let newLength = text.length
         precondition(newLength == length - range.length + replacementLength, "edit out of sync with the text")
         let first = line(at: range.location)
         let lastOld = line(at: NSMaxRange(range))
+        // The re-lex starts from `first`'s stored state: bring it up to date.
+        // Lines before `first` end at or before the edit, so the new text
+        // reads the same there as the text they were split from.
+        while let p = stalePoints.first, p < first { runForward(from: p, text: text, freshEnd: p, budget: first - p) }
         let delta = replacementLength - range.length
         // Line starts of the replaced region: rescan from the start of `first`
         // to the end of the line containing the end of the replacement.
@@ -677,31 +697,18 @@ public struct SyntaxHighlighter {
             }
         }
         length = newLength
-        // Re-lex from `first` until convergence.
-        let freshEndLine = first + fresh.count // first line whose stored mode is old
-        let package = language == .package
-        var lineIndex = first
-        var mode = modes[first]
-        var atLetter = atLetters[first]
-        var lexed = 0
-        var dirtyEnd = lineStarts[first]
-        while lineIndex < lineStarts.count {
-            let r = lineRange(lineIndex)
-            var runs: [Run] = []
-            withUnits(of: text, range: r) { units in
-                mode = Self.lex(units, from: 0, to: units.count, base: r.location, mode: mode, atLetter: &atLetter, package: package,
-                                runs: &runs, collect: false)
-            }
-            lexed += 1
-            dirtyEnd = NSMaxRange(r)
-            let next = lineIndex + 1
-            guard next < lineStarts.count else { break }
-            // Converged with an old line-start state (mode and `@` flag both).
-            if next > freshEndLine, modes[next] == mode, atLetters[next] == atLetter { break }
-            modes[next] = mode
-            atLetters[next] = atLetter
-            lineIndex = next
+        let lineDelta = fresh.count - (tail - first - 1)
+        // In new line numbers: past the edit, shifted; inside it (or at
+        // `first`), the line after `first`, which the run below passes.
+        var mapped: [Int] = []
+        for p in stalePoints {
+            let q = p > lastOld ? p + lineDelta : first + 1
+            if q < lineStarts.count - 1, mapped.last != q { mapped.append(q) }
         }
+        stalePoints = mapped
+        // Re-lex from `first` until convergence (or the budget).
+        let freshEndLine = first + fresh.count // first line whose stored mode is old
+        let (dirtyEnd, lexed) = runForward(from: first, text: text, freshEnd: freshEndLine, budget: lineBudget)
         lastEditLinesLexed = lexed
         return NSRange(location: lineStarts[first], length: dirtyEnd - lineStarts[first])
     }
@@ -716,9 +723,10 @@ public struct SyntaxHighlighter {
         let start = lineStarts[first]
         let end = NSMaxRange(lineRange(last))
         var runs: [Run] = []
-        var atLetter = atLetters[first]
+        let begin = lineState(first, text: text)
+        var atLetter = begin.atLetter
         withUnits(of: text, range: NSRange(location: start, length: end - start)) { units in
-            _ = Self.lex(units, from: 0, to: units.count, base: start, mode: modes[first], atLetter: &atLetter,
+            _ = Self.lex(units, from: 0, to: units.count, base: start, mode: begin.mode, atLetter: &atLetter,
                          package: language == .package, runs: &runs)
         }
         if start == range.location, end == NSMaxRange(range) { return runs }
@@ -764,14 +772,106 @@ public struct SyntaxHighlighter {
         let clamped = max(0, min(utf16, length))
         let index = line(at: clamped)
         let start = lineStarts[index]
-        guard clamped > start else { return (modes[index], atLetters[index]) }
+        let begin = lineState(index, text: text)
+        guard clamped > start else { return begin }
         var runs: [Run] = []
-        var atLetter = atLetters[index]
+        var atLetter = begin.atLetter
         let mode = withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
-            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], atLetter: &atLetter,
+            Self.lex(units, from: 0, to: units.count, base: start, mode: begin.mode, atLetter: &atLetter,
                      package: language == .package, runs: &runs, collect: false)
         }
         return (mode, atLetter)
+    }
+
+    /// The start state of line `index`: the stored one, or past a stale point
+    /// the one a lex forward gives (stopping where the stored states agree
+    /// again). Nothing is stored: `catchUp` does that.
+    public func lineState(_ index: Int, text: NSString) -> (mode: Mode, atLetter: Bool) {
+        guard let p0 = stalePoints.first, index > p0, text.length == length else { return (modes[index], atLetters[index]) }
+        let package = language == .package
+        var points = stalePoints[...].dropFirst()
+        var k = p0
+        var mode = modes[k], atLetter = atLetters[k]
+        while k < index {
+            let r = lineRange(k)
+            var runs: [Run] = []
+            withUnits(of: text, range: r) { units in
+                mode = Self.lex(units, from: 0, to: units.count, base: r.location, mode: mode, atLetter: &atLetter, package: package,
+                                runs: &runs, collect: false)
+            }
+            k += 1
+            if let p = points.first, p == k { points = points.dropFirst(); continue } // the run continues through a point
+            if modes[k] == mode, atLetters[k] == atLetter { // the stored states hold up to the next point
+                guard let p = points.first, p < index else { return (modes[index], atLetters[index]) }
+                k = p; mode = modes[p]; atLetter = atLetters[p]
+                points = points.dropFirst()
+            }
+        }
+        return (mode, atLetter)
+    }
+
+    /// Re-lexes up to `lines` more lines from the first stale point, storing
+    /// the states (an idle step). Returns the range whose runs may have
+    /// changed, nil when nothing was stale.
+    @discardableResult
+    public mutating func catchUp(lines: Int, text: NSString) -> NSRange? {
+        guard let p = stalePoints.first, text.length == length else { return nil }
+        let start = lineStarts[p]
+        let (end, _) = runForward(from: p, text: text, freshEnd: p, budget: max(1, lines))
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Brings every line start through `index` up to date (a reader about
+    /// to paint or query far below a stale point). Returns the changed range.
+    @discardableResult
+    public mutating func catchUp(through index: Int, text: NSString) -> NSRange? {
+        guard let p = stalePoints.first, index > p, text.length == length else { return nil }
+        let start = lineStarts[p]
+        var end = start
+        while let q = stalePoints.first, q < index {
+            end = max(end, runForward(from: q, text: text, freshEnd: q, budget: index - q).dirtyEnd)
+        }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Lexes forward from line `start` (whose stored state is current),
+    /// storing each next line's state, through the fresh lines (`freshEnd`),
+    /// until a stored state agrees (convergence up to the next stale point,
+    /// which stays), the end, or `budget` lines (which leaves a stale point).
+    /// Stale points the run passes are consumed. Returns the end of the
+    /// last line lexed and how many were.
+    @discardableResult
+    private mutating func runForward(from start: Int, text: NSString, freshEnd: Int, budget: Int?) -> (dirtyEnd: Int, lexed: Int) {
+        while let p = stalePoints.first, p <= start { stalePoints.removeFirst() }
+        let package = language == .package
+        var k = start
+        var mode = modes[k], atLetter = atLetters[k]
+        var lexed = 0
+        var dirtyEnd = lineStarts[k]
+        while k < lineStarts.count {
+            let r = lineRange(k)
+            var runs: [Run] = []
+            withUnits(of: text, range: r) { units in
+                mode = Self.lex(units, from: 0, to: units.count, base: r.location, mode: mode, atLetter: &atLetter, package: package,
+                                runs: &runs, collect: false)
+            }
+            lexed += 1
+            dirtyEnd = NSMaxRange(r)
+            let next = k + 1
+            guard next < lineStarts.count else { stalePoints = []; break }
+            let atPoint = stalePoints.first == next
+            if atPoint { stalePoints.removeFirst() } // passing it: the run itself continues past
+            // Converged with a stored line-start state (mode and `@` flag both).
+            if !atPoint, next > freshEnd, modes[next] == mode, atLetters[next] == atLetter { break }
+            modes[next] = mode
+            atLetters[next] = atLetter
+            k = next
+            if let budget, lexed >= budget, next > freshEnd {
+                if next < lineStarts.count - 1 { stalePoints.insert(next, at: 0) } // `modes[next]` is current; past it, not yet
+                break
+            }
+        }
+        return (dirtyEnd, lexed)
     }
 
     /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
