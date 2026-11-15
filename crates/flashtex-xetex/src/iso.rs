@@ -142,6 +142,14 @@ const NATIVE_NODE_SIZE: i32 = 6;
 const GLYPH_NODE_SIZE: i32 = 5;
 const PIC_NODE_SIZE: i32 = 9;
 
+/// What every word of a dead native character node holds
+/// (`Globals::flashtex_dead_node`, changes/checkpoint.ch): a node xetex.web
+/// makes only to ask for its glyph and never frees. Garbage, so the test
+/// reads a cell that holds this in either state as it reads a free cell.
+/// Its link half (`0x0BADF00D`) is not `empty_flag`, so the allocator never
+/// takes the node for a free one, and no live word the walk would have to
+/// compare is expected to hold this 64-bit value.
+pub const DEAD_NODE_WORD: u64 = 0x5EAD_DEAD_0BAD_F00D;
 /// [`Iso::check`]'s error when its `stop` said so.
 pub const STOPPED: &str = "stopped for newer work";
 /// Tasks between two questions to `stop` (a task is a node, a list, a token
@@ -2166,10 +2174,19 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             let (a, b) = (self.o.i32_at(l.cur_mark, k), self.n.i32_at(l.cur_mark, k));
             self.ptr(K::Tok, a, b);
         }
-        // disc_ptr[copy_code..vsplit_code]: the Rust array may start at 0
-        for k in 0..4 {
-            let (a, b) = (self.o.i32_at(l.disc_ptr, k), self.n.i32_at(l.disc_ptr, k));
-            self.ptr(K::List, a, b);
+        // disc_ptr[copy_code..vsplit_code], at Rust indices 0..3 (code - 1;
+        // three elements): tail_page_disc, page_disc, split_disc (etex.ch).
+        // tail_page_disc points into page_disc's list and is dead while
+        // page_disc is null: nothing resets it when fire_up, the end of an
+        // output routine or \pagediscards takes the list (#2433, the
+        // pdfTeX side's iso.rs).
+        let disc = |s: &Self, k: usize| (s.o.i32_at(l.disc_ptr, k), s.n.i32_at(l.disc_ptr, k));
+        let (page_disc, split_disc) = (disc(self, 1), disc(self, 2));
+        self.ptr(K::List, page_disc.0, page_disc.1);
+        self.ptr(K::List, split_disc.0, split_disc.1);
+        if page_disc != (NULL, NULL) {
+            let (a, b) = disc(self, 0);
+            self.later("tail_page_disc", a, b);
         }
         // sa_root[int_val..mark_val]
         for k in 0..=MARK_VAL as usize {
@@ -2439,8 +2456,13 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             if !Self::in_mem(p) {
                 return Err(format!("mem[{p}] differs outside the walked range"));
             }
-            let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
-            let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
+            // (a dead native character's word: garbage, `DEAD_NODE_WORD`)
+            let ok_o = bit(&w.cov_o, p)
+                || free_o.is_some_and(|f| bit(f, p))
+                || w.o.mem(p) == DEAD_NODE_WORD;
+            let ok_n = bit(&w.cov_n, p)
+                || free_n.is_some_and(|f| bit(f, p))
+                || w.n.mem(p) == DEAD_NODE_WORD;
             if !(ok_o && ok_n) {
                 return Err(format!(
                     "mem[{p}] differs outside what the walk compared ({})",
@@ -2486,7 +2508,9 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         if let Some(e) = w.err {
             return Err(e);
         }
-        let unreached = |p: i32| !bit(&w.cov_o, p) && !bit(free, p);
+        let unreached = |p: i32| {
+            !bit(&w.cov_o, p) && !bit(free, p) && g.mem[p as usize].to_bits() != DEAD_NODE_WORD
+        };
         let cells: Vec<i32> = (MEM_BOT..=g.lo_mem_max)
             .chain(g.hi_mem_min..=g.mem_end)
             .filter(|&p| unreached(p))
@@ -2623,7 +2647,7 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         let hi_end = g.mem_end;
         let mut ranges: Vec<(i32, i32)> = vec![];
         for p in (MEM_BOT..=g.lo_mem_max).chain(g.hi_mem_min..=hi_end) {
-            if !bit(&w.cov_o, p) && !bit(free, p) {
+            if !bit(&w.cov_o, p) && !bit(free, p) && g.mem[p as usize].to_bits() != DEAD_NODE_WORD {
                 count += 1;
                 if missed.len() < max {
                     missed.push(p);

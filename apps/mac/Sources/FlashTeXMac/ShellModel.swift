@@ -139,7 +139,10 @@ final class ShellModel {
         // now, in this run-loop turn, before the editor ingests the text.
         // While an open is choosing its engine (`engineChoicePending`), the
         // open path tells the session itself once the engine is known.
-        didSet { if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+        didSet {
+            if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) }
+            if oldValue == nil, documentURL != nil { dropUntitledDraft() } // UntitledDrafts.swift: the buffer has a file now
+        }
     }
     /// When `replaceProject` began (engine-v3 open → pixels timing).
     @ObservationIgnored var engineV3OpenedAt: UInt64?
@@ -455,7 +458,7 @@ final class ShellModel {
     }()
     /// True under XCTest, whichever of the two variables the runner sets
     /// (shared with `PreviewHUD.lingerSuppressed` / `ThinSplitViewController`).
-    static let runningUnderXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    nonisolated static let runningUnderXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
     /// Revision the editor buffer corresponds to. Bumps on every edit so the
     /// UI can say when the preview's source ranges no longer match the buffer.
@@ -625,7 +628,18 @@ final class ShellModel {
     /// ProjectScaffold.swift).
     enum Startup { case fixture, untitledDocument }
 
-    init(startup: Startup = .fixture) {
+    /// The app's window list this model's window belongs to
+    /// (ProjectWindows.swift): File › Open and New Project go through it, so
+    /// a document already open elsewhere comes forward instead of opening
+    /// twice. nil for a model made outside it (tests, automation), which
+    /// opens files in place as before.
+    @ObservationIgnored weak var windows: ProjectWindows?
+
+    /// `launchHooks`: this is the app's first window (or a test's model),
+    /// which alone seeds from `FLASHTEX_SEED_FILE` and attaches the capture
+    /// bridge. A second window must not start a second bridge on the same
+    /// store (ProjectWindows.swift).
+    init(startup: Startup = .fixture, launchHooks: Bool = true) {
         let env = ProcessInfo.processInfo.environment
         // Caret following asks for the target only when a follow actually
         // fires, so this closure runs at most once per debounce interval.
@@ -637,29 +651,36 @@ final class ShellModel {
             return EditorDiagnostics.lineNumber(ofByte: byte, in: self.activeText)
         }
         defer {
-            // Demo/automation hook: seed the editor from a .tex file.
-            if let seed = env["FLASHTEX_SEED_FILE"], let text = try? String(contentsOfFile: seed, encoding: .utf8) {
-                replaceProject(entryText: text, named: URL(fileURLWithPath: seed).lastPathComponent)
-                documentURL = URL(fileURLWithPath: seed)
-                savedText = text
-            }
-            let bundledBridge = Bundle.main.executableURL?.deletingLastPathComponent()
-                .appendingPathComponent("flashtex-bridge").path
-            let hasBundledBridge = bundledBridge.map { FileManager.default.isExecutableFile(atPath: $0) } ?? false
-            if env["FLASHTEX_AUTOATTACH"] != "0", (env["FLASHTEX_AUTOATTACH"] == "1" || hasBundledBridge),
-               BridgeClient.locateBridge() != nil {
-                attachDiscoveredBridge()
-            }
+            if launchHooks { runLaunchHooks(env) }
             refreshChrome() // ShellChrome.swift: from here on the chrome follows the model, throttled
         }
         if startup == .untitledDocument {
             loadUntitledDocument()
+            recoverUntitledDraft() // UntitledDrafts.swift: a crash's unsaved untitled text, if any
         } else if let fixtures = Self.locateFixturesDirectory() {
             loadFixtures(request: fixtures.appendingPathComponent("compile-request.json"),
                          result: fixtures.appendingPathComponent("compile-result.json"))
         } else {
             loadError = "Could not locate protocol/fixtures (set FLASHTEX_REPO or use File > Open)."
             documents = [.init(path: "main.tex", text: "")]
+        }
+    }
+
+    /// Once per app (the first window's model): the seed file and the
+    /// capture bridge's auto-attach.
+    private func runLaunchHooks(_ env: [String: String]) {
+        // Demo/automation hook: seed the editor from a .tex file.
+        if let seed = env["FLASHTEX_SEED_FILE"], let text = try? String(contentsOfFile: seed, encoding: .utf8) {
+            replaceProject(entryText: text, named: URL(fileURLWithPath: seed).lastPathComponent)
+            documentURL = URL(fileURLWithPath: seed)
+            savedText = text
+        }
+        let bundledBridge = Bundle.main.executableURL?.deletingLastPathComponent()
+            .appendingPathComponent("flashtex-bridge").path
+        let hasBundledBridge = bundledBridge.map { FileManager.default.isExecutableFile(atPath: $0) } ?? false
+        if env["FLASHTEX_AUTOATTACH"] != "0", (env["FLASHTEX_AUTOATTACH"] == "1" || hasBundledBridge),
+           BridgeClient.locateBridge() != nil {
+            attachDiscoveredBridge()
         }
     }
 
@@ -812,7 +833,9 @@ final class ShellModel {
     func scheduleAutosave() {
         autosaveWork?.cancel()
         autosaveWork = nil
-        guard EditorPreferences.shared.autosave, documentURL != nil else { return }
+        // A buffer with no file keeps a crash draft instead, whatever the
+        // setting (UntitledDrafts.swift); never a Save panel.
+        guard documentURL == nil || EditorPreferences.shared.autosave else { return }
         let item = DispatchWorkItem { [weak self] in self?.performAutosave() }
         autosaveWork = item
         guard !Self.autosaveSuppressedUnderTest else { return } // flushPendingAutosave() performs it, on demand
@@ -827,7 +850,8 @@ final class ShellModel {
     /// skipped here; `enqueueSave` re-arms autosave if it was edited meanwhile.
     private func performAutosave() {
         autosaveWork = nil
-        guard EditorPreferences.shared.autosave, documentURL != nil else { return }
+        if documentURL == nil { keepUntitledDraft(); return } // UntitledDrafts.swift
+        guard EditorPreferences.shared.autosave else { return }
         let entry = project.entryPath
         if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil {
             saveEntryTex()

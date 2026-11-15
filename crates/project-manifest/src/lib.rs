@@ -573,10 +573,6 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
     pub fn with_fonts(text: &str, fonts: &Fonts) -> String {
         const KEYS: [&str; 4] = ["text", "math", "mono", "sans"];
         let is_header = |line: &str| line.trim_start().starts_with('[');
-        let is_fonts_header = |line: &str| {
-            let t = line.trim_start();
-            t.strip_prefix("[fonts]").is_some_and(|rest| rest.trim_start().is_empty() || rest.trim_start().starts_with('#'))
-        };
         // A `text = …` line, or the template's `# text = …` placeholder.
         let is_known_key = |line: &str| {
             let t = line.trim_start();
@@ -590,7 +586,7 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
             }
         }
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
-        let Some(start) = lines.iter().position(|l| is_fonts_header(l)) else {
+        let Some(start) = lines.iter().position(|l| header_name(l).as_deref() == Some("fonts")) else {
             if fonts.is_empty() {
                 return text.to_string();
             }
@@ -657,10 +653,6 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
             return text.to_string();
         }
         let is_header = |line: &str| line.trim_start().starts_with('[');
-        let is_packages_header = |line: &str| {
-            let t = line.trim_start();
-            t.strip_prefix("[packages]").is_some_and(|rest| rest.trim_start().is_empty() || rest.trim_start().starts_with('#'))
-        };
         // The key a `fetch = …` or `# fetch = …` line sets, when it is one we write.
         let key_of = |line: &str| -> Option<&'static str> {
             let t = line.trim_start();
@@ -669,7 +661,7 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
         };
         let render = |key: &str, value: &str, comment: &str| format!("{key} = {value}{comment}\n");
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
-        let Some(start) = lines.iter().position(|l| is_packages_header(l)) else {
+        let Some(start) = lines.iter().position(|l| header_name(l).as_deref() == Some("packages")) else {
             let mut out = text.to_string();
             if !out.is_empty() && !out.ends_with('\n') {
                 out.push('\n');
@@ -733,10 +725,9 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
     ///   `# mode = …` line and a `mode` key of another table are left alone.
     /// - Without one, `mode = …` is added after the table's last line that is
     ///   not blank.
-    /// - Without a `[project]` table: if keys before the first table set
-    ///   `project.…` (dotted keys), `project.mode = …` is added after the last
-    ///   of them; otherwise a `[project]` table is appended at the end of the
-    ///   file, so no key before the first table changes table.
+    /// - Without a `[project]` table: an existing root `project.mode` dotted
+    ///   key is replaced; otherwise it is added after the last `project.…`
+    ///   key, or a `[project]` table is appended at the end of the file.
     ///
     /// The helper parses the result and refuses it unless it reads back as
     /// the original with only `mode` changed (an inline `project = { … }`
@@ -749,14 +740,6 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
         let nl = if body.contains("\r\n") { "\r\n" } else { "\n" };
         let value = quote(mode.as_str());
         let lines: Vec<&str> = body.split_inclusive('\n').collect();
-        let header_name = |line: &str| -> Option<String> {
-            let t = line.trim_start();
-            if !t.starts_with('[') || t.starts_with("[[") {
-                return t.starts_with("[[").then(|| String::from("[["));
-            }
-            let close = t.find(']')?;
-            Some(t[1..close].trim().to_string())
-        };
         let is_header = |line: &str| header_name(line).is_some();
         // the key of a `key = …` line (not a comment), trimmed
         let key_of = |line: &str| -> Option<String> {
@@ -766,6 +749,16 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
             }
             let (k, _) = t.split_once('=')?;
             Some(k.trim().to_string())
+        };
+        let project_key = |line: &str| -> Option<String> {
+            let key = key_of(line)?;
+            let (table, field) = key.split_once('.')?;
+            (unquoted_key(table.trim()) == "project").then(|| unquoted_key(field.trim()).to_string())
+        };
+        let replace = |line: &str, key: &str| {
+            let eol = if line.ends_with("\r\n") { "\r\n" } else if line.ends_with('\n') { "\n" } else { "" };
+            let indent = &line[..line.len() - line.trim_start().len()];
+            format!("{indent}{key} = {value}{}{eol}", trailing_comment(line.trim_end_matches(['\r', '\n'])))
         };
         let ensure_nl = |out: &mut String| {
             if !out.is_empty() && !out.ends_with('\n') {
@@ -779,9 +772,7 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
             let last_content = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap_or(start);
             for (i, l) in lines.iter().enumerate() {
                 if Some(i) == existing {
-                    let eol = if l.ends_with("\r\n") { "\r\n" } else if l.ends_with('\n') { "\n" } else { "" };
-                    let indent = &l[..l.len() - l.trim_start().len()];
-                    out.push_str(&format!("{indent}mode = {value}{}{eol}", trailing_comment(l.trim_end_matches(['\r', '\n']))));
+                    out.push_str(&replace(l, "mode"));
                     continue;
                 }
                 out.push_str(l);
@@ -793,11 +784,16 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
             return out;
         }
         let first_table = lines.iter().position(|l| is_header(l)).unwrap_or(lines.len());
-        let dotted = (0..first_table).rev().find(|&i| key_of(lines[i]).is_some_and(|k| k.starts_with("project.")));
+        let existing = (0..first_table).find(|&i| project_key(lines[i]).as_deref() == Some("mode"));
+        let dotted = (0..first_table).rev().find(|&i| project_key(lines[i]).is_some());
         if let Some(at) = dotted {
             for (i, l) in lines.iter().enumerate() {
-                out.push_str(l);
-                if i == at {
+                if Some(i) == existing {
+                    out.push_str(&replace(l, "project.mode"));
+                } else {
+                    out.push_str(l);
+                }
+                if existing.is_none() && i == at {
                     ensure_nl(&mut out);
                     out.push_str(&format!("project.mode = {value}{nl}"));
                 }
@@ -825,6 +821,27 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
     pub fn write_default(path: &Path) -> io::Result<()> {
         Self::write_template(path, "main.tex")
     }
+}
+
+fn header_name(line: &str) -> Option<String> {
+    let t = line.trim_start();
+    if !t.starts_with('[') || t.starts_with("[[") {
+        return t.starts_with("[[").then(|| String::from("[["));
+    }
+    let close = t.find(']')?;
+    Some(unquoted_key(t[1..close].trim()).to_string())
+}
+
+// Quoted TOML keys with escapes need a parser; leave them unmatched here.
+fn unquoted_key(key: &str) -> &str {
+    if let Some(inner) = key.strip_prefix('"').and_then(|k| k.strip_suffix('"')) {
+        if !inner.contains('\\') {
+            return inner;
+        }
+    } else if let Some(inner) = key.strip_prefix('\'').and_then(|k| k.strip_suffix('\'')) {
+        return inner;
+    }
+    key
 }
 
 /// The `   # comment` tail of a key line (with its leading whitespace), or
@@ -1183,6 +1200,18 @@ name = "mylib"
     }
 
     #[test]
+    fn with_fonts_recognizes_spaced_or_quoted_table_header() {
+        let fonts = Fonts { text: Some("New".into()), ..Fonts::default() };
+        for header in ["[fonts ]", "[ fonts ]", "[\"fonts\"]", "['fonts']", "[ \"fonts\" ]", "[ 'fonts' ]"] {
+            let before = format!("{header}\ntext = \"Old\"\n");
+            assert!(Manifest::parse(&before).is_ok());
+            let after = Manifest::with_fonts(&before, &fonts);
+            assert_eq!(after, format!("{header}\ntext = \"New\"\n"));
+            assert_eq!(Manifest::parse(&after).unwrap().manifest.fonts, fonts);
+        }
+    }
+
+    #[test]
     fn with_packages_rewrites_only_the_named_keys_and_round_trips() {
         let mut pins = BTreeMap::new();
         pins.insert("siunitx".to_string(), "3.3.24".to_string());
@@ -1221,6 +1250,17 @@ name = "mylib"
         assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Never);
         assert_eq!(trailing_comment("fetch = \"a # not a comment\"   # real"), "   # real");
         assert_eq!(trailing_comment("fetch = \"ask\""), "");
+    }
+
+    #[test]
+    fn with_packages_recognizes_spaced_or_quoted_table_header() {
+        for header in ["[packages ]", "[ packages ]", "[\"packages\"]", "['packages']", "[ \"packages\" ]", "[ 'packages' ]"] {
+            let before = format!("{header}\nfetch = \"ask\"\n");
+            assert!(Manifest::parse(&before).is_ok());
+            let after = Manifest::with_packages(&before, Some(FetchPolicy::Never), None);
+            assert_eq!(after, format!("{header}\nfetch = \"never\"\n"));
+            assert_eq!(Manifest::parse(&after).unwrap().manifest.packages.fetch, FetchPolicy::Never);
+        }
     }
 
     #[test]
@@ -1273,6 +1313,39 @@ name = "mylib"
     }
 
     #[test]
+    fn with_mode_replaces_a_dotted_project_mode() {
+        let before = "project.entry = \"a.tex\"\nproject.mode = \"classic\"\n";
+        assert_eq!(check_with_mode(before, Mode::Unicode), "project.entry = \"a.tex\"\nproject.mode = \"unicode\"\n");
+
+        let before = "  project . mode = \"classic\" # chosen\r\nproject . entry = \"a.tex\"\r\n";
+        assert_eq!(check_with_mode(before, Mode::Unicode), "  project.mode = \"unicode\" # chosen\r\nproject . entry = \"a.tex\"\r\n");
+
+        let before = "project . entry = \"a.tex\"\n[fonts]\ntext = \"X\"\n";
+        assert_eq!(check_with_mode(before, Mode::Unicode), "project . entry = \"a.tex\"\nproject.mode = \"unicode\"\n[fonts]\ntext = \"X\"\n");
+
+        for key in ["project.\"mode\"", "project.'mode'", "\"project\".mode", "'project'.mode", "\"project\".'mode'", "project . \"mode\""] {
+            let before = format!("{key} = \"classic\" # chosen\n");
+            let after = check_with_mode(&before, Mode::Unicode);
+            assert_eq!(after, "project.mode = \"unicode\" # chosen\n", "{key}");
+        }
+    }
+
+    #[test]
+    fn with_mode_recognizes_quoted_project_header() {
+        for header in ["[\"project\"]", "['project']", "[ \"project\" ]"] {
+            let before = format!("{header}\nmode = \"classic\"\n");
+            let after = check_with_mode(&before, Mode::Unicode);
+            assert_eq!(after, format!("{header}\nmode = \"unicode\"\n"));
+        }
+    }
+
+    #[test]
+    fn escaped_basic_keys_are_not_matched() {
+        assert_eq!(unquoted_key(r#""mo\u0064e""#), r#""mo\u0064e""#);
+        assert_eq!(header_name("[\"fon\\u0074s\"]\n").as_deref(), Some("\"fon\\u0074s\""));
+    }
+
+    #[test]
     fn with_mode_keeps_a_bom_and_crlf() {
         let t = "\u{feff}[project]\r\nentry = \"a.tex\"\r\n\r\n[fonts]\r\ntext = \"X\"\r\n";
         let w = check_with_mode(t, Mode::Unicode);
@@ -1293,5 +1366,164 @@ name = "mylib"
         // an indented key, and `[ project ]` with spaces
         let t = "[ project ]\n  mode = \"classic\"\n";
         assert_eq!(check_with_mode(t, Mode::Unicode), "[ project ]\n  mode = \"unicode\"\n");
+    }
+
+    #[test]
+    fn texinput_edge_cases() {
+        let root = Path::new("/home/u/proj");
+        // The project directory itself, however written.
+        for raw in ["", ".", "./", "a/.."] {
+            match classify_texinput(raw, root) {
+                TexInputLocation::Invalid(m) => assert!(m.contains("project directory itself"), "{raw:?}: {m}"),
+                other => panic!("{raw:?}: expected Invalid, got {other:?}"),
+            }
+        }
+        // `..` mixes with real segments lexically.
+        assert_eq!(classify_texinput("..", root), TexInputLocation::Outside(PathBuf::from("/home/u")));
+        assert_eq!(classify_texinput("a/b/..", root), TexInputLocation::Inside("a".into()));
+        assert_eq!(classify_texinput("sub/../../x", root), TexInputLocation::Outside(PathBuf::from("/home/u/x")));
+        assert_eq!(classify_texinput("a/./b", root), TexInputLocation::Inside("a/b".into()));
+        // Control characters and NUL are forbidden like `\` and `:`.
+        for raw in ["a\tb", "a\nb", "a\0b"] {
+            match classify_texinput(raw, root) {
+                TexInputLocation::Invalid(m) => assert!(m.contains("forbidden character"), "{raw:?}: {m}"),
+                other => panic!("{raw:?}: expected Invalid, got {other:?}"),
+            }
+        }
+        // File names: the match is on the final extension, case-sensitively.
+        assert!(is_texinput_file("archive.tar.sty"));
+        for name in ["", "a.STY", "a.", "a.sty ", "Makefile"] {
+            assert!(!is_texinput_file(name), "{name:?}");
+        }
+        assert_eq!(outside_virtual_dir(0), "texinputs/0");
+        assert!(outside_virtual_dir(7).starts_with(&format!("{OUTSIDE_PREFIX}/")));
+    }
+
+    #[test]
+    fn non_table_sections_warn_and_read_as_default() {
+        let p = Manifest::parse("project = \"x\"\nfonts = 1\npackages = []\nlibrary = \"y\"\n").unwrap();
+        let keys: Vec<&str> = p.warnings.iter().map(|w| w.key.as_str()).collect();
+        assert_eq!(keys, vec!["project", "fonts", "packages", "library"], "{:?}", p.warnings);
+        assert!(p.warnings.iter().all(|w| w.message.contains("expected a table")));
+        assert_eq!(p.manifest, Manifest::default());
+    }
+
+    #[test]
+    fn bad_collection_items_warn_with_indexed_paths() {
+        let p = Manifest::parse(
+            "[project]\ntexinputs = [\"ok\", 3, \"also-ok\"]\nmode = 3\nflashtex_version = 1\n[packages]\npin = \"x\"\npath = { good = \"../g\", bad = 7 }\n[library]\nversion = \"1\"\n",
+        )
+        .unwrap();
+        let keys: Vec<&str> = p.warnings.iter().map(|w| w.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "project.texinputs[1]",
+                "project.mode",
+                "project.flashtex_version",
+                "packages.pin",
+                "packages.path.bad",
+                "library.version",
+                "library"
+            ],
+            "{:?}",
+            p.warnings
+        );
+        assert_eq!(p.manifest.project.texinputs, vec!["ok", "also-ok"]);
+        assert_eq!(p.manifest.packages.path.len(), 1);
+        assert_eq!(p.manifest.library, None);
+        // A `[packages.pin]` subtable is the same map as the inline form.
+        let p = Manifest::parse("[packages.pin]\nsiunitx = \"3.3.24\"\n").unwrap();
+        assert!(p.warnings.is_empty(), "{:?}", p.warnings);
+        assert_eq!(p.manifest.packages.pin.get("siunitx").map(String::as_str), Some("3.3.24"));
+    }
+
+    #[test]
+    fn load_reports_syntax_and_io_errors_and_keeps_warnings() {
+        let d = tmp("load-err");
+        let bad = d.join("bad.toml");
+        std::fs::write(&bad, "[project\nentry = ").unwrap();
+        match Manifest::load(&bad) {
+            Err(ManifestError::Syntax(m)) => assert!(!m.is_empty()),
+            other => panic!("expected a syntax error, got {other:?}"),
+        }
+        // A directory is not a missing file: an I/O error, never the default.
+        match Manifest::load(&d) {
+            Err(ManifestError::Io(_)) => {}
+            other => panic!("expected an I/O error, got {other:?}"),
+        }
+        let warned = d.join(FILE_NAME);
+        std::fs::write(&warned, "[project]\nentry = \"m.tex\"\ntypo = 1\n").unwrap();
+        let loaded = Manifest::load(&warned).unwrap();
+        assert_eq!(loaded.found.as_deref(), Some(warned.as_path()));
+        assert_eq!(loaded.manifest.project.entry.as_deref(), Some("m.tex"));
+        assert_eq!(loaded.warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>(), vec!["project.typo"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn to_toml_omits_empty_optionals_and_keeps_defaults_explicit() {
+        let t = Manifest::default().to_toml();
+        assert!(t.starts_with("[project]\n"), "{t}");
+        for line in ["texinputs = []", "source = \"ctan\"", "fetch = \"ask\""] {
+            assert!(t.contains(line), "{line} missing:\n{t}");
+        }
+        for absent in ["[fonts]", "[library]", "pin =", "path =", "mode =", "entry =", "output ="] {
+            assert!(!t.contains(absent), "{absent} should be omitted:\n{t}");
+        }
+        let mut m = Manifest::default();
+        m.project.mode = Some(Mode::FlashTeX);
+        m.project.flashtex_version = Some("1.0".into());
+        m.fonts.sans = Some("Inter".into());
+        let t = m.to_toml();
+        assert!(t.contains("mode = \"flashtex\"") && t.contains("flashtex_version = \"1.0\""), "{t}");
+        assert!(t.contains("[fonts]\nsans = \"Inter\"\n"), "{t}");
+        assert_eq!(Manifest::parse(&t).unwrap().manifest, m);
+    }
+
+    #[test]
+    fn with_packages_dedupes_and_replaces_placeholders() {
+        // A duplicated key line collapses to one with the new value.
+        let t = Manifest::with_packages("[packages]\nfetch = \"ask\"\nfetch = \"ask\"\n", Some(FetchPolicy::Never), None);
+        assert_eq!(t, "[packages]\nfetch = \"never\"\n");
+        // A commented-out key is replaced in place, not appended beside.
+        let mut pins = BTreeMap::new();
+        pins.insert("siunitx".to_string(), "3.3.24".to_string());
+        let t = Manifest::with_packages("[packages]\n# fetch = \"ask\"\n# pin = {}\n", Some(FetchPolicy::Always), Some(&pins));
+        let p = Manifest::parse(&t).unwrap();
+        assert_eq!(p.manifest.packages.fetch, FetchPolicy::Always);
+        assert_eq!(p.manifest.packages.pin, pins);
+        assert_eq!(t.lines().filter(|l| l.contains("fetch =")).count(), 1);
+        assert!(t.lines().any(|l| l.starts_with("fetch = \"always\"")), "{t}");
+        // An empty file grows just the table.
+        assert_eq!(Manifest::with_packages("", Some(FetchPolicy::Never), None), "[packages]\nfetch = \"never\"\n");
+    }
+
+    #[test]
+    fn with_mode_ignores_lookalike_tables_and_keeps_crlf_comments() {
+        // `[projectx]` is not `[project]`: a real table is appended.
+        let w = check_with_mode("[projectx]\nmode = \"z\"\n", Mode::Unicode);
+        assert_eq!(w, "[projectx]\nmode = \"z\"\n\n[project]\nmode = \"unicode\"\n");
+        // Replacing in place keeps CRLF and the trailing comment.
+        let w = check_with_mode("[project]\r\nmode = \"classic\" # chosen\r\n", Mode::Unicode);
+        assert_eq!(w, "[project]\r\nmode = \"unicode\" # chosen\r\n");
+        // A file of only comments grows a table after a blank line.
+        assert_eq!(
+            check_with_mode("# just a comment\n", Mode::Classic),
+            "# just a comment\n\n[project]\nmode = \"classic\"\n"
+        );
+    }
+
+    #[test]
+    fn quoting_helpers_quote_only_when_needed() {
+        assert_eq!(quote_key("siunitx"), "siunitx");
+        assert_eq!(quote_key("a-b_c9"), "a-b_c9");
+        assert_eq!(quote_key("odd name"), "\"odd name\"");
+        assert_eq!(quote_key("a.b"), "\"a.b\"");
+        assert_eq!(quote_key(""), "\"\"");
+        assert_eq!(quote("plain"), "\"plain\"");
+        assert_eq!(trailing_comment("k = \"a\\\"#b\" # real"), " # real");
+        assert_eq!(trailing_comment("k = \"#\""), "");
+        assert_eq!(trailing_comment("k = \"a\\\\\" # c"), " # c");
     }
 }

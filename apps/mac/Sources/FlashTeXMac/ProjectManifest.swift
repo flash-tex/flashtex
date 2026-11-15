@@ -34,7 +34,7 @@ import FlashTeXProtocol
 @Observable
 @MainActor
 final class ProjectManifest {
-    static let fileName = "flashtex.toml"
+    nonisolated static let fileName = "flashtex.toml"
 
     /// Why a manifest read or a folder open was refused.
     struct Failure: Error, Equatable, Sendable {

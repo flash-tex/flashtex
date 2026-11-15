@@ -1,0 +1,2 @@
+{"wall_s": 0.945, "utime_s": 0.7427, "stime_s": 0.0401, "maxrss": 75776, "status": 0, "load1": 7.41, "instr": 9666068282, "cycles": 3483923283, "pdf": "0f199e16efd441be", "doc": "full-100", "engine": "e0-origin_main", "variant": "dbg", "rep": 0}
+{"wall_s": 0.86, "utime_s": 0.6833, "stime_s": 0.0398, "maxrss": 69956, "status": 0, "load1": 7.41, "instr": 8976217039, "cycles": 3226528816, "pdf": "0f199e16efd441be", "doc": "full-100", "engine": "e1-in_agent_kabir-claude-l6_bm-first-write", "variant": "dbg", "rep": 0}

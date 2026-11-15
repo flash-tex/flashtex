@@ -1,0 +1,25 @@
+% Preview probe: colour stacks across page breaks. pdfTeX starts each page
+% with every page stack's current value (pdf_out_colorstack_startpage); a
+% `direct` stack is not restored. Grey, RGB and CMYK, a page colour, and a
+% colour that runs through a footnote and the page break.
+\documentclass{article}
+\usepackage{xcolor}
+\pagecolor{yellow!15}
+\newcount\n
+\def\filler#1{\n=0 \loop Words of filler text that run on and on across the lines.
+  \advance\n 1 \ifnum\n<#1 \repeat}
+\chardef\mystack=\pdfcolorstackinit page direct{0 g}\relax
+\begin{document}
+Black text first. \color{red}From here on red, through a footnote\footnote{A
+footnote, in the colour of its call? No: its own, black.} and the page break.
+\filler{55}
+\color[cmyk]{0.1,0.9,0.2,0.1}Now CMYK, across the next break. \filler{48}
+\color[gray]{0.45}Now grey. \filler{10}
+\normalcolor Black again, then a page stack of our own:
+\pdfcolorstack\mystack push{0 0 1 rg}blue from the stack \filler{40}
+\pdfcolorstack\mystack pop black.
+
+\newpage
+\pagecolor{white}
+\textcolor{blue}{A coloured word} and \fcolorbox{red}{green!20}{a framed box}.
+\end{document}

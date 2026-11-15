@@ -73,6 +73,8 @@ set -euo pipefail
 set -o pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Check G's helper lives next to this script ($ROOT may be a fixture tree in tests).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Tests only (scripts/tests/check-license-boundary.test.sh): check another tree.
 if [[ -n "${FLASHTEX_BOUNDARY_ROOT:-}" ]]; then
   ROOT="$(cd "$FLASHTEX_BOUNDARY_ROOT" && pwd)"
@@ -883,7 +885,9 @@ else
   fi
   f_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
   printf '%s' "$f_meta" > "$f_file"
-  f_report="$(MKI="$MKI_PKG" ENGINE="${ENGINE_PKG:-flashtex-engine}" python3 - "$f_file" <<'PY'
+  # Not inside $(...), as in D: bash 3.2 mis-parses quotes in a heredoc there.
+  f_out="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  MKI="$MKI_PKG" ENGINE="${ENGINE_PKG:-flashtex-engine}" python3 - "$f_file" > "$f_out" <<'PY'
 import collections, json, os, sys
 
 mki, engine = os.environ["MKI"], os.environ["ENGINE"]
@@ -915,8 +919,8 @@ if bad:
 else:
     print("OK\tonly %s links %s" % (engine, mki))
 PY
-)"
-  rm -f "$f_file"
+  f_report="$(cat "$f_out")"
+  rm -f "$f_file" "$f_out"
   while IFS="$(printf '\t')" read -r kind a; do
     [[ -n "${kind:-}" ]] || continue
     case "$kind" in
@@ -948,17 +952,8 @@ for ws in $G_WORKSPACES; do
   fi
   g_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
   printf '%s' "$g_meta" > "$g_file"
-  g_report="$(python3 - "$g_file" <<'PY'
-import json, sys
-
-meta = json.load(open(sys.argv[1], encoding="utf-8"))
-bad = sorted(p["name"] for p in meta["packages"] if not p.get("license") and not p.get("license_file"))
-for b in bad:
-    print("FAIL\t%s declares no licence (add license = \"MIT\", or license-file for other terms)" % b)
-if not bad:
-    print("OK\tall %d packages declare a licence" % len(meta["packages"]))
-PY
-)"
+  # Check G's report script lives in a file next to this script (see SCRIPT_DIR above).
+  g_report="$(python3 "$SCRIPT_DIR/lib/licence_report.py" "$g_file")"
   rm -f "$g_file"
   while IFS="$(printf '\t')" read -r kind a; do
     [[ -n "${kind:-}" ]] || continue

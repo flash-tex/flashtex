@@ -1288,7 +1288,7 @@ final class NearbySession {
         let memory = memory
         let pairing = pairing
         sink.submit(envelope) { [weak self] reply in
-            let finish: () -> Void = { [weak self] in
+            let finish: () -> Void = {
                 release()
                 if let header = try? RuntimeV1.header(of: reply), header.type == "capture_received",
                    let env = try? JSONDecoder().decode(RuntimeV1.Envelope<NearbyV1.CaptureReceived>.self, from: reply) {

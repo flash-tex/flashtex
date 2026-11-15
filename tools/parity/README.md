@@ -65,6 +65,21 @@ Its P-T2 is measured.
   if its own conversion would fail (no shell escape, no Ghostscript). Each document's
   P-T record gives `seeded_conversions`, and the report and summary line
   count the seeded documents.
+- **`-halt-on-error` for both, unless `--no-halt-on-error`.** By default
+  pdflatex stops at a document's first `! ` error, so the document is
+  excluded by the oracle. That happens to about a quarter of arXiv
+  e-prints, though arXiv and every editor run them on in nonstopmode.
+  With `--no-halt-on-error` both engines run on past every error. A pass
+  that exits 1 counts as compiled only with a PDF it wrote itself: the
+  output PDF is removed before each pass (`capture.drop_stale_pdf`), because
+  a TeX Live doc directory ships its document's PDF beside it. P-T1 then
+  compares the error messages and the recovery like any other line. The
+  last pass's exit status and its log's error count (`! ` lines,
+  `capture.error_count`) are recorded for both. The candidate reaches L0 and
+  passes P-T2 only with the same values as the oracle's (`same_errors`): the
+  same PDF after another number of errors is not the same run. Every
+  cache key made this way says so (`capture.NO_HALT_V`). A halting run's
+  keys and verdicts are unchanged.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
   `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
   random numbers differ from run to run. Every pass of every TeX engine the
@@ -310,6 +325,19 @@ alignment of `tools/parity/wordalign.py`, pairs), the first diverging page, and
   It is `on_demand`: it runs only when named (`--tier beamer`), with
   `--pt1-timeout 3600` (the 118-page deck's traced pass is the longest).
   The ten `fixtures/real-world/beamer-*` decks stay in the fixtures tier.
+
+- **hunt-arxiv** and **hunt-texlive** (lane PARITY-HUNT, 2026-11-01): corpora
+  beyond T3 and T4, for finding where parity still breaks. Both are `on_demand`.
+  - `corpus/hunt-arxiv-2k.json` is drawn by `select-arxiv-grid` exactly as
+    nightly-5k is, with its own seed (`flashtex-parityhunt-1`) and 20 primary
+    categories nightly-5k doesn't have (math.DG, cs.SE, physics.optics,
+    nucl-th, econ.EM, …): 10 per (category, year) cell, 2016–2025.
+  - `corpus/hunt-texlive-2026.json` holds the templates, theses, slide decks,
+    posters, CVs, letters, exams and journal samples shipped in TeX Live 2026's
+    `doc/latex`, at most 2 per package. The rule is in the manifest's
+    `selection`. Like `templates` it needs a TeX Live with doc files (a Mac).
+  - `.github/workflows/parity-hunt.yml` runs any tier of any ref on the NixOS
+    PC by hand, in a cache of the lane's own, and is never a gate.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies

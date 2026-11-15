@@ -46,6 +46,15 @@ pub trait Env {
     fn font_problem(&mut self, _font: u32) -> Option<String> {
         None
     }
+    /// Whether TeX has typeset `code` in font `/F<font>` (pdfTeX's
+    /// `pdf_char_marked`, on the font or on one sharing its PDF font
+    /// object). A code it has not typeset, shown by a `\pdfliteral`, is not
+    /// in the PDF's font subset, and outside `/FirstChar`..`/LastChar` its
+    /// width is 0: the display list cannot draw it from the font program.
+    /// By default, every code.
+    fn typeset(&mut self, _font: u32, _code: u8) -> bool {
+        true
+    }
     /// The resource-name prefix (`\pdfpkresolution`'s `pdf_resname_prefix`).
     fn resname_prefix(&self) -> &[u8];
 }
@@ -239,6 +248,8 @@ struct AdvCache {
     fs: Fx,
     known: [bool; 256],
     val: Box<[Option<(Fx, f64)>; 256]>,
+    /// `Env::typeset` of each code, asked with its advance.
+    typeset: [bool; 256],
 }
 
 impl AdvCache {
@@ -248,6 +259,7 @@ impl AdvCache {
             fs: Fx::ZERO,
             known: [false; 256],
             val: Box::new([None; 256]),
+            typeset: [true; 256],
         }
     }
     fn reset(&mut self, font: u32, fs: Fx) {
@@ -260,9 +272,10 @@ impl AdvCache {
     fn get(&self, code: u8) -> Option<Option<(Fx, f64)>> {
         self.known[code as usize].then(|| self.val[code as usize])
     }
-    fn set(&mut self, code: u8, a: Option<(Fx, f64)>) {
+    fn set(&mut self, code: u8, a: Option<(Fx, f64)>, typeset: bool) {
         self.known[code as usize] = true;
         self.val[code as usize] = a;
+        self.typeset[code as usize] = typeset;
     }
 }
 
@@ -1056,6 +1069,11 @@ impl<'a, E: Env> Interp<'a, E> {
                         }
                         self.page.items.push(Item::Image { id: n, matrix: mi });
                     } else if let Some(n) = num(b"Fm") {
+                        if !self.initial_state() {
+                            // The PDF draws the form in this colour, text
+                            // render mode, pen; the FORM would start black.
+                            self.unsupported("a form drawn in a state other than a new page's");
+                        }
                         let mi = self.matrix(&m);
                         if !self.forms.contains(&n) {
                             self.forms.push(n);
@@ -1093,6 +1111,40 @@ impl<'a, E: Env> Interp<'a, E> {
             rest
         };
         std::str::from_utf8(digits).ok()?.parse().ok()
+    }
+
+    /// The pen is a new graphics state's (width 1, miter joins, miter limit
+    /// 10, no dash) under a CTM without scaling or rotation.
+    fn plain_pen(&self) -> bool {
+        let g = &self.gs;
+        g.line_width == Fx::ONE
+            && g.join == 0
+            && g.miter == Fx::from_int(10)
+            && g.dash.is_empty()
+            && g.ctm.is_translation()
+    }
+
+    /// The graphics state is a new page's (spec §4.3), but for the CTM, the
+    /// clip and the font: what a form drawn here starts from. A PDF form
+    /// inherits the state it is drawn in (`Do`), while a display-list FORM
+    /// starts from a new page's.
+    fn initial_state(&self) -> bool {
+        let g = &self.gs;
+        let black = Col::black();
+        g.fill == black
+            && g.stroke == black
+            && g.tr == 0
+            && g.line_width == Fx::ONE
+            && g.cap == 0
+            && g.join == 0
+            && g.miter == Fx::from_int(10)
+            && g.dash.is_empty()
+            && g.phase.is_zero()
+            && g.tc.is_zero()
+            && g.tw.is_zero()
+            && g.tz == Fx::from_int(100)
+            && g.tl.is_zero()
+            && g.ts.is_zero()
     }
 
     fn current_point(&self) -> (Fx, Fx) {
@@ -1150,6 +1202,14 @@ impl<'a, E: Env> Interp<'a, E> {
                 self.set_span(offs.first().copied().unwrap_or(0));
                 self.unsupported(&why);
             }
+        }
+        // Stroked glyphs (Tr 1, 2) are drawn with the client's pen, which
+        // without LINE_STATE (spec §11.4) is a new graphics state's: width
+        // 1, miter joins, limit 10, no dash, in stream space. Any other pen,
+        // or a CTM that scales or turns it, cannot be expressed.
+        if matches!(self.gs.tr, 1 | 2) && !bytes.is_empty() && !self.plain_pen() {
+            self.set_span(offs.first().copied().unwrap_or(0));
+            self.unsupported("stroked text with a line state (LINE_STATE)");
         }
         let fs = self.gs.fs;
         // Nothing in the loop changes the graphics state, the font or the
@@ -1252,7 +1312,12 @@ impl<'a, E: Env> Interp<'a, E> {
                             nearest_ratio(n as i128 * 1000, d as i128) / 1000.0 * fs.viewer_f64(),
                         )
                     });
-                    self.adv.set(code, a);
+                    let typeset = self.env.typeset(k, code);
+                    self.adv.set(code, a, typeset);
+                    if !typeset {
+                        // A literal's glyph: not in the subset, perhaps of width 0.
+                        self.unsupported("a glyph TeX did not typeset in its font");
+                    }
                     a
                 }
             };
@@ -1564,6 +1629,108 @@ mod tests {
             .page
             .items
             .contains(&Item::FillColor(Color(vec![0.0, 0.0, 1.0]))));
+    }
+
+    fn incomplete(s: &[u8], env: &mut impl Env) -> Vec<String> {
+        let out = interpret(env, StreamKind::Page, 0, s, fx("792"), Mat::IDENTITY, &[]);
+        assert_eq!(
+            out.page.flags & flags::INCOMPLETE != 0,
+            !out.page.unsupported.is_empty()
+        );
+        out.page.unsupported
+    }
+
+    #[test]
+    fn a_form_drawn_in_another_state_is_incomplete() {
+        // pdfTeX writes no colour at a form's start (only a page starts with
+        // the colour stacks' values), so the PDF draws the form's ink in the
+        // colour, text render mode and pen it is drawn in; a FORM starts
+        // black (spec §4.3). (fixtures/preview-probes/pv-form-state)
+        let at = |pre: &str| {
+            incomplete(
+                format!("{pre} q 1 0 0 1 10 10 cm /Fm3 Do Q").as_bytes(),
+                &mut TestEnv,
+            )
+        };
+        assert!(at("").is_empty());
+        assert!(at("0 g 0 G").is_empty());
+        assert!(at("1 0 0 rg 0 g").is_empty());
+        for pre in [
+            "1 0 0 rg", "0 0 1 RG", "0 0 0 rg", "1 Tr", "3 Tr", "2 w", "1 j", "[1] 0 d", "2 Tc",
+            "90 Tz",
+        ] {
+            assert_eq!(
+                at(pre),
+                vec!["a form drawn in a state other than a new page's".to_string()],
+                "{pre}"
+            );
+        }
+        // Restored before the form: as a new page's again.
+        assert!(at("q 1 0 0 rg Q").is_empty());
+    }
+
+    #[test]
+    fn stroked_text_with_a_pen_is_incomplete() {
+        // The pdfrender package's \pdfliteral{1 Tr 0.3 w}: the client
+        // strokes with a new graphics state's pen (no LINE_STATE, §11.4).
+        // (fixtures/preview-probes/pv-stroke-text)
+        let text = |pre: &str| {
+            incomplete(
+                format!("{pre} BT /F1 10 Tf 72 700 Td (oo) Tj ET").as_bytes(),
+                &mut TestEnv,
+            )
+        };
+        for pre in [
+            "",
+            "1 Tr",
+            "2 Tr",
+            "3 Tr",
+            "0.3 w",
+            "2 0 0 2 0 0 cm",
+            "1 0 0 1 5 5 cm 1 Tr",
+        ] {
+            assert!(text(pre).is_empty(), "{pre}");
+        }
+        for pre in [
+            "1 Tr 0.3 w",
+            "2 Tr 1.5 w",
+            "1 Tr 1 j",
+            "1 Tr 2 M",
+            "1 Tr [2 1] 0 d",
+            "2 0 0 2 0 0 cm 1 Tr",
+            "1 Tr 0.866 0.5 -0.5 0.866 0 0 cm",
+        ] {
+            assert_eq!(
+                text(pre),
+                vec!["stroked text with a line state (LINE_STATE)".to_string()],
+                "{pre}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_glyph_tex_did_not_typeset_is_incomplete() {
+        // `\pdfliteral direct{(xyz) Tj}` with y and z typeset nowhere: not in
+        // the font subset, and past /LastChar their width is 0 (positions
+        // differed by 5.26 bp; fixtures/preview-probes/pv-literal-modes).
+        struct Marked;
+        impl Env for Marked {
+            fn width(&mut self, _font: u32, _code: u8) -> Option<i64> {
+                Some(5000)
+            }
+            fn typeset(&mut self, _font: u32, code: u8) -> bool {
+                code != b'z'
+            }
+            fn resname_prefix(&self) -> &[u8] {
+                b""
+            }
+        }
+        let s = |t: &str| format!("BT /F1 10 Tf 72 700 Td ({t}) Tj ET");
+        assert!(incomplete(s("xy").as_bytes(), &mut Marked).is_empty());
+        assert_eq!(
+            incomplete(s("xyz").as_bytes(), &mut Marked),
+            vec!["a glyph TeX did not typeset in its font".to_string()]
+        );
     }
 
     #[test]

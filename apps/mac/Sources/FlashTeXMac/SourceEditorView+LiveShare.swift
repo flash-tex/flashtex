@@ -206,6 +206,8 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         return r.location..<(r.location + r.length)
     }
 
+    var collabText: String { textView?.textStorage?.string ?? "" }
+
     /// Remote changes (or this participant's undo) as minimal storage edits
     /// in one editing group: never `tv.string = …`, never on the text view's
     /// undo stack. The side state `shouldChangeTextIn` keeps aligned with
@@ -250,6 +252,7 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         storage.endEditing()
         if diverged { resyncFromCRDT(tv, storage: storage) }
         linkedSession = nil // the captured \begin/\end spans no longer describe the buffer
+        carriedLinkedSession = nil
         if let selection, selection.upperBound <= storage.length {
             tv.setSelectedRange(NSRange(location: selection.lowerBound, length: selection.count))
         }

@@ -171,11 +171,23 @@ to explain.
 
 `\pdfdest` leaves the words `do_dest` writes at the shipout unset: they hold whatever the memory
 held, which differs between runs that allocated differently (`crate::iso`). They are read only
-with a `\pdfsetmatrix` in effect (`matrix_uses` counts each time `matrixused` is true). The
-comparison now leaves them out when the old run's record at P2 has the same `matrix_uses` as at
-P1: the old pages a restart at P2 keeps never read them, and from P2 the run is live from the old
-run's state, as from any restart point. With a matrix in effect between P1 and P2 they are
-compared as before.
+with a `\pdfsetmatrix` in effect (`matrix_uses` counts each time `matrixused` is true).
+
+Revision 2 left them out of the comparison when the old run's record at P2 had the same
+`matrix_uses` as at P1. **That was unsound (review of #1908, lane REVIEW).** From P2 the run is
+live from the old run's state, with the old run's words in every destination still in it. A
+destination kept past P2 (in a box register, a float) and shipped later under a matrix reads them,
+where a scratch run reads its own. `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`
+measured `/XYZ 160.667` against scratch's `-3920.03`, in two cases:
+
+- the old run had the matrix after P2;
+- no run had a matrix until the edit put one in.
+
+The second case means no check of the old run can tell whether the words are dead. So they are
+compared again at a revalidation, as before revision 2. The keystroke after the first at a new
+place on *Infinite Descent* ×2 goes on from P0 again (§6.1). Getting that back soundly needs the
+live run to notice such a read after a comparison that left the words out, and to redo the
+compile. That is not done here.
 
 ### 6.4 Tests
 
@@ -186,5 +198,36 @@ compared as before.
   the two reads depends on the segment checkpoints' timing, so those cases are allowed either
   way. Every compile equals scratch runs.
 - `a_revalidation_leaves_out_what_a_destination_never_set`: a destination kept in a box register
-  past the comparison, made where a scratch box of the size's parity was dropped; every keystroke
-  revalidates, and with a matrix in effect after the comparison none does.
+  past the comparison, made where a scratch box of the size's parity was dropped. Since the review
+  of #1908 no keystroke revalidates, with or without a matrix in effect after the comparison.
+- `a_kept_destination_shipped_under_a_matrix_after_a_revalidation` (review of #1908): the same
+  destination shipped after the edit under a half turn, the matrix there before the edit or put in
+  by it; every compile equals scratch runs.
+
+## 7. Line shifts at a revalidated restart point (lane LOG-PARITY, #1896)
+
+An edit that moves lines (DESIGN.md §5.3 rule (c), `crate::lineshift`) is compared at `P1` with
+its shift: a line the state holds (a group's, a paragraph's, a conditional's) of the edited file
+from the shift's `after` on must be the old run's + δ. The restart at `P2` restored the old run's
+state unchanged, which is right only while no such line exists there. A chain of windows makes
+one: the first restarts in the edited file's first reading, before the edit; the next holds over
+the end of that reading (past the edit) and the whole read of a second reading, and restarts in
+the second, before its edit. The group the first reading began below the edit then kept its old
+line, and the log printed it at `\end` (`### semi simple group (level 1) entered at line 121`;
+a scratch run 122).
+
+- **The correction** (`Session::held_shifts`, after the reattach). Every old checkpoint from `P0`
+  to `P2` where each stream on an edited file is before its edit (`streams_before_edits`, as `P2`
+  is) and the shift can be put right (`Shift::dirty`) owes the held lines' shift
+  (`Shift::held_only`: no input level's line moves, since those levels are before the edit). It
+  goes into the checkpoint's `Reloc`, so every restore applies it, `P2`'s first. The other
+  checkpoints are dropped, as a convergence drops the dirty ones. The old run's diagnostics from
+  `P0` to `P2` move too (`diag::move_lines_in`).
+- **The barrier.** What the old run read or printed of a moved line in (`P1`, `P2`] is not put
+  right: the comparison fails then, as `line_barrier` stops a convergence's reuse. So does a dirty
+  `P2`.
+- **At a read point** the comparison corrects the old run's lines by that checkpoint's `Reloc`, as
+  at a page (#1895's first fix, lost in its revert).
+- **Test:** `a_revalidated_restart_in_a_second_reading_moves_the_first_readings_lines`, with one
+  name and with two (a link), each newline followed by an edit late in the document that
+  restarts from the corrected checkpoints. Every compile equals scratch runs.

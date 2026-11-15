@@ -1422,6 +1422,14 @@ mod tests {
             with_figure,
             "a rename is a change"
         );
+        let sources = stamp(&root, std::slice::from_ref(&out));
+        std::fs::write(root.join("main.aux"), "x").unwrap();
+        std::fs::write(root.join("notes.txt"), "x").unwrap();
+        assert_eq!(
+            stamp(&root, std::slice::from_ref(&out)),
+            sources,
+            "aux and text are not sources"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1529,5 +1537,105 @@ mod tests {
         assert_eq!(leftovers::owner("flashtex-v3-test-watch-1-2"), None);
         assert_eq!(leftovers::owner("flashtex-build-"), None);
         assert_eq!(leftovers::owner("flashtex-host-lifetime-fmt"), None);
+    }
+
+    #[test]
+    fn options_cover_every_flag_and_its_errors() {
+        let o = Opts::parse(&args("--output o.pdf --mode unicode --progress --quiet")).unwrap();
+        assert_eq!(o.out, Some("o.pdf".into()));
+        assert_eq!(o.mode, Some("unicode".into()));
+        assert_eq!(o.progress, Some(true));
+        assert!(o.quiet);
+        let o = Opts::parse(&args("--no-progress")).unwrap();
+        assert_eq!(o.progress, Some(false));
+        let o = Opts::parse(&args("--progress --no-progress -o a -o b")).unwrap();
+        assert_eq!((o.progress, o.out), (Some(false), Some("b".into())));
+        assert!(Opts::parse(&args("--mode")).is_err());
+        assert!(Opts::parse(&args("--host")).is_err());
+        assert!(Opts::parse(&args("--interval")).is_err());
+        assert!(Opts::parse(&args("--interval abc")).is_err());
+    }
+
+    #[test]
+    fn projects_resolve_or_fail_cleanly() {
+        let dir = scratch("resolve-edges");
+        assert!(Project::resolve(Some(&dir.join("nope.tex"))).is_err());
+        let err = || Project::resolve(Some(&dir)).unwrap_err();
+        assert!(err().contains("no .tex file"));
+        std::fs::write(dir.join("chapter.tex"), "% \\documentclass in a comment\n").unwrap();
+        assert!(err().contains("no .tex file"));
+        std::fs::write(dir.join("main.tex"), "hello\n").unwrap();
+        assert_eq!(Project::resolve(Some(&dir)).unwrap().main, "main.tex");
+        let p = Project {
+            root: dir.clone(),
+            main: "notes.txt".into(),
+        };
+        assert_eq!(p.jobname(), "notes.txt");
+        assert_eq!(p.target(Some(Path::new("x.pdf"))), PathBuf::from("x.pdf"));
+        assert_eq!(p.expected_pages(&Progress::new(progress::Mode::Off)), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diagnostic_lines_cover_missing_places_and_severities() {
+        use flashtex_display_list::diag::Severity;
+        let root = scratch("diag-edges");
+        let t = |file: Option<&str>, line: Option<i64>, col: Option<i64>, sev: Option<Severity>| {
+            line_of(
+                &Diag {
+                    file: file.map(String::from),
+                    line,
+                    col,
+                    severity: sev,
+                    message: "m".into(),
+                    ..Diag::default()
+                },
+                &root,
+            )
+        };
+        assert_eq!(t(None, None, None, None), "error: m");
+        let w = Some(Severity::Warning);
+        assert_eq!(t(Some("a.tex"), None, None, w), "a.tex: warning: m");
+        assert_eq!(t(Some("a.tex"), Some(3), None, None), "a.tex:3: error: m");
+        let s = t(Some("a.tex"), Some(3), Some(20), None);
+        assert_eq!(s, "a.tex:3:21: error: m");
+        for (sev, want) in [
+            (None, true),
+            (Some(Severity::Error), true),
+            (Some(Severity::Warning), false),
+            (Some(Severity::Info), false),
+        ] {
+            assert_eq!(
+                is_error(&Diag {
+                    severity: sev,
+                    ..Diag::default()
+                }),
+                want
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn relative_finds_the_macos_var_spelling() {
+        assert_eq!(
+            relative("/var/folders/x/a.tex", Path::new("/private/var/folders/x")),
+            "a.tex"
+        );
+    }
+
+    #[test]
+    fn restarting_gives_up_after_one_retry() {
+        let tries = Cell::new(0);
+        let mut slot = Some(0u32);
+        build_restarting(
+            &mut slot,
+            || Ok(1),
+            |_| {
+                tries.set(tries.get() + 1);
+                Err(format!("{HOST_LOST}gone"))
+            },
+        );
+        assert_eq!((tries.get(), slot), (2, None));
     }
 }

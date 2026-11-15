@@ -1,0 +1,42 @@
+% Preview probe: text render modes set by \pdfliteral (the pdfrender
+% package's way). Page 1: modes 0-3 with a new page's line state, which the
+% display list expresses. Later pages, one each: a stroke with a line width,
+% join, dash or a scaled CTM, which the display list cannot express without
+% LINE_STATE (protocol §11.4), and the clipping modes.
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+\Large
+\noindent Fill.
+\pdfliteral{1 Tr}Stroke.\pdfliteral{0 Tr}
+\pdfliteral{2 Tr 0 0 1 RG 1 0.9 0.6 rg}Fill and stroke.\pdfliteral{0 Tr 0 G 0 g}
+\pdfliteral{3 Tr}Invisible.\pdfliteral{0 Tr}
+After.
+\newpage
+
+\noindent\pdfliteral{1 Tr 0.25 w}A thin pen.\pdfliteral{0 Tr 1 w}
+\newpage
+
+\noindent\pdfliteral{2 Tr 1.5 w 1 0 0 RG}A wide pen, fill and stroke.\pdfliteral{0 Tr 1 w 0 G}
+\newpage
+
+\noindent\pdfliteral{1 Tr 1 j 1.2 w}Round joins.\pdfliteral{0 Tr 0 j 1 w}
+\newpage
+
+\noindent\pdfliteral{1 Tr 2 j 1.2 w}Bevel joins.\pdfliteral{0 Tr 0 j 1 w}
+\newpage
+
+\noindent\pdfliteral{1 Tr 1.2 w 1.5 M}A miter limit.\pdfliteral{0 Tr 1 w 10 M}
+\newpage
+
+\noindent\pdfliteral{1 Tr [1 0.5] 0 d}A dashed pen.\pdfliteral{0 Tr [] 0 d}
+\newpage
+
+\noindent\pdfsave\pdfsetmatrix{2 0 0 2}\rlap{\pdfliteral{1 Tr}Scaled 2x.\pdfliteral{0 Tr}}\pdfrestore
+\newpage
+
+\noindent\pdfsave\pdfsetmatrix{2 0 0 1}\rlap{\pdfliteral{1 Tr}Stretched.\pdfliteral{0 Tr}}\pdfrestore
+\newpage
+
+\noindent\pdfliteral{7 Tr}Clipping mode 7 (nothing shows).\pdfliteral{0 Tr}
+\end{document}
