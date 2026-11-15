@@ -154,6 +154,11 @@ of the copyright holder.
 
 ----------------------------------------------------------------------------
 
+src/out/vf.rs, and the parts of src/out/fonts.rs and src/out/page.rs that
+use it, port dvipdfm-x's virtual fonts (vf.c, the TFM part of tfm.c,
+numbers.c's sqxfw, and dvi.c's dvi_locate_font, dvi_set, dvi_vf_init and
+dvi_vf_finish), under the same notice as the routines below.
+
 Routines of src/out/ (agl.rs, tounicode.rs, cffcid.rs, pdf.rs, doc.rs,
 page.rs, special.rs) port parts of dvipdfm-x 20260317, the xdvipdfmx of TeX
 Live 2026 (texk/dvipdfm-x: agl.c, tt_cmap.c, tt_gsub.c, tt_post.c, type0.c,
