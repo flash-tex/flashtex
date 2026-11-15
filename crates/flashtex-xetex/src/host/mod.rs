@@ -49,7 +49,7 @@ pub mod proc;
 pub mod spare;
 pub mod tools;
 
-use compile::{send_json, Accept, Job, Out, Running};
+use compile::{send_json, Accept, Held, Job, Out, Running};
 use flashtex_display_list::frame::read_frame;
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR};
@@ -492,6 +492,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
         "export",
         "external-tools",
         "halt-on-error",
+        "incremental",
         "buffers",
         "edits",
         flashtex_display_list::PROFILE_CAPABILITY,
@@ -640,6 +641,8 @@ fn compile_thread(
     mut spares: spare::Spares,
 ) {
     let mut memory = tools::Memory::default();
+    // what an incremental client holds of this connection's compiles
+    let mut held = Held::default();
     // the pages the client was last told each document has (`done`)
     let mut shown = Shown::new();
     loop {
@@ -678,7 +681,7 @@ fn compile_thread(
         if superseded {
             let _ = job.apply_files();
             let o = compile::Outcome::none("cancelled");
-            done(out, &job, &o, t0, None, &mut shown);
+            done(out, &job, &o, t0, None, held.keeps(&job), &mut shown);
             continue;
         }
         run_job(
@@ -691,6 +694,7 @@ fn compile_thread(
             t0,
             &mut memory,
             &mut spares,
+            &mut held,
             &mut shown,
         );
         running.lock().unwrap().job = None;
@@ -708,6 +712,7 @@ fn run_job(
     t0: Instant,
     memory: &mut tools::Memory,
     spares: &mut spare::Spares,
+    held: &mut Held,
     shown: &mut Shown,
 ) {
     if let Err(e) = job.apply_files() {
@@ -720,7 +725,8 @@ fn run_job(
                 ("message", js(e)),
             ]),
         );
-        done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
+        let o = compile::Outcome::none("failed");
+        done(out, job, &o, t0, None, held.keeps(job), shown);
         return;
     }
     let fmt_dir = match host.format_dir(&job.format) {
@@ -735,7 +741,8 @@ fn run_job(
                     ("message", js(e)),
                 ]),
             );
-            done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
+            let o = compile::Outcome::none("failed");
+            done(out, job, &o, t0, None, held.keeps(job), shown);
             return;
         }
     };
@@ -788,7 +795,8 @@ fn run_job(
     let mut rounds = 0;
     let mut ran_any = false;
     loop {
-        started(out, job, &host.exe);
+        let keep = held.begin(job);
+        started(out, job, &host.exe, keep);
         for (sev, m) in notes.drain(..) {
             send_json(
                 out,
@@ -813,8 +821,9 @@ fn run_job(
             &host.children,
             spares,
             host.engine.as_ref(),
+            held,
         );
-        done(out, job, &o, t0, cause, shown);
+        done(out, job, &o, t0, cause, keep, shown);
         if o.fatal {
             // The engine thread died (`inproc::FATAL_EXIT`): its engine is
             // in no known state, and no later compile could run. The DONE
@@ -861,7 +870,7 @@ fn run_job(
     }
 }
 
-fn started(out: &Out, job: &Job, exe: &Path) {
+fn started(out: &Out, job: &Job, exe: &Path, keep: bool) {
     let mut argv = job.argv();
     argv[0] = exe.to_string_lossy().into_owned();
     send_json(
@@ -876,8 +885,8 @@ fn started(out: &Out, job: &Job, exe: &Path) {
                 js(job.output_dir.to_string_lossy().into_owned()),
             ),
             ("mode", js(if job.export { "export" } else { "resident" })),
-            ("keep", Json::Bool(false)),
-            ("incremental", Json::Bool(false)),
+            ("keep", Json::Bool(keep)),
+            ("incremental", Json::Bool(job.incremental && !job.export)),
         ]),
     );
 }
@@ -895,12 +904,14 @@ fn started(out: &Out, job: &Job, exe: &Path) {
 /// connection (`done`).
 type Shown = HashMap<(PathBuf, PathBuf), u32>;
 
+#[allow(clippy::too_many_arguments)]
 fn done(
     out: &Out,
     job: &Job,
     o: &compile::Outcome,
     t0: Instant,
     cause: Option<&str>,
+    keep: bool,
     shown: &mut Shown,
 ) {
     let key = || (job.root.clone(), job.output_dir.join(&job.jobname));
@@ -964,7 +975,7 @@ fn done(
         ),
         ("passes".to_string(), Json::Int(passes as i64)),
         ("typeset_pages".to_string(), Json::Int(o.pages as i64)),
-        ("keep".to_string(), Json::Bool(false)),
+        ("keep".to_string(), Json::Bool(keep)),
     ];
     if let Some(c) = cause {
         f.push(("cause".into(), js(c)));

@@ -237,3 +237,15 @@ pdfTeX's own, each needing a XeTeX counterpart written against `xetex.web`:
    after its last use, and the test reads that word as garbage; the node
    stays allocated, so xetex's allocation and memory statistics are kept.
 6. **L4 viewport first and L5 passes**, as Classic has them.
+   *Kept pages (lane UNICODE; protocol 3.1 `incremental`):* the host
+   (`host::compile::Held`, per connection) remembers a digest of every page
+   and form frame it sent the client, and the fonts whose programs it
+   sent. With `STARTED.keep` (an incremental client, the same document), a
+   frame the client holds is not sent again, a program it holds goes
+   without its program, and `PAGES` says which pages are current (after the
+   first page sent, at the `viewport`, complete before `DONE`). Before, every
+   keystroke sent every page (about 15 MB on T7's `full-120`), and the
+   edited page came after all those before it. The engine still makes and
+   streams every frame to the host (from its cache before the restart point
+   and after convergence); not making them, and typesetting the viewport
+   first, are still to do.

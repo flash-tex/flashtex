@@ -2742,6 +2742,7 @@ mod tests {
             images: vec![],
             forms: vec![],
             frame: std::sync::OnceLock::new(),
+            digest: std::sync::OnceLock::new(),
             forms_at: 0,
             replay: None,
         }));

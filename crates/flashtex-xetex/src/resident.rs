@@ -366,6 +366,9 @@ pub struct Spec {
     /// The document's persisted S₀ (`crate::s0file`): a run with no kept
     /// state for its command starts from it when it holds.
     pub s0_file: Option<PathBuf>,
+    /// What an incremental client holds (`crate::out::FrameDigests`): the
+    /// run sends only the page and form frames it does not.
+    pub held: Option<crate::out::HeldFrames>,
 }
 
 /// Where a run started.
@@ -1524,6 +1527,7 @@ impl Engine {
                 spec.dl,
                 spec.font_formats,
                 Some(self.font_cache.clone()),
+                spec.held,
             );
             o.compress = !spec.preview;
             Box::new(o)
