@@ -147,6 +147,7 @@ final class LiveShareController {
             return
         }
         let root = entryURL.deletingLastPathComponent().resolvingSymlinksInPath()
+        beginProvenance()
         let session = CollabSession(role: .hub, replica: UInt64.random(in: 1...UInt64.max), name: Self.defaultDisplayName, colourIndex: 0)
         var shared = 0
         var allowed: [FileID: String] = [:]
@@ -295,6 +296,7 @@ final class LiveShareController {
         } else {
             guestDisposition = .none
         }
+        beginProvenance()
         let g = CollabGuest(invite: invite, displayName: name.isEmpty ? Self.defaultDisplayName : String(name.prefix(64)))
         g.onStateChange = { [weak self] s in self?.guestState(s) }
         g.onJoined = { [weak self] session, ack in self?.joined(session, ack, invite: invite) }
@@ -344,6 +346,8 @@ final class LiveShareController {
         FlashTeXLog.write("liveshare: opening the shared copy in \(root.path)")
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            // The copy is the host's text: marked as received (`markReceived`).
+            Self.markReceived(root, value: receivedMark)
             if rootFD < 0 {
                 rootFD = open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
                 guard rootFD >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
@@ -398,6 +402,14 @@ final class LiveShareController {
     }
 
     private func teardown(keepPhase: Bool) {
+        if !isHost, opened, let root {
+            // An editor save replaces a file without its extended
+            // attributes: what the copy holds at the end is marked again.
+            Self.markReceived(root, value: receivedMark)
+            for path in allowed.values {
+                if let url = Self.safeTarget(root: root, path: path) { Self.markReceived(url, value: receivedMark) }
+            }
+        }
         for l in links.values { l.binding.attach(nil) }
         links = [:]
         session?.stopTimers()
@@ -497,7 +509,8 @@ final class LiveShareController {
         if let url = Self.safeTarget(root: root, path: path),
            let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
         guard rootFD >= 0,
-              let url = try Self.writeConfined(Data(text.utf8), root: root, path: path, rootFD: rootFD) else { return }
+              let url = try Self.writeConfined(Data(text.utf8), root: root, path: path, rootFD: rootFD,
+                                               quarantine: isHost ? nil : receivedMark) else { return }
         if isHost { markGuestEdited(url) }
     }
 
@@ -512,9 +525,12 @@ final class LiveShareController {
     /// `renameat` on that same folder. A folder swapped for a link once it
     /// is open no longer matters: the write goes where the check was made.
     /// The target's mode, ACL and extended attributes are kept.
+    /// `quarantine`: a `com.apple.quarantine` value the written file
+    /// carries (a guest's received text, `markReceived`).
     /// `afterCheck` runs between the walk and the write (tests).
     @discardableResult
-    static func writeConfined(_ data: Data, root: URL, path: String, rootFD: Int32? = nil, afterCheck: (() -> Void)? = nil) throws -> URL? {
+    static func writeConfined(_ data: Data, root: URL, path: String, rootFD: Int32? = nil, quarantine: String? = nil,
+                              afterCheck: (() -> Void)? = nil) throws -> URL? {
         guard let parts = safeParts(path), let name = parts.last else { return nil }
         func failure() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         var dir = rootFD.map { fcntl($0, F_DUPFD_CLOEXEC, 0) } ?? open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -560,6 +576,11 @@ final class LiveShareController {
             _ = fcopyfile(old, fd, nil, copyfile_flags_t(COPYFILE_ACL | COPYFILE_XATTR))
             guard fchmod(fd, st.st_mode & 0o7777) == 0 else { throw failure() }
         }
+        if let quarantine {
+            guard fsetxattr(fd, EngineV3Trust.quarantineAttribute, quarantine, quarantine.utf8.count, 0, 0) == 0 else {
+                throw failure()
+            }
+        }
         try h.close()
         guard renameat(dir, temp, dir, name) == 0 else { throw failure() }
         renamed = true
@@ -582,8 +603,32 @@ final class LiveShareController {
         guard rename(temp.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 
-    @ObservationIgnored private var quarantineEvent = UUID().uuidString
+    @ObservationIgnored private(set) var quarantineEvent = UUID().uuidString
     @ObservationIgnored private(set) var guestEdited: Set<String> = []
+
+    /// Each session is a provenance event of its own (host and guest): a
+    /// later session's guest edits taint the project again even after the
+    /// user trusted an earlier one's, in the same run of the app.
+    private func beginProvenance() {
+        quarantineEvent = UUID().uuidString
+        guestEdited = []
+    }
+
+    /// The `com.apple.quarantine` value a guest's copy carries: flags,
+    /// time, agent and this session's event (EngineV3Trust.quarantineEvent).
+    var receivedMark: String {
+        "0081;\(String(Int(Date().timeIntervalSince1970), radix: 16));FlashTeX Live Share;\(quarantineEvent)"
+    }
+
+    /// Marks a guest's copy as received, as a download is (#2060): a copy
+    /// of the session folder, or of a file in it, made by the Finder, `cp`
+    /// or `ditto` carries the attribute, so it compiles untrusted (shell
+    /// escape off, no external tools) until the user trusts it, wherever it
+    /// is opened. Inside the session folder compiles are pinned anyway.
+    /// Never follows a link.
+    static func markReceived(_ url: URL, value: String) {
+        _ = setxattr(url.path, EngineV3Trust.quarantineAttribute, value, value.utf8.count, 0, XATTR_NOFOLLOW)
+    }
 
     /// A guest's text reached this project file: the project is tainted in
     /// the trust store (`EngineV3Trust.taint`, one event per session), so

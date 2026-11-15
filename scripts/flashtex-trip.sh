@@ -22,7 +22,9 @@
 # is killed with its process group past TRIP_TIMEOUT seconds (default 300) and
 # then fails the test, the .fot comparison is byte-exact (a CR is a
 # difference), and with TRIP_REQUIRE_DVITYPE=1 a missing dvitype or trip.dvi
-# is a FAIL rather than a SKIP (CI's Linux leg sets it).
+# is a FAIL; without it, a missing dvitype is INCOMPLETE, never a PASS (the
+# run says so last and, in GitHub Actions, as a warning annotation). CI's
+# Linux leg sets it; the macOS, Windows and nightly legs have no dvitype.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -164,7 +166,14 @@ elif [ "${TRIP_REQUIRE_DVITYPE:-0}" = 1 ]; then
     echo "FAIL trip.typ: no dvitype on PATH, and TRIP_REQUIRE_DVITYPE=1"
     fail=1
 else
-    echo "SKIP trip.typ: no dvitype on PATH"
+    # Not a PASS (#1208): the DVI file went unchecked, and the last line says
+    # so; in GitHub Actions it is an annotation on the run too.
+    echo "INCOMPLETE trip.typ: no dvitype on PATH, so trip.dvi was not checked (TRIP_REQUIRE_DVITYPE=1 makes this a FAIL)"
+    [ "${GITHUB_ACTIONS:-}" != true ] || echo "::warning::trip: trip.typ not compared (no dvitype on PATH); the DVI file went unchecked"
+    incomplete=1
 fi
 echo "work dir: $work"
+if [ "$fail" = 0 ] && [ "${incomplete:-0}" = 1 ]; then
+    echo "trip: INCOMPLETE -- every comparison made passed, but trip.typ was not made"
+fi
 exit $fail
