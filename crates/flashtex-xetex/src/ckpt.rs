@@ -191,7 +191,10 @@ pub struct S0 {
 impl S0 {
     /// `font_files` as paths.
     pub fn font_paths(&self) -> Vec<std::path::PathBuf> {
-        self.font_files.iter().map(std::path::PathBuf::from).collect()
+        self.font_files
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect()
     }
 }
 

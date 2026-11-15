@@ -538,7 +538,11 @@ fn file_stamp(path: &Path) -> Option<Stamp> {
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?;
-    Some((m.len(), t.as_nanos(), flashtex_engine::os::file_stat(&m).ctime_ns))
+    Some((
+        m.len(),
+        t.as_nanos(),
+        flashtex_engine::os::file_stat(&m).ctime_ns,
+    ))
 }
 
 /// The names read from each face, kept between runs in a JSON file: by
@@ -653,14 +657,7 @@ impl NameCache {
         Some(out)
     }
 
-    fn put(
-        &mut self,
-        path: &Path,
-        index: u32,
-        stamp: Stamp,
-        p: &PatternNames,
-        n: &NameCollection,
-    ) {
+    fn put(&mut self, path: &Path, index: u32, stamp: Stamp, p: &PatternNames, n: &NameCollection) {
         self.changed = true;
         self.new.push((
             (path.to_path_buf(), index),

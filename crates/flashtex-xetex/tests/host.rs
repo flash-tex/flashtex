@@ -2851,7 +2851,8 @@ fn a_font_file_rewritten_in_place(reopen: bool) {
         "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\setmainfont{{TeX Gyre Prob3x}}\n\\begin{{document}}\n{body}See this.\n\\end{{document}}\n"
     );
     let cursor = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts/texgyrecursor-regular.otf"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/mac/Fonts/texgyrecursor-regular.otf"),
     )
     .unwrap();
     let x = renamed_font(&cursor, "Cursor", "Prob3x");
@@ -2904,7 +2905,10 @@ fn a_font_file_rewritten_in_place(reopen: bool) {
                     c.bye().unwrap();
                     let t = Instant::now();
                     while h.child.try_wait().unwrap().is_none() {
-                        assert!(t.elapsed() < Duration::from_secs(120), "the host did not end");
+                        assert!(
+                            t.elapsed() < Duration::from_secs(120),
+                            "the host did not end"
+                        );
                         std::thread::sleep(Duration::from_millis(20));
                     }
                 }
@@ -2957,7 +2961,12 @@ fn a_font_file_rewritten_in_place(reopen: bool) {
                     _ => None,
                 })
                 .collect();
-            outs.push((done.str_field("status").map(String::from), fonts, pages, starts));
+            outs.push((
+                done.str_field("status").map(String::from),
+                fonts,
+                pages,
+                starts,
+            ));
         }
         if let Some((_, mut c)) = host.take() {
             c.bye().unwrap();
