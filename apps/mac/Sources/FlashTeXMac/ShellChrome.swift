@@ -152,9 +152,18 @@ final class ShellChrome {
         if revision != seenRevision { seenRevision = revision; seenRevisionNs = now }
         var closureWaits = false
         if revision != closureRevision {
-            if closureRevision < 0 || documentSetChanged || settleNext {
+            if settleNext || (!offMain && (closureRevision < 0 || documentSetChanged)) {
                 closureJob &+= 1 // a job still running is superseded
+                closuresMadeOnMain += 1
                 set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
+                closureRevision = revision
+            } else if closureRevision < 0 || documentSetChanged {
+                // The window opened, or a tab opened or closed (a click in
+                // the sidebar, a jump to an `\input` file): made at once, but
+                // off the main thread, as after typing (lane APP-LAG-AUDIT:
+                // this was the same 144 ms of main thread at 1,152 pages on
+                // every tab opened). The last closure stays until it lands.
+                discoverClosureOffMain(model)
                 closureRevision = revision
             } else if now &- seenRevisionNs >= Self.closureQuietNs {
                 // The typing paused: the texts changed, the document set did
@@ -163,6 +172,7 @@ final class ShellChrome {
                 // and published when done; until then the last closure stays.
                 if offMain { discoverClosureOffMain(model) } else {
                     closureJob &+= 1
+                    closuresMadeOnMain += 1
                     set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
                 }
                 closureRevision = revision
@@ -195,6 +205,9 @@ final class ShellChrome {
     @ObservationIgnored private var closureJob = 0
     /// Closures published by off-main jobs (tests, evidence).
     @ObservationIgnored private(set) var closuresMadeOffMain = 0
+    /// Closures made on the main thread: only by a direct refresh (tests,
+    /// `flushChrome`), never by the model's own throttled refreshes.
+    @ObservationIgnored private(set) var closuresMadeOnMain = 0
 
     private func discoverClosureOffMain(_ model: ShellModel) {
         closureJob &+= 1
