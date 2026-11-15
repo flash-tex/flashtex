@@ -62,6 +62,8 @@ pub mod s0file;
 pub mod state;
 pub mod statediff;
 pub mod system;
+pub mod ucnv;
+mod ucnv_sbcs;
 pub mod xetex_ext;
 
 pub use generated::Globals;

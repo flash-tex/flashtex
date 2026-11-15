@@ -1,8 +1,9 @@
 # `third_party/icu`
 
-Two parts of TeX Live 2026's ICU, **unmodified**, for the XeTeX port
-(`crates/flashtex-xetex`, `docs/design/xetex/PLAN.md` §3.1). Neither is
-compiled or linked:
+Parts of TeX Live 2026's ICU, **unmodified**, for the XeTeX port
+(`crates/flashtex-xetex`, `docs/design/xetex/PLAN.md` §3.1). None is
+compiled or linked (the converter tables are a third part, see "The
+converters" below):
 
 - **The line-break rules** (`brkitr/`): the compiled rule-based break
   iterator tables (`.brk`) that `ubrk_open(UBRK_LINE, locale)` loads, for
@@ -74,6 +75,33 @@ dictionary.
 
 `version.ac` is TeX Live's version record. The rest of ICU's code is left
 out.
+
+## The converters
+
+A third part (issue #2382), also unmodified: `cnv/` holds ICU's converter
+alias table `cnvalias.icu` and the 138 single-byte converter tables
+(`.cnv` items whose MBCS header has one state, output type
+`MBCS_OUTPUT_1` and no extension table) of the same `icudt78l.dat`
+(sha256 `d7da8e2e31312a3cb574d1a0ebd7b187daa988e15a9b70b78eb68b213a590608`,
+the pin above), each item extracted byte for byte from the package's table
+of contents (as `icupkg -x` does). `\XeTeXinputencoding` and
+`\XeTeXdefaultencoding` open a converter by name with `ucnv_open`, and
+XeTeX_ext.c's `input_line` converts each line with `ucnv_toAlgorithmic`;
+`crates/flashtex-xetex/src/ucnv.rs` ports the name lookup (`ucnv_bld.cpp`,
+`ucnv_io.cpp` over `cnvalias.icu`), the single-byte conversion
+(`ucnvmbcs.cpp`, with `swaplfnl`), and the algorithmic UTF-8, CESU-8,
+ISO-8859-1, US-ASCII, UTF-16 and UTF-32 converters (`ucnv_u8.cpp`,
+`ucnvlat1.cpp`, `ucnv_u16.cpp`, `ucnv_u32.cpp`), from ICU 78.2's sources
+(TeX Live's `libs/icu/icu-src/source/common/`, not vendored).
+`src/ucnv_sbcs.rs` lists the tables, and a test of the crate checks it
+against `cnv/`.
+
+Not vendored, and not ported (the port reports their names as unknown
+encodings): the 52 other `.cnv` items (multi-byte tables such as
+`ibm-943_P15A-2003` and `gb18030-2022`, extension-only ones, and
+`gsm-03.38-2009` with its extension table), and ICU's algorithmic UTF-7,
+IMAP-mailbox-name, SCSU, BOCU-1, ISO-2022, HZ, LMBCS, ISCII and
+x11-compound-text converters.
 
 ## Licence
 

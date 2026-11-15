@@ -1,6 +1,7 @@
 //! `\XeTeXinputencoding` with ICU's alias spellings of UTF-8 and ISO-8859-1
 //! (issue #2382): TeX Live's xetex opens them with ICU's `ucnv_open`, whose
-//! names compare ignoring case and `-`, `_` and ` `. The expected log lines
+//! names compare ignoring case and every character but letters and digits
+//! (and a leading zero before a digit; `src/ucnv.rs`). The expected log lines
 //! are TeX Live 2026's `xetex -ini -etex -no-pdf` output for the same input
 //! (MacTeX 2026, verified 2026-11-09).
 
