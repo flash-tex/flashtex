@@ -72,7 +72,7 @@ def keys(i, page, n):
         with open(os.environ['JUMPS_LOG'], 'a') as lf:
             lf.write(f'=== client {a.cfg} r{a.round} step {i} page {page}\n')
             lf.write(''.join(l + '\n' for l in r.stderr.splitlines() if l.startswith('[kw]')))
-    ms, instr, stages = [], [], []
+    ms, instr, stages, dones = [], [], [], []
     for line in r.stdout.splitlines():
         try:
             d = json.loads(line)
@@ -83,6 +83,10 @@ def keys(i, page, n):
             ms.append(round(d['edited_page_ms'], 2))
             st = (d.get('host') or {}).get('stages') or {}
             instr.append(st.get('edited_instr_k'))
+            # (every scalar of DONE and its stages: restart point, restore, prepared or not)
+            h = d.get('host') or {}
+            dones.append({**{k: v for k, v in h.items() if not isinstance(v, (list, dict))},
+                          'stages': {k: v for k, v in st.items() if not isinstance(v, list)}})
             # (where a key's time goes: `queue` = COMPILE's arrival to the engine taking it,
             # `queue_by` = what the engine thread did meanwhile, `paused_how`/`paused` = what it
             # did with a run newer work stopped)
@@ -92,7 +96,7 @@ def keys(i, page, n):
                            if k in st})
     if n and not ms:
         sys.stderr.write(f'{a.name} page {page}: no keystroke timed (exit {r.returncode})\n{r.stderr[-1500:]}\n')
-    return ms, instr, stages
+    return ms, instr, stages, dones
 
 
 t0 = time.time()
@@ -102,12 +106,12 @@ with open(a.out, 'a') as f:
     for i, p in enumerate(int(x) for x in a.pages.split(',')):
         if host.poll() is not None:
             break
-        ms, instr, stages = keys(i, p, a.keys)
+        ms, instr, stages, dones = keys(i, p, a.keys)
         rec = {'doc': a.label or a.name, 'cfg': a.cfg or a.engine, 'engine': a.engine, 'round': a.round,
                'far': os.environ.get('FLASHTEX_FAR'), 'jump_ms': a.jump_ms, 'step': i, 'page': p,
                'edit': EDITS[i % len(EDITS)] if EDITS else None, 'open_s': open_s,
                'first_ms': ms[0] if ms else None, 'rest_ms': ms[1:], 'instr_k': instr,
-               'first_stages': stages[0] if stages else None}
+               'first_stages': stages[0] if stages else None, 'first_done': dones[0] if dones else None}
         f.write(json.dumps(rec) + '\n')
         f.flush()
         print(f"{a.name} {rec['cfg']} r{a.round} step {i} page {p}: first {rec['first_ms']} ms, "

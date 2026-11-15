@@ -12,7 +12,7 @@ permissions:
 
 env:
   BASE_REF: 28cb0d7b80a8f01bf60e196112663d5a0be744e7
-  ROUNDS: "5"
+  ROUNDS: "7"
   DOCS: back-fwd back-bwd
   CFGS: main gl
   GLANCE_MS: "1000"
