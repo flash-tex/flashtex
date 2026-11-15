@@ -34,14 +34,20 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
 
 /// [`run`], in e-TeX mode with `etex`.
 fn run_in(dir: &Path, mode: &str, names: &str, etex: bool) -> Run {
+    run_line(dir, mode, names, etex, "\\input t")
+}
+
+/// [`run_in`], with `line` as the first line (the command line: input
+/// level 0, below every file).
+fn run_line(dir: &Path, mode: &str, names: &str, etex: bool, line: &str) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
         .args(if etex {
-            &["-ini", "-etex", "\\input t"][..]
+            vec!["-ini", "-etex", line]
         } else {
-            &["-ini", "\\input t"][..]
+            vec!["-ini", line]
         })
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
@@ -413,6 +419,61 @@ fn a_replay_keeps_the_normal_paths_capacity_errors() {
         let s = check(&tag, &src);
         assert!(stat(&s, "replays") >= 2, "{tag}: {s}");
     }
+}
+
+#[test]
+fn a_replay_raises_the_stack_statistics_as_its_normal_path() {
+    // (#2451) a replay pushes no input level or parameter, so it left the
+    // high-water marks of `\tracingstats`' "stack positions" line below the
+    // normal path's: at input depth 5000, off printed ` 5009i,...` and on
+    // ` 5002i,...`, and verification mode did not see it
+    let h = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\\tracingstats=1\n";
+    let src = format!(
+        "{h}\\def\\ia{{\\ib\\relax}}\\def\\ib{{\\ic\\relax}}\\def\\ic{{\\id\\relax}}\\def\\id{{\\ie\\relax}}\n\
+         \\def\\ie{{\\if\\relax\\relax\\global\\count2=2 \\fi\\relax}}\n\
+         \\def\\hook{{\\begingroup\\ia\\endgroup}}\n\\hook\\hook\\hook\n\
+         \\def\\s{{\\relax\\hook\\relax}}\
+         \\def\\r{{\\advance\\count1 1 \\ifnum\\count1<5000 \\expandafter\\r\\else\\expandafter\\s\\fi\\relax}}\n\
+         \\r\\end\n"
+    );
+    let d = scratch("stack-stats");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "hook");
+    assert!(off.log.contains("stack positions"), "{}", off.log);
+    let s = check("stack-stats", &src);
+    assert!(stat(&s, "replays") >= 2, "{s}");
+
+    // The save stack's mark is the replay's own to raise: its `eq_define`
+    // saves what this state calls for. The first call's `\count3=7` saves
+    // the old value (the mark is raised to `save_ptr` there, two words
+    // below where it then stands); the next two find `\count3` at the
+    // group's level and save nothing, so the mark stays. A replay that
+    // raised it by the recorded peak printed two more words than off
+    // (`9s` for `7s`)
+    let src = format!("{h}\\def\\hook{{\\count3=7 \\global\\count2=2 }}\n\\begingroup\\hook\\hook\\hook\\endgroup\\end\n");
+    let s = check("stack-stats-save", &src);
+    assert!(stat(&s, "replays") >= 2, "{s}");
+
+    // A call from input level 0 (the command line) that pushes nothing
+    // but its body (no macro, and no `back_input`: a `\let`) leaves the
+    // lowered mark at 0, which is still a push at the call's level:
+    // replayed one level above every earlier push (in `\s`, 5000 levels
+    // deep), it raises the mark by that level (`5001i`, not `5000i`)
+    let src = format!(
+        "{h}\\def\\hook{{\\global\\let\\x\\relax}}\n\
+         \\def\\s{{\\relax\\hook\\relax}}\
+         \\def\\r{{\\advance\\count1 1 \\ifnum\\count1<5000 \\expandafter\\r\\else\\expandafter\\s\\fi\\relax}}\n"
+    );
+    let d = scratch("stack-stats-level0");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let line = "\\input t \\hook\\hook\\hook\\r\\end";
+    let off = run_line(&d, "off", "hook", false, line);
+    let on = run_line(&d, "on", "hook", false, line);
+    let verify = run_line(&d, "verify", "hook", false, line);
+    assert!(off.log.contains("stack positions"), "{}", off.log);
+    assert_eq!(off.log, on.log, "level 0: log with intrinsics on differs");
+    assert_eq!(off.log, verify.log, "level 0: log in verification mode");
+    assert!(stat(&on.stats, "replays") >= 2, "{}", on.stats);
 }
 
 /// `\globaldefs<0` turns every global assignment local (tex.web §1214): a
