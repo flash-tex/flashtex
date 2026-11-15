@@ -2785,10 +2785,27 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             let (a, b) = (self.o.i32_at(l.cur_mark, k), self.n.i32_at(l.cur_mark, k));
             self.ptr(K::Tok, a, b);
         }
-        // disc_ptr[copy_code..vsplit_code]: the Rust array may start at 0
-        for k in 0..4 {
-            let (a, b) = (self.o.i32_at(l.disc_ptr, k), self.n.i32_at(l.disc_ptr, k));
-            self.ptr(K::List, a, b);
+        // disc_ptr[copy_code..vsplit_code], at Rust indices 0..3 (code - 1;
+        // the array has three elements, generated/globals.rs). etex.ch
+        // names them tail_page_disc, page_disc and split_disc. The two
+        // discard lists are owned; tail_page_disc is the last node of
+        // page_disc's list, a pointer into it. The page builder reads it
+        // only when page_disc is not null (it appends there, e-TeX's
+        // "Recycle node p"), and nothing resets it when the list goes:
+        // `fire_up` (and the end of an output routine) flush page_disc,
+        // and \pagediscards moves it, leaving tail_page_disc at a freed
+        // node or at a node of another list. So it is dead while
+        // page_disc is null (#2433: walked as an owned list it read a
+        // freed node, whose free-list links two correct paths leave
+        // differently, a false `box dimension differs` / `synctex tag
+        // differs`).
+        let disc = |s: &Self, k: usize| (s.o.i32_at(l.disc_ptr, k), s.n.i32_at(l.disc_ptr, k));
+        let (page_disc, split_disc) = (disc(self, 1), disc(self, 2));
+        self.ptr(K::List, page_disc.0, page_disc.1);
+        self.ptr(K::List, split_disc.0, split_disc.1);
+        if page_disc != (NULL, NULL) {
+            let (a, b) = disc(self, 0);
+            self.later("tail_page_disc", a, b);
         }
         // sa_root[int_val..mark_val]
         for k in 0..=MARK_VAL as usize {
@@ -3583,6 +3600,158 @@ mod tests {
         w.page_ins();
         w.finish();
         w.err.map_or(Ok(()), Err)
+    }
+
+    /// Walk the structure of kind `k` at `a` in O and at `b` in N.
+    fn compare_at(k: K, o: &Words, a: i32, n: &Words, b: i32) -> Result<(), String> {
+        let l = layout();
+        let so = St {
+            sp: o,
+            l: &l,
+            hi_mem_min: HI_MEM_STAT_MIN,
+        };
+        let sn = St {
+            sp: n,
+            l: &l,
+            hi_mem_min: HI_MEM_STAT_MIN,
+        };
+        let mut w = Iso::new(so, sn);
+        w.todo.push((k, a, b));
+        w.finish();
+        w.err.map_or(Ok(()), Err)
+    }
+
+    /// An empty hbox at `p`: 10pt wide, 1pt deep, 2pt high, shifted by
+    /// `shift` (sp), its glue sign and order the halves of `sign_order`.
+    fn hbox_at(p: i32, shift: i32, sign_order: i32) -> Words {
+        let mut w = Words::default();
+        w.put(p, hh(HLIST, 0, NULL));
+        w.put(p + 1, 10 << 16);
+        w.put(p + 2, 1 << 16);
+        w.put(p + 3, 2 << 16);
+        w.put(p + 4, shift as u32 as u64);
+        w.put(p + 5, halves(sign_order, NULL));
+        w
+    }
+
+    /// The walk compares every field of the nodes it pairs (DESIGN.md
+    /// §5.3): two states whose lists sit at other addresses are the same
+    /// only when each node holds the same values. A box's shift
+    /// (`shift_amount`, its fourth dimension) and its glue sign and order
+    /// are read by `ship_out` and `\showbox`.
+    #[test]
+    fn a_relocated_box_is_compared_field_by_field() {
+        let same = compare_at(
+            K::List,
+            &hbox_at(1000, 0, 0),
+            1000,
+            &hbox_at(2000, 0, 0),
+            2000,
+        );
+        assert_eq!(same, Ok(()));
+        let e = compare_at(
+            K::List,
+            &hbox_at(1000, 0, 0),
+            1000,
+            &hbox_at(2000, 3 << 16, 0),
+            2000,
+        )
+        .expect_err("boxes shifted differently");
+        assert!(e.contains("box dimension"), "{e}");
+        let e = compare_at(
+            K::List,
+            &hbox_at(1000, 0, 0),
+            1000,
+            &hbox_at(2000, 0, 1 << 16),
+            2000,
+        )
+        .expect_err("boxes with another glue sign");
+        assert!(e.contains("glue order/sign"), "{e}");
+    }
+
+    /// A glue specification's three dimensions, its shrink too.
+    #[test]
+    fn a_relocated_glue_spec_is_compared_field_by_field() {
+        let spec = |p: i32, shrink: i32| {
+            let mut w = Words::default();
+            w.put(p, halves(0, 1));
+            w.put(p + 1, 5 << 16);
+            w.put(p + 2, 1 << 16);
+            w.put(p + 3, shrink as u32 as u64);
+            w
+        };
+        assert_eq!(
+            compare_at(
+                K::Glue,
+                &spec(1000, 1 << 15),
+                1000,
+                &spec(2000, 1 << 15),
+                2000
+            ),
+            Ok(())
+        );
+        let e = compare_at(
+            K::Glue,
+            &spec(1000, 1 << 15),
+            1000,
+            &spec(2000, 1 << 14),
+            2000,
+        )
+        .expect_err("glue specs that shrink differently");
+        assert!(e.contains("glue component"), "{e}");
+    }
+
+    /// A mark node's class (e-TeX's `\marks`): `\topmarks`, `\firstmarks` and
+    /// `\botmarks` of one class never see another class's marks.
+    #[test]
+    fn a_relocated_marks_class_is_compared() {
+        let mark = |p: i32, class: i32| {
+            let mut w = Words::default();
+            w.put(p, hh(MARK, 0, NULL));
+            w.put(p + 1, halves(class, NULL));
+            w
+        };
+        assert_eq!(
+            compare_at(K::List, &mark(1000, 3), 1000, &mark(2000, 3), 2000),
+            Ok(())
+        );
+        let e = compare_at(K::List, &mark(1000, 3), 1000, &mark(2000, 4), 2000)
+            .expect_err("marks of different classes");
+        assert!(e.contains("mark class"), "{e}");
+    }
+
+    /// A `\parshape` of n lines holds 2n words after its size: each line's
+    /// indentation and length, the last line's length too.
+    #[test]
+    fn a_relocated_parshape_is_compared_to_its_last_word() {
+        let shape = |p: i32, last: i32| {
+            let mut w = Words::default();
+            w.put(p, halves(2, NULL));
+            w.put(p + 1, 1 << 16);
+            w.put(p + 2, 100 << 16);
+            w.put(p + 3, 2 << 16);
+            w.put(p + 4, last as u32 as u64);
+            w
+        };
+        assert_eq!(
+            compare_at(
+                K::Shape,
+                &shape(1000, 90 << 16),
+                1000,
+                &shape(2000, 90 << 16),
+                2000
+            ),
+            Ok(())
+        );
+        let e = compare_at(
+            K::Shape,
+            &shape(1000, 90 << 16),
+            1000,
+            &shape(2000, 80 << 16),
+            2000,
+        )
+        .expect_err("shapes whose last line differs");
+        assert!(e.contains("shape entry"), "{e}");
     }
 
     /// The fields of an `inserting` record hold what `get_node` left
