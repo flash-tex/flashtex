@@ -90,8 +90,9 @@ fn a_font_that_cannot_be_made_is_noted_in_missfont_log() {
     }
     let dir = run_dir("miss");
     let log = run(&dir, "\\font\\a=nosuchfontzz \\end\n");
+    // (the log breaks the message at max_print_line)
     assert!(
-        log.contains(
+        log.replace('\n', "").contains(
             "! Font \\a=nosuchfontzz not loadable: Metric (TFM) file or installed font not found."
         ),
         "log:\n{log}"
