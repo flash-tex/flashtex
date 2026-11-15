@@ -670,7 +670,7 @@ fn postproc(cd: &mut Glyph) -> Result<(), Fatal> {
                     let (same, other) = (cur.ty, if cur.ty == HLINETO { VLINETO } else { HLINETO });
                     let p = out.last_mut().unwrap();
                     if (p.ty == other && p.args.len() % 2 == 1)
-                        || (p.ty == same && p.args.len() % 2 == 0)
+                        || (p.ty == same && p.args.len().is_multiple_of(2))
                     {
                         p.args.extend_from_slice(&a);
                         joined = true;
@@ -722,7 +722,7 @@ fn postproc(cd: &mut Glyph) -> Result<(), Fatal> {
                     );
                     let p = out.last_mut().unwrap();
                     if (p.ty == other && (p.args.len() / 4) % 2 == 1)
-                        || (p.ty == same && (p.args.len() / 4) % 2 == 0)
+                        || (p.ty == same && (p.args.len() / 4).is_multiple_of(2))
                     {
                         p.args.extend_from_slice(&a);
                         joined = true;
