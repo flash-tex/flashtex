@@ -2075,7 +2075,7 @@ fn a_restart_after_a_toc_write_keeps_the_toc() {
 #[test]
 fn a_longer_longest_line_converges() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("longest");
@@ -2221,7 +2221,7 @@ fn an_unwritten_form_converges() {
 #[test]
 fn destinations_under_a_matrix_equal_scratch_runs() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("matrix");
@@ -2366,7 +2366,7 @@ fn page_insertion_records_compare_their_split_fields_only_when_split_up() {
 #[test]
 fn intrinsics_recorded_after_an_edit_converge() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("intrinsics");

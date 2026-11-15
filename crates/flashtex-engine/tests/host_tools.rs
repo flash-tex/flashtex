@@ -206,7 +206,7 @@ fn bibtex_by_hand(bin: &Path, root: &Path) -> Vec<u8> {
 #[test]
 fn bibtex_runs_and_the_host_compiles_again() {
     let Some(bin) = tex_bin() else {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     };
     let host = start_host("bib", &[]);
@@ -282,7 +282,7 @@ fn bibtex_runs_and_the_host_compiles_again() {
 #[test]
 fn a_tools_warnings_reach_both_kinds_of_client() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     }
     let host = start_host("bibwarn", &[]);
@@ -327,7 +327,7 @@ fn a_tools_warnings_reach_both_kinds_of_client() {
 #[test]
 fn off_runs_nothing_and_says_so() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     }
     let host = start_host("off", &[]);
@@ -356,7 +356,7 @@ fn off_runs_nothing_and_says_so() {
 #[test]
 fn a_missing_bib_file_is_not_run() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     }
     let host = start_host("nobib", &["--external-tools", "auto"]);
@@ -387,7 +387,7 @@ Gamma\index{gamma} and alpha again\index{alpha}.
 #[test]
 fn makeindex_runs_and_the_index_is_typeset() {
     let Some(bin) = tex_bin() else {
-        eprintln!("skipped: no TeX Live with makeindex");
+        common::no_texlive();
         return;
     };
     let host = start_host("idx", &[]);
@@ -427,7 +427,7 @@ fn makeindex_runs_and_the_index_is_typeset() {
 #[test]
 fn later_passes_reach_the_client() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live");
+        common::no_texlive();
         return;
     }
     let host = start_host("passes", &[]);
@@ -471,7 +471,7 @@ fn later_passes_reach_the_client() {
 #[test]
 fn deferred_passes_run_after_tools_that_change_nothing() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     }
     for viewport in [None, Some(0)] {
@@ -529,7 +529,7 @@ fn deferred_passes_run_after_tools_that_change_nothing() {
 #[test]
 fn a_tool_out_of_time_is_reported_and_its_output_unused() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     }
     let host = start_host("timeout", &["--tool-timeout", "0.000001"]);
@@ -654,7 +654,7 @@ fn apply(text: &mut String, e: &Edit) {
 #[test]
 fn edits_tools_and_preemption_leave_the_output_files_exact() {
     if tex_bin().is_none() {
-        eprintln!("skipped: no TeX Live with bibtex");
+        common::no_texlive();
         return;
     }
     let host = start_host_env(

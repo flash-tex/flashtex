@@ -67,14 +67,20 @@ jobs:
           c="$RUNNER_TEMP/eng/pdftex"; seed="${GITHUB_RUN_ID}"
           run() { local name="$1"; shift; python3 "$@" --candidate "$c" --iterations "$N" --seed "$seed" \
                     --out "$out/$name" --timeout 10 | tee "$out/$name.txt"; }
-          run tfm tools/fuzz/parsers/tfm.py &
-          run vf tools/fuzz/parsers/fontfiles.py --kind vf &
-          run map tools/fuzz/parsers/fontfiles.py --kind map &
-          run enc tools/fuzz/parsers/fontfiles.py --kind enc &
-          wait
-          run type1 tools/fuzz/parsers/type1.py &
-          run ttf tools/fuzz/parsers/ttf.py &
-          wait
+          # Each fuzzer's own exit status, not a bare `wait` (always 0): a
+          # fuzzer that crashed stores no finding, and the step passed (#2489).
+          bad=()
+          collect() { local n p; for n in "${!pids[@]}"; do p="${pids[$n]}"; wait "$p" || bad+=("$n"); done; }
+          declare -A pids=()
+          run tfm tools/fuzz/parsers/tfm.py & pids[tfm]=$!
+          run vf tools/fuzz/parsers/fontfiles.py --kind vf & pids[vf]=$!
+          run map tools/fuzz/parsers/fontfiles.py --kind map & pids[map]=$!
+          run enc tools/fuzz/parsers/fontfiles.py --kind enc & pids[enc]=$!
+          collect
+          pids=()
+          run type1 tools/fuzz/parsers/type1.py & pids[type1]=$!
+          run ttf tools/fuzz/parsers/ttf.py & pids[ttf]=$!
+          collect
           found=$(find "$out" \( -path '*/crash/*' -o -path '*/hang/*' -o -path '*/output-flood/*' \) -name '*.json' | wc -l)
           {
             echo "## Font fuzz ($N iterations each, seed $seed)"
@@ -88,6 +94,7 @@ jobs:
           PY
           } >> "$GITHUB_STEP_SUMMARY"
           [[ "$found" -eq 0 ]] || { echo "::error::$found font-fuzz finding(s); see the artifact"; exit 1; }
+          [[ ${#bad[@]} -eq 0 ]] || { echo "::error::fuzzer(s) exited non-zero: ${bad[*]} (their logs: \$out/<name>.txt)"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

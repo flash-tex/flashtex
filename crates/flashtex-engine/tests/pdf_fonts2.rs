@@ -212,7 +212,7 @@ fn installed(texbin: &Path, files: &[&str]) -> bool {
 #[test]
 fn pdf_fonts2_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
@@ -225,7 +225,7 @@ fn pdf_fonts2_match_tex_live() {
         .filter(|(name, files, _)| {
             let ok = installed(&texbin, files);
             if !ok {
-                eprintln!("{name}: fonts not installed; skipping");
+                common::not_installed(&format!("the fonts of case {name} ({})", files.join(", ")));
             }
             ok
         })
@@ -320,7 +320,7 @@ fn display_list_describes_type3_truetype_opentype() {
     use flashtex_display_list::page::{flags, Item};
     use flashtex_display_list::resource::Type3Bitmaps;
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

@@ -8,7 +8,8 @@
 //! 1.40.29 (TeX Live 2026): Arvo-Bold.ttf with those two tables, embedded
 //! whole, has `first table data` twice and `second, longer table data!!`
 //! nowhere in its FontFile2. Found by lane AUDIT-PDFC. Skips where there is
-//! no TeX Live (e.g. CI).
+//! no TeX Live or no arvo package, and fails there with
+//! FLASHTEX_REQUIRE_TEXLIVE=1 (CI's hosted image adds arvo: #2489).
 #![cfg(feature = "kpathsea")]
 
 mod common;
@@ -100,7 +101,7 @@ fn tags_equal_up_to_a_nul_are_one_table() {
     };
     let arvo = kpsewhich(&texbin, "Arvo-Bold.ttf");
     if arvo.as_os_str().is_empty() {
-        common::no_texlive();
+        common::not_installed("Arvo-Bold.ttf (package arvo)");
         return;
     }
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

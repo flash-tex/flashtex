@@ -206,12 +206,12 @@ step_tests() {
     done
     echo "test targets of slice $SHARD: ${sel[*]}"
   fi
-  # The status is kept and returned: `timed` runs a step as the left side of
-  # `||`, where `set -e` does not apply, so a step's status is its last
-  # command's. Returning the `if` below's status (0 when it does not run its
-  # body, or the doc tests') made every failing engine test pass the step:
-  # rc=0 with a test FAILED in the log, on every shard, since the step was
-  # sharded (30158e6ab, 2026-10-05).
+  # The status is kept and returned, so the doc tests still run after a
+  # failing test target (errexit in `timed` would stop the step there).
+  # Until #2085 and #2088 the step returned the `if` below's status (0 when
+  # it does not run its body, else the doc tests'): every failing engine
+  # test passed its shard, rc=0 with a test FAILED in the log, from
+  # 30158e6ab (2026-10-05) to #2489.
   local rc=0
   FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --no-fail-fast ${sel[@]+"${sel[@]}"} || rc=$?
   # A target selection leaves out the doc tests: slice 0 runs them.
