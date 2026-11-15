@@ -130,6 +130,15 @@ public final class CollabProject {
             return false
         }
 
+        /// Refused for good, whatever the reason (not `pendingFull`, which
+        /// a resync recovers): this replica no longer holds what the sender
+        /// does, and a resync would be refused again, so the session ends
+        /// that participant's part instead of going on diverged (§7.4).
+        public var isRefusal: Bool {
+            if case .rejected = self { return true }
+            return false
+        }
+
         /// The contract's name for the refusal (fixtures compare these).
         public var kindName: String {
             switch self {
@@ -189,6 +198,17 @@ public final class CollabProject {
         let op = try body(files)
         noteFileOp(op)
         return .fileMap([op])
+    }
+
+    /// A new text file holding `text`: its create and its insert, or, when
+    /// either would be refused, neither (nothing changes).
+    public func createTextFile(_ file: FileID, path: String, text: String) throws -> [Section] {
+        let n = text.utf8.count
+        guard n <= CollabLimits.maxDocumentBytes else { throw CollabError.documentFull }
+        guard budget.fits(n, local: true) else { throw CollabError.projectFull }
+        let create = try fileOp { try $0.create(file, kind: .text, path: path) }
+        guard let insert = try insert(text, at: 0, in: file) else { return [create] }
+        return [create, insert]
     }
 
     public func insert(_ text: String, at position: Int, in file: FileID) throws -> Section? {
