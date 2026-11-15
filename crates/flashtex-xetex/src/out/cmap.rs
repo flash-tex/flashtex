@@ -797,6 +797,8 @@ struct Reader<'a, 'c> {
 }
 
 type Status = Result<bool, Fatal>;
+/// A code range's low and high codes.
+type Range = (Vec<u8>, Vec<u8>);
 
 impl Reader<'_, '_> {
     fn tok(&mut self) -> Result<Option<Tok>, Fatal> {
@@ -814,7 +816,7 @@ impl Reader<'_, '_> {
         }
     }
 
-    fn coderange(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>, Fatal> {
+    fn coderange(&mut self) -> Result<Option<Range>, Fatal> {
         let Some(t1) = self.tok()? else {
             return Ok(None);
         };
@@ -978,12 +980,10 @@ impl Reader<'_, '_> {
                     let Some(t2) = self.tok()? else {
                         continue;
                     };
-                    let good = match (&t2, n.as_slice()) {
-                        (Tok::Str(_), b"Registry" | b"Ordering") | (Tok::Int(_), b"Supplement") => {
-                            true
-                        }
-                        _ => false,
-                    };
+                    let good = matches!(
+                        (&t2, n.as_slice()),
+                        (Tok::Str(_), b"Registry" | b"Ordering") | (Tok::Int(_), b"Supplement")
+                    );
                     if !good || (!simple && !self.next_is(b"def")?) {
                         ok = false;
                     } else {
@@ -1013,10 +1013,7 @@ impl Reader<'_, '_> {
     /// parse failure (fatal in `CMap_cache_find`) or a fatal error.
     fn parse(&mut self) -> Result<bool, Fatal> {
         let mut tmpint = -1;
-        loop {
-            let Some(t1) = self.tok()? else {
-                break;
-            };
+        while let Some(t1) = self.tok()? {
             let ok = match &t1 {
                 Tok::Name(n) if n == b"CMapName" => match self.tok()? {
                     Some(Tok::Name(v) | Tok::Str(v)) if self.next_is(b"def")? => {
