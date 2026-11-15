@@ -44,6 +44,9 @@ struct CaptureView: View {
 
     @State private var photo: PhotosPickerItem?
     @State private var picked: UIImage?
+    /// The picked image's file bytes (Photos, the bundled sample), which keep
+    /// its EXIF orientation; nil for a camera shot (re-encoded when sent).
+    @State private var pickedBytes: Data?
     @State private var pickedSource: CaptureRecord.Source = .photo
     @State private var instructions = PadModel.defaultInstructions[0]
     @State private var problem: String?
@@ -84,12 +87,12 @@ struct CaptureView: View {
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-                    picked = img; pickedSource = .photo
+                    picked = img; pickedBytes = data; pickedSource = .photo
                 }
             }
         }
         .fullScreenCover(isPresented: $cameraShown) {
-            CameraPicker { img in picked = img; pickedSource = .photo; cameraShown = false } onCancel: { cameraShown = false }
+            CameraPicker { img in picked = img; pickedBytes = nil; pickedSource = .photo; cameraShown = false } onCancel: { cameraShown = false }
                 .ignoresSafeArea()
         }
         .sheet(isPresented: Binding(get: { capturesOpen && !sidePanel }, set: { if !$0 { capturesOpen = false } })) {
@@ -410,16 +413,16 @@ struct CaptureView: View {
     func loadSample() {
         guard let url = Bundle.main.url(forResource: "sample-capture", withExtension: "png"), let data = try? Data(contentsOf: url),
               let img = UIImage(data: data) else { problem = "sample-capture.png missing from bundle"; return }
-        picked = img; pickedSource = .sample
+        picked = img; pickedBytes = data; pickedSource = .sample
     }
 
     /// Renders the canvas (or the picked image) to PNG; the model validates,
     /// drafts and sends in one step (`PadModel.sendNow`).
     func send() async {
         problem = nil
-        guard let (png, source, size) = renderCapture() else { return }
         sending = true
         defer { sending = false }
+        guard let (png, source, size) = await renderCapture() else { return }
         switch await model.sendNow(png: png, source: source, instructions: instructions, pixelSize: (width: size.0, height: size.1)) {
         case .success:
             canvas.toolsVisible = false // hide the PencilKit tool picker so the status list is readable
@@ -430,10 +433,22 @@ struct CaptureView: View {
         }
     }
 
-    func renderCapture() -> (Data, CaptureRecord.Source, (Int, Int))? {
+    /// A picked photo is converted off the main actor (`CaptureImage`):
+    /// upright, longest side ≤ 4096 px, within the Mac's 8 MiB. Encoding it
+    /// as it was (`pngData()`) made a 12 MP camera shot a 14–40 MB PNG that
+    /// validation refused, and dropped its orientation.
+    func renderCapture() async -> (Data, CaptureRecord.Source, (Int, Int))? {
         if let img = picked {
-            guard let d = img.pngData() else { problem = "could not encode the image as PNG"; return nil }
-            return (d, pickedSource, (Int(img.size.width * img.scale), Int(img.size.height * img.scale)))
+            let source = pickedSource, bytes = pickedBytes
+            let prepared = await Task.detached(priority: .userInitiated) { () -> Result<CaptureImage.Prepared, CaptureImage.Failure> in
+                // A camera shot has no file yet: JPEG keeps its orientation as EXIF.
+                guard let data = bytes ?? img.jpegData(compressionQuality: 0.95) else { return .failure(.unreadable) }
+                return CaptureImage.sendablePNG(from: data)
+            }.value
+            switch prepared {
+            case .success(let p): return (p.png, source, (p.width, p.height))
+            case .failure(let why): problem = "\(why)"; return nil
+            }
         }
         switch canvas.renderPNG() {
         case .success(let r): return (r.png, .pencil, r.pixels)
