@@ -1875,6 +1875,15 @@ impl Globals {
         if s.is_empty() {
             return self.empty_string();
         }
+        // texmfmp.h's `checkpoolpointer(poolptr, len)`, with the C string's
+        // length in bytes: no TeX error, the message on stderr and
+        // `exit(1)` (TeX Live 2026's xetex: `string pool overflow [6250000
+        // bytes]`, nothing in a log, exit status 1).
+        let pool_size = crate::generated::consts::pool_size;
+        if self.pool_ptr as usize + s.len() >= pool_size as usize {
+            eprint!("\nstring pool overflow [{pool_size} bytes]\n");
+            exit_process(self, 1);
+        }
         for c in decode_utf8_lenient(s) {
             if c > 0xffff {
                 let r = c - 0x10000;

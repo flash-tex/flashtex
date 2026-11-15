@@ -3529,11 +3529,8 @@ impl Globals {
             "{BANNER}{WEB2C_VERSION} {}",
             crate::resolver::kpathsea_version()
         );
-        for b in s.bytes() {
-            self.str_pool[self.pool_ptr as usize] = b as _;
-            self.pool_ptr += 1;
-        }
-        self.pdftex_banner = self.make_string();
+        // `pdftexbanner = maketexstring(s)`
+        self.pdftex_banner = self.make_tex_string(s.as_bytes());
     }
 
     /// The TCX file's name, as found, into the log (`fputs` in tex.ch).
@@ -3622,30 +3619,13 @@ impl Globals {
         let full = FULL_NAME_OF_FILE
             .with(|f| f.borrow().clone())
             .unwrap_or_default();
-        if full.is_empty() {
-            let mut s = 256;
-            while s < self.str_ptr && self.str_start[s as usize + 1] != self.str_start[s as usize] {
-                s += 1;
-            }
-            return s;
-        }
-        for b in full.bytes() {
-            self.str_pool[self.pool_ptr as usize] = b as _;
-            self.pool_ptr += 1;
-        }
-        self.make_string()
+        self.make_tex_string(full.as_bytes())
     }
 
     /// texmfmp.c's `getjobname`: `-jobname`, else `s`.
     pub fn get_job_name(&mut self, s: i32) -> i32 {
         match run().job_name {
-            Some(j) => {
-                for b in j.bytes() {
-                    self.str_pool[self.pool_ptr as usize] = b as _;
-                    self.pool_ptr += 1;
-                }
-                self.make_string()
-            }
+            Some(j) => self.make_tex_string(j.as_bytes()),
             None => s,
         }
     }
