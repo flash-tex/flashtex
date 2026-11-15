@@ -127,13 +127,28 @@ final class CaptureQueueTests: XCTestCase {
         XCTAssertNil(CaptureQueue.validate(png: Self.trianglePNG(), instructions: "ok"))
     }
 
-    func testNoDestinationIsRefusedNotSent() async throws {
+    /// No pinned insertion point on the Mac: nothing is sent, and the capture
+    /// stays retryable with the same id. Send has already cleared the canvas,
+    /// so a terminal refusal here (as before) lost the drawing: the row had no
+    /// Retry and the strokes could not be sent again once the pin was set.
+    func testNoDestinationIsNotSentAndStaysRetryable() async throws {
         mac.destination = nil
         let r = model.draft(CaptureRecord(source: .pencil, png: Self.trianglePNG(), instructions: "x"))
         await model.send(r.id)
-        guard case .refused(let code, _)? = model.captures.first?.status else { return XCTFail("expected refused") }
-        XCTAssertEqual(code, "invalid_input")
-        XCTAssertTrue(mac.captures.isEmpty)
+        guard case .disconnected(let why, let attempt)? = model.captures.first?.status else {
+            return XCTFail("expected retryable, got \(String(describing: model.captures.first?.status))")
+        }
+        XCTAssertTrue(why.contains("no pinned insertion point"), why)
+        XCTAssertEqual(attempt, 1)
+        XCTAssertTrue(mac.captures.isEmpty, "nothing sent")
+        XCTAssertNil(model.captures.first?.destinationId, "no pin was frozen into the envelope")
+        // The person pins a destination on the Mac and taps Retry.
+        mac.destination = NearbyWire.Destination(destinationId: "dest-10", projectId: "demo", path: "main.tex", baseRevision: 8)
+        await model.send(r.id)
+        guard case .received(let ack)? = model.captures.first?.status else { return XCTFail("expected received") }
+        XCTAssertEqual(ack.captureId, r.id)
+        XCTAssertEqual(mac.captures.map(\.captureId), [r.id])
+        XCTAssertEqual(mac.captures.first?.destinationId, "dest-10")
     }
 
     /// GH #359: `CaptureQueue.records` was a bare Array. `refreshOutcome`/`send`
