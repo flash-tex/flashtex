@@ -62,7 +62,8 @@ const FLAG_USE_CNTRMASK: u32 = 2;
 const FLAG_USE_SEAC: u32 = 4;
 
 fn is_path_operator(o: i32) -> bool {
-    (VMOVETO..=CLOSEPATH).contains(&o) || ((RMOVETO..=HVCURVETO).contains(&o) && o != 23 && o != 29 && o != 28)
+    (VMOVETO..=CLOSEPATH).contains(&o)
+        || ((RMOVETO..=HVCURVETO).contains(&o) && o != 23 && o != 29 && o != 28)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -149,7 +150,11 @@ macro_rules! check_stack {
 
 impl Builder<'_> {
     fn add_stem(&mut self, mut pos: f64, del: f64, horizontal: bool) -> Option<usize> {
-        pos += if horizontal { self.cd.sbw[1] } else { self.cd.sbw[0] };
+        pos += if horizontal {
+            self.cd.sbw[1]
+        } else {
+            self.cd.sbw[0]
+        };
         if let Some(s) = self
             .cd
             .stems
@@ -438,7 +443,8 @@ impl Builder<'_> {
                 check_stack!(self, 6);
                 for k in (0..3).rev() {
                     let n = self.cs.len();
-                    let Some(id) = self.add_stem(self.cs[n - 2 * k - 2], self.cs[n - 2 * k - 1], op == HSTEM3)
+                    let Some(id) =
+                        self.add_stem(self.cs[n - 2 * k - 2], self.cs[n - 2 * k - 1], op == HSTEM3)
                     else {
                         self.warn.push("Too many hints...".into());
                         self.status = Status::ParseError;
@@ -621,9 +627,8 @@ fn postproc(cd: &mut Glyph) -> Result<(), Fatal> {
     for mut cur in std::mem::take(&mut cd.path) {
         let a = cur.args.clone();
         let mut joined = false;
-        let try_compact = |prev: Option<&PathOp>| {
-            prev.is_some_and(|p| p.args.len() + a.len() < CS_ARG_STACK_MAX)
-        };
+        let try_compact =
+            |prev: Option<&PathOp>| prev.is_some_and(|p| p.args.len() + a.len() < CS_ARG_STACK_MAX);
         match cur.ty {
             RMOVETO => {
                 x += a[0];
@@ -664,7 +669,9 @@ fn postproc(cd: &mut Glyph) -> Result<(), Fatal> {
                 if try_compact(out.last()) {
                     let (same, other) = (cur.ty, if cur.ty == HLINETO { VLINETO } else { HLINETO });
                     let p = out.last_mut().unwrap();
-                    if (p.ty == other && p.args.len() % 2 == 1) || (p.ty == same && p.args.len() % 2 == 0) {
+                    if (p.ty == other && p.args.len() % 2 == 1)
+                        || (p.ty == same && p.args.len() % 2 == 0)
+                    {
                         p.args.extend_from_slice(&a);
                         joined = true;
                     }
@@ -705,7 +712,14 @@ fn postproc(cd: &mut Glyph) -> Result<(), Fatal> {
                 }
                 upd(&mut b, x, y);
                 if try_compact(out.last()) {
-                    let (same, other) = (cur.ty, if cur.ty == VHCURVETO { HVCURVETO } else { VHCURVETO });
+                    let (same, other) = (
+                        cur.ty,
+                        if cur.ty == VHCURVETO {
+                            HVCURVETO
+                        } else {
+                            VHCURVETO
+                        },
+                    );
                     let p = out.last_mut().unwrap();
                     if (p.ty == other && (p.args.len() / 4) % 2 == 1)
                         || (p.ty == same && (p.args.len() / 4) % 2 == 0)
@@ -723,7 +737,12 @@ fn postproc(cd: &mut Glyph) -> Result<(), Fatal> {
                     upd(&mut b, x, y);
                 }
                 if a[12] == 50.0 {
-                    if a[1] == 0.0 && a[11] == 0.0 && a[5] == 0.0 && a[7] == 0.0 && a[3] + a[9] == 0.0 {
+                    if a[1] == 0.0
+                        && a[11] == 0.0
+                        && a[5] == 0.0
+                        && a[7] == 0.0
+                        && a[3] + a[9] == 0.0
+                    {
                         cur.args = vec![a[0], a[2], a[3], a[4], a[6], a[8], a[10]];
                         cur.ty = HFLEX;
                     } else if a[5] == 0.0 && a[7] == 0.0 && (a[1] + a[3] + a[9] + a[11]) == 0.0 {

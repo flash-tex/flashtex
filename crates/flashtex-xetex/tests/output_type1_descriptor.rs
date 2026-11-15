@@ -14,7 +14,8 @@ use flashtex_pdf::reader::{Obj, PdfFile};
 use std::path::PathBuf;
 use std::process::Command;
 
-const INPUT: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\\font\\x=ftxbox\n\\shipout\\hbox{\\x Hpb}\n\\end\n";
+const INPUT: &str =
+    "\\catcode`\\{=1 \\catcode`\\}=2\n\\font\\x=ftxbox\n\\shipout\\hbox{\\x Hpb}\n\\end\n";
 
 #[test]
 fn type1_descriptor_metrics_are_xdvipdfmxs() {
