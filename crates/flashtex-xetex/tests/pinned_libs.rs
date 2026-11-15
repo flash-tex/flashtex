@@ -170,11 +170,11 @@ fn vendored_icu_line_tables_match_sha256sums() {
     check_sums("icu", &["brkitr"], 16);
 }
 
-/// ICU's alias table and single-byte converter tables (third_party/icu/cnv,
+/// ICU's alias table and converter tables (third_party/icu/cnv,
 /// which src/ucnv.rs reads).
 #[test]
 fn vendored_icu_converters_match_sha256sums() {
-    check_sums("icu", &["cnv"], 139);
+    check_sums("icu", &["cnv"], 191);
 }
 
 /// TECkit's own normalizer (no mapping file, as XeTeX's

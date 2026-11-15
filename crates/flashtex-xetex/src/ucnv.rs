@@ -22,15 +22,12 @@
 //!
 //! Converters ported: UTF-8 and CESU-8 (ucnv_u8.cpp), ISO-8859-1 and US-ASCII
 //! (ucnvlat1.cpp), the UTF-16 and UTF-32 families with their BOM and
-//! `version` handling (ucnv_u16.cpp, ucnv_u32.cpp), and every single-byte
-//! table of TeX Live's ICU data (ucnvmbcs.cpp's
-//! `ucnv_MBCSSingleToBMPWithOffsets` and `ucnv_MBCSSingleToUnicodeWithOffsets`,
-//! with the `swaplfnl` option of `_EBCDICSwapLFNL`), whose `.cnv` files are
-//! vendored unmodified in third_party/icu/cnv. Not ported (S1): ICU's
-//! multi-byte tables (`ibm-943`, `gb18030`, `EUC-JP`, ...), the ones with an
-//! extension table (`gsm-03.38-2009`), and the algorithmic UTF-7,
-//! IMAP-mailbox-name, SCSU, BOCU-1, ISO-2022, HZ, LMBCS, ISCII and
-//! x11-compound-text: [`open`] reports such a name as [`Opened::Unported`].
+//! `version` handling (ucnv_u16.cpp, ucnv_u32.cpp), and every table of TeX
+//! Live's ICU data, single- and multi-byte (`crate::ucnv_mbcs`), whose
+//! `.cnv` files are vendored unmodified in third_party/icu/cnv. Not ported
+//! (S1): ICU's algorithmic UTF-7, IMAP-mailbox-name, SCSU, BOCU-1, ISO-2022,
+//! HZ, LMBCS, ISCII and x11-compound-text: [`open`] reports such a name as
+//! [`Opened::Unported`].
 
 use std::sync::OnceLock;
 
@@ -38,7 +35,7 @@ use std::sync::OnceLock;
 const MAX_CONVERTER_NAME_LENGTH: usize = 60;
 /// `UCNV_OPTION_VERSION`, `UCNV_OPTION_SWAP_LFNL` (ucnv_bld.h).
 const OPTION_VERSION: u32 = 0xf;
-const OPTION_SWAP_LFNL: u32 = 0x10;
+pub(crate) const OPTION_SWAP_LFNL: u32 = 0x10;
 
 /// ICU's error codes that [`open`] gives (utypes.h).
 pub const U_ILLEGAL_ARGUMENT_ERROR: i32 = 1;
@@ -61,8 +58,9 @@ enum Kind {
     Utf32Be,
     Utf32Le,
     Utf32,
-    /// A single-byte table: its index in [`crate::ucnv_sbcs::SBCS`].
-    Sbcs(u16),
+    /// A data converter (a `.cnv` table): its index in
+    /// [`crate::ucnv_data::DATA`].
+    Data(u16),
 }
 
 /// An open converter (`UConverter`): its implementation and `options`. It
@@ -98,9 +96,9 @@ impl Converter {
             Kind::Utf32Be => 7,
             Kind::Utf32Le => 8,
             Kind::Utf32 => 9,
-            Kind::Sbcs(i) => 16 + i as i32,
+            Kind::Data(i) => 16 + i as i32,
         };
-        (k << 8) | self.options as i32
+        (k << 16) | (self.options & 0xffff) as i32
     }
 
     /// The converter [`Converter::to_id`] gave `id`.
@@ -108,7 +106,7 @@ impl Converter {
         if id < 0 {
             return None;
         }
-        let kind = match id >> 8 {
+        let kind = match id >> 16 {
             0 => Kind::Utf8,
             1 => Kind::Cesu8,
             2 => Kind::Latin1,
@@ -119,14 +117,14 @@ impl Converter {
             7 => Kind::Utf32Be,
             8 => Kind::Utf32Le,
             9 => Kind::Utf32,
-            k if k >= 16 && ((k - 16) as usize) < crate::ucnv_sbcs::SBCS.len() => {
-                Kind::Sbcs((k - 16) as u16)
+            k if k >= 16 && ((k - 16) as usize) < crate::ucnv_data::DATA.len() => {
+                Kind::Data((k - 16) as u16)
             }
             _ => return None,
         };
         Some(Converter {
             kind,
-            options: (id & 0xff) as u32,
+            options: (id & 0xffff) as u32,
         })
     }
 
@@ -478,64 +476,6 @@ fn algorithmic_type(name: &[u8]) -> Option<Algorithmic> {
     })
 }
 
-/// The `.cnv` items of TeX Live 2026's `icudt78l.dat` that this port does
-/// not have (multi-byte, extension-only, or with an extension table):
-/// `ucnv_open` opens them in TeX Live.
-const UNPORTED_DATA: &[&str] = &[
-    "cns-11643-1992",
-    "euc-jp-2007",
-    "euc-tw-2014",
-    "gb18030-2022",
-    "gsm-03.38-2009",
-    "ibm-1363_P110-1997",
-    "ibm-1363_P11B-1998",
-    "ibm-1364_P110-2007",
-    "ibm-1371_P100-1999",
-    "ibm-1373_P100-2002",
-    "ibm-1375_P100-2008",
-    "ibm-1383_P110-1999",
-    "ibm-1386_P100-2001",
-    "ibm-1388_P100-2024",
-    "ibm-1390_P110-2003",
-    "ibm-1399_P110-2003",
-    "ibm-16684_P110-2003",
-    "ibm-33722_P120-1999",
-    "ibm-33722_P12A_P12A-2004_U2",
-    "ibm-33722_P12A_P12A-2009_U2",
-    "ibm-5471_P100-2006",
-    "ibm-5478_P100-1995",
-    "ibm-930_P120-1999",
-    "ibm-933_P110-1995",
-    "ibm-935_P110-1999",
-    "ibm-937_P110-1999",
-    "ibm-939_P120-1999",
-    "ibm-942_P12A-1999",
-    "ibm-943_P130-1999",
-    "ibm-943_P15A-2003",
-    "ibm-949_P110-1999",
-    "ibm-949_P11A-1999",
-    "ibm-950_P110-1999",
-    "ibm-954_P101-2007",
-    "ibm-964_P110-1999",
-    "ibm-970_P110_P110-2006_U2",
-    "ibm-971_P100-1995",
-    "icu-internal-25546",
-    "icu-internal-compound-d1",
-    "icu-internal-compound-d2",
-    "icu-internal-compound-d3",
-    "icu-internal-compound-d4",
-    "icu-internal-compound-d5",
-    "icu-internal-compound-d6",
-    "icu-internal-compound-d7",
-    "icu-internal-compound-t",
-    "iso-ir-165",
-    "jisx-212",
-    "lmb-excp",
-    "windows-936-2000",
-    "windows-949-2000",
-    "windows-950-2000",
-];
-
 /// `ucnv_open(name)`.
 pub fn open(name: &[u8]) -> Opened {
     // a C string: up to its first NUL
@@ -569,16 +509,9 @@ pub fn open(name: &[u8]) -> Opened {
         Some(Algorithmic::Unported) => return Opened::Unported,
         None => {
             // a data converter, by its exact name (`udata_openChoice`)
-            let sbcs = crate::ucnv_sbcs::SBCS;
-            match sbcs.binary_search_by(|(n, _)| n.as_bytes().cmp(&real[..])) {
-                Ok(i) => Kind::Sbcs(i as u16),
-                Err(_) => {
-                    return if UNPORTED_DATA.iter().any(|n| n.as_bytes() == &real[..]) {
-                        Opened::Unported
-                    } else {
-                        Opened::Failed(U_FILE_ACCESS_ERROR)
-                    };
-                }
+            match crate::ucnv_mbcs::find(&real) {
+                Some(i) => Kind::Data(i),
+                None => return Opened::Failed(U_FILE_ACCESS_ERROR),
             }
         }
     };
@@ -592,122 +525,18 @@ pub fn open(name: &[u8]) -> Opened {
             return Opened::Failed(U_ILLEGAL_ARGUMENT_ERROR)
         }
         Kind::Utf16 if cnv.version() > 2 => return Opened::Failed(U_ILLEGAL_ARGUMENT_ERROR),
-        // `ucnv_MBCSOpen`: the option applies only to an EBCDIC table with
-        // the standard LF and NL mappings (`_EBCDICSwapLFNL`)
-        Kind::Sbcs(i) if cnv.options & OPTION_SWAP_LFNL != 0 => match sbcs_table(i).swap_lfnl {
-            Ok(true) => {}
-            Ok(false) => cnv.options &= !OPTION_SWAP_LFNL,
-            Err(e) => return Opened::Failed(e),
-        },
+        // `ucnv_MBCSLoad` (an error: `ucnv_open` fails) and `ucnv_MBCSOpen`
+        Kind::Data(i) => {
+            let opened = crate::ucnv_mbcs::table(i)
+                .and_then(|t| crate::ucnv_mbcs::open_options(t, &real, cnv.options));
+            match opened {
+                Ok(o) => cnv.options = o,
+                Err(e) => return Opened::Failed(e),
+            }
+        }
         _ => {}
     }
     Opened::Converter(cnv)
-}
-
-// ---------------------------------------------------------------------------
-// Single-byte tables: ucnvmbcs.cpp
-// ---------------------------------------------------------------------------
-
-/// `MBCS_STATE_*` actions of a final state table entry.
-const STATE_VALID_DIRECT_16: u32 = 0;
-const STATE_VALID_DIRECT_20: u32 = 1;
-const STATE_FALLBACK_DIRECT_16: u32 = 2;
-const STATE_FALLBACK_DIRECT_20: u32 = 3;
-const STATE_UNASSIGNED: u32 = 6;
-const STATE_ILLEGAL: u32 = 7;
-
-/// `MBCS_ENTRY_FINAL(0, MBCS_STATE_VALID_DIRECT_16, value)`.
-const fn final_direct_16(value: u32) -> i32 {
-    (0x8000_0000u32 | (STATE_VALID_DIRECT_16 << 20) | value) as i32
-}
-
-/// What `ucnv_MBCSLoad` and `ucnv_MBCSOpen` take from a single-byte `.cnv`
-/// file for converting to Unicode.
-struct SbcsTable {
-    /// `stateTable[0]`.
-    state: [i32; 256],
-    /// `unicodeMask & UCNV_HAS_SUPPLEMENTARY`: the table has entries above
-    /// U+FFFF (`ucnv_MBCSSingleToUnicodeWithOffsets`, else
-    /// `ucnv_MBCSSingleToBMPWithOffsets`).
-    supplementary: bool,
-    /// `staticData->subChar1`.
-    sub_char1: u8,
-    /// `_EBCDICSwapLFNL`: whether `swaplfnl` applies (or its error).
-    swap_lfnl: Result<bool, i32>,
-}
-
-fn sbcs_table(i: u16) -> &'static SbcsTable {
-    static TABLES: OnceLock<Vec<OnceLock<SbcsTable>>> = OnceLock::new();
-    let tables = TABLES.get_or_init(|| {
-        (0..crate::ucnv_sbcs::SBCS.len())
-            .map(|_| OnceLock::new())
-            .collect()
-    });
-    tables[i as usize].get_or_init(|| SbcsTable::load(crate::ucnv_sbcs::SBCS[i as usize].1))
-}
-
-impl SbcsTable {
-    fn load(item: &[u8]) -> SbcsTable {
-        let u16_at = |o: usize| u16::from_le_bytes([item[o], item[o + 1]]);
-        let u32_at = |o: usize| u32::from_le_bytes(item[o..o + 4].try_into().unwrap());
-        let header_size = u16_at(0) as usize;
-        // UDataInfo.formatVersion
-        let fv = [item[16], item[17]];
-        // UConverterStaticData
-        let sd = header_size;
-        let struct_size = u32_at(sd) as usize;
-        let unicode_mask = item[sd + 79];
-        let sub_char1 = item[sd + 80];
-        // _MBCSHeader
-        let raw = sd + struct_size;
-        let version = [item[raw], item[raw + 1]];
-        let header_length = match version[0] {
-            4 => 8,
-            _ => (u32_at(raw + 32) & 0x3f) as usize,
-        };
-        let count_states = u32_at(raw + 4);
-        debug_assert_eq!(count_states, 1);
-        let offset_from_u_table = u32_at(raw + 16) as usize;
-        let offset_from_u_bytes = u32_at(raw + 20) as usize;
-        let from_u_bytes_length = u32_at(raw + 28);
-        let st = raw + header_length * 4;
-        let mut state = [0i32; 256];
-        for (b, e) in state.iter_mut().enumerate() {
-            *e = u32_at(st + 4 * b) as i32;
-        }
-        // converter versions 6.1 and up hold a unicodeMask
-        let mask = if fv[0] > 6 || (fv[0] == 6 && fv[1] >= 1) {
-            unicode_mask & 3
-        } else {
-            3
-        };
-        // `_EBCDICSwapLFNL` for `MBCS_OUTPUT_1`
-        let table = |i: usize| u16_at(raw + offset_from_u_table + 2 * i) as usize;
-        let result = |c: usize| {
-            let r = table(table(c >> 10) + ((c >> 4) & 0x3f)) + (c & 0xf);
-            u16_at(raw + offset_from_u_bytes + 2 * r)
-        };
-        let swap_lfnl = if state[0x25] == final_direct_16(0x0a)
-            && state[0x15] == final_direct_16(0x85)
-            && result(0x0a) == 0xf25
-            && result(0x85) == 0xf15
-        {
-            if from_u_bytes_length > 0 {
-                Ok(true)
-            } else {
-                // U_INVALID_FORMAT_ERROR
-                Err(3)
-            }
-        } else {
-            Ok(false)
-        };
-        SbcsTable {
-            state,
-            supplementary: mask & 1 != 0,
-            sub_char1,
-            swap_lfnl,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -717,13 +546,14 @@ impl SbcsTable {
 /// What a converter's `toUnicode` writes into the pivot: UTF-16 code units,
 /// with `_toUnicodeWithCallback` calling `UCNV_TO_U_CALLBACK_SUBSTITUTE`
 /// for each error.
-struct Pivot {
-    units: Vec<u16>,
-    sub_char1: u8,
+pub(crate) struct Pivot {
+    pub(crate) units: Vec<u16>,
+    /// `cnv->subChar1`.
+    pub(crate) sub_char1: u8,
 }
 
 impl Pivot {
-    fn push(&mut self, c: u32) {
+    pub(crate) fn push(&mut self, c: u32) {
         if c <= 0xffff {
             self.units.push(c as u16);
         } else {
@@ -733,7 +563,7 @@ impl Pivot {
     }
 
     /// `ucnv_cbToUWriteSub` for an error over `invalid_len` bytes.
-    fn sub(&mut self, invalid_len: usize) {
+    pub(crate) fn sub(&mut self, invalid_len: usize) {
         if invalid_len == 1 && self.sub_char1 != 0 {
             self.units.push(0x1a);
         } else {
@@ -766,7 +596,11 @@ pub fn to_unicode(cnv: Converter, src: &[u8], out: &mut Vec<u32>) {
         Kind::Utf32Be => utf32_to_u(src, true, &mut p),
         Kind::Utf32Le => utf32_to_u(src, false, &mut p),
         Kind::Utf32 => utf32_bom_to_u(src, &mut p),
-        Kind::Sbcs(i) => sbcs_to_u(sbcs_table(i), cnv.options, src, &mut p),
+        Kind::Data(i) => {
+            if let Ok(t) = crate::ucnv_mbcs::table(i) {
+                crate::ucnv_mbcs::to_u(t, cnv.options, src, &mut p);
+            }
+        }
     }
     // The pivot into UTF-32 (`T_UConverter_fromUnicode_UTF32_LE`): a
     // surrogate pair is one character, an unpaired surrogate (only CESU-8
@@ -982,46 +816,6 @@ fn utf32_bom_to_u(src: &[u8], p: &mut Pivot) {
     }
 }
 
-/// `ucnv_MBCSSingleToBMPWithOffsets` (or `...SingleToUnicode...` for a
-/// table with supplementary code points), flushed. No vendored table has
-/// an extension, so `_extToU` finds no mapping for an unassigned byte.
-fn sbcs_to_u(t: &SbcsTable, options: u32, src: &[u8], p: &mut Pivot) {
-    p.sub_char1 = t.sub_char1;
-    let swap = options & OPTION_SWAP_LFNL != 0;
-    for &b in src {
-        let mut entry = t.state[b as usize];
-        if swap {
-            if b == 0x25 {
-                entry = final_direct_16(0x85);
-            } else if b == 0x15 {
-                entry = final_direct_16(0x0a);
-            }
-        }
-        // MBCS_ENTRY_FINAL_IS_VALID_DIRECT_16
-        if entry < 0x8010_0000u32 as i32 {
-            p.units.push(entry as u16);
-            continue;
-        }
-        let action = (entry as u32 >> 20) & 0xf;
-        let value = entry as u32 & 0xfffff;
-        if t.supplementary
-            && (action == STATE_VALID_DIRECT_20 || action == STATE_FALLBACK_DIRECT_20)
-        {
-            p.push(0x10000 + value);
-        } else if action == STATE_FALLBACK_DIRECT_16 {
-            // UCNV_TO_U_USE_FALLBACK is always true
-            p.units.push(entry as u16);
-        } else if action == STATE_UNASSIGNED {
-            // `_extToU`: no extension; the byte is the invalid sequence
-            p.sub(1);
-        } else if action == STATE_ILLEGAL {
-            // U_ILLEGAL_CHAR_FOUND, with toUBytes not set (toULength 0)
-            p.sub(0);
-        }
-        // else reserved: the byte is skipped
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn sbcs_list_is_the_vendored_files() {
+    fn data_list_is_the_vendored_files() {
         let dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/icu/cnv");
         let mut on_disk: Vec<String> = std::fs::read_dir(dir)
@@ -1047,15 +841,15 @@ mod tests {
             })
             .collect();
         on_disk.sort();
-        let listed: Vec<String> = crate::ucnv_sbcs::SBCS
+        let listed: Vec<String> = crate::ucnv_data::DATA
             .iter()
             .map(|(n, _)| n.to_string())
             .collect();
         assert_eq!(listed, on_disk);
-        for (i, (n, _)) in crate::ucnv_sbcs::SBCS.iter().enumerate() {
-            assert!(!UNPORTED_DATA.contains(n));
-            let t = sbcs_table(i as u16);
-            assert!(!t.supplementary, "{n}");
+        // every table loads (`ucnv_MBCSLoad`), extension-only ones with
+        // their base tables
+        for (i, (n, _)) in crate::ucnv_data::DATA.iter().enumerate() {
+            assert!(crate::ucnv_mbcs::table(i as u16).is_ok(), "{n}");
         }
     }
 
@@ -1079,10 +873,11 @@ mod tests {
         assert_eq!(kind("US-ASCII"), Some(Kind::Ascii));
         assert_eq!(kind("UnicodeLittleUnmarked"), Some(Kind::Utf16Le));
         assert_eq!(kind("x-utf-16be"), Some(Kind::Utf16Be));
-        assert!(matches!(kind("cp1252"), Some(Kind::Sbcs(_))));
-        assert!(matches!(kind("windows-1252"), Some(Kind::Sbcs(_))));
+        assert!(matches!(kind("cp1252"), Some(Kind::Data(_))));
+        assert!(matches!(kind("windows-1252"), Some(Kind::Data(_))));
         assert_eq!(kind("no-such-encoding"), None);
-        assert_eq!(open(b"Shift_JIS"), Opened::Unported);
+        assert!(matches!(kind("Shift_JIS"), Some(Kind::Data(_))));
+        assert_eq!(open(b"UTF-7"), Opened::Unported);
     }
 
     #[test]
@@ -1096,5 +891,8 @@ mod tests {
             [0x61, 0xfffd, 0x62, 0xfffd, 0xfffd, 0xfffd]
         );
         assert_eq!(conv("CESU-8", b"\xed\xa0\x80\xed\xb0\x80"), [0x10000]);
+        assert_eq!(conv("Shift_JIS", b"\x82\xa0a"), [0x3042, 0x61]);
+        assert_eq!(conv("GB18030", b"\x81\x30\x81\x30"), [0x80]);
+        assert_eq!(conv("GB18030", b"\x90\x30\x81\x30"), [0x10000]);
     }
 }

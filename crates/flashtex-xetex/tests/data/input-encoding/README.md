@@ -18,7 +18,13 @@ line on (TeX Live names the file `./p.tex`, the port's `cwd` resolver
   its character codes. `sbcs` reads the bytes 00–FF (but LF and CR) through
   single-byte tables (with `swaplfnl`, ICU's name matching, and names ICU
   does not open); `unicode` reads ill-formed and BOM-led lines through the
-  UTF-8, CESU-8, US-ASCII, UTF-16 and UTF-32 converters.
+  UTF-8, CESU-8, US-ASCII, UTF-16 and UTF-32 converters; `mbcs` reads
+  random lines, lead and trail byte sweeps, GB 18030 four-byte forms, SI/SO
+  sequences and truncated sequences through multi-byte tables (GB 18030,
+  EBCDIC SI/SO `ibm-1390` and its DBCS-only `ibm-16684`, the DBCS-only
+  `ibm-971`, `gsm-03.38` with its extension table, extension-only tables,
+  EUC-TW), and CJK text (encoded by Python's codecs) through `Shift_JIS`,
+  `EUC-JP`, `GBK`, `GB18030`, `Big5`, `EUC-KR` and others.
 - The others switch `\XeTeXinputencoding` in the document itself: a UTF-16
   name over ASCII text (`! Emergency stop`, as TeX Live), text really in
   UTF-16 or UTF-32 (each line then ends in U+FFFD, the LF's other byte),

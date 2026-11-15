@@ -3,7 +3,8 @@
 //! `ucnv_open` and converts each line's bytes, read up to a LF or CR, with
 //! `ucnv_toAlgorithmic` (XeTeX_ext.c's `input_line`). The cases and TeX
 //! Live 2026's logs and XDV files are in tests/data/input-encoding (see its
-//! README): single-byte tables, ICU's name matching, the UTF-8, CESU-8,
+//! README): single-byte and multi-byte tables (with extension tables,
+//! SI/SO and GB 18030), ICU's name matching, the UTF-8, CESU-8,
 //! UTF-16 and UTF-32 converters with ill-formed input, and documents that
 //! switch to UTF-16. Before the port had ICU's converters it read every
 //! such name but the UTF-8 and Latin-1 ones as bytes, after an "Unknown
@@ -91,6 +92,11 @@ fn check(names: &[&str]) {
 #[test]
 fn single_byte_converters_read_as_tex_live() {
     check(&["sbcs", "cp1252-text", "cr-lines"]);
+}
+
+#[test]
+fn multi_byte_converters_read_as_tex_live() {
+    check(&["mbcs"]);
 }
 
 #[test]
