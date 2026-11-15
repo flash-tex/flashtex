@@ -109,6 +109,10 @@ public final class CollabHub {
         self.pins = pins
         self.environmentDigest = environmentDigest
         session.transmit = { [weak self] out in self?.broadcast(out) }
+        session.onReleased = { [weak self] file, ops, errors in
+            self?.relay([.text(file, ops)], excluding: nil, errors: errors)
+            self?.refuseRefused(errors)
+        }
     }
 
     // MARK: Lifecycle
@@ -370,6 +374,8 @@ public final class CollabHub {
 
     /// Replica binding, then integrate and relay.
     private func receive(_ sections: [Section], from member: Member, link: Link) {
+        session.releaseReady()
+        guard members[member.id]?.removed == false else { return }
         var kept: [Section] = []
         var dropped = 0
         var fileOps = 0
@@ -388,14 +394,54 @@ public final class CollabHub {
         if dropped > 0 { onEvent(.forgedDropped(participant: member.id, count: dropped)) }
         if fileOps > 0 { onEvent(.fileOpsDropped(participant: member.id, count: fileOps)) }
         guard !kept.isEmpty else { return }
-        let errors = session.integrate(kept)
-        for (k, other) in links where other !== link && other.member != nil {
-            _ = k
-            other.outSeq += 1
-            other.connection.send(.update(seq: other.outSeq, sections: kept))
+        let ready = kept.filter { section in
+            if case let .text(file, _) = section { return !session.isHolding(file) }
+            return true
         }
+        let errors = session.integrate(kept)
+        relay(ready, excluding: member.id, errors: errors)
+        refuseRefused(errors)
         if errors.contains(where: { if case .pendingFull = $0 { return true } else { return false } }) {
             link.connection.send(.syncRequest(session.project.stateVectors))
+        }
+    }
+
+    /// Relays what the hub took. An operation it did not take (refused for
+    /// any reason, or not parked because the buffer was full) goes to no
+    /// one: the others would refuse it too, or hold what the hub lacks.
+    private func relay(_ sections: [Section], excluding sender: UInt64?, errors: [CollabProject.ReceiveError]) {
+        var refused: [FileID: Set<CollabID>] = [:]
+        for error in errors {
+            if case let .text(file) = error.doc { refused[file, default: []].insert(error.op) }
+        }
+        for other in links.values where other.member != nil && other.member != sender {
+            let accepted = sections.compactMap { section -> Section? in
+                guard case let .text(file, ops) = section else { return section }
+                let kept = ops.filter { $0.id.replica != other.member && !(refused[file]?.contains($0.id) ?? false) }
+                return kept.isEmpty ? nil : .text(file, kept)
+            }
+            guard !accepted.isEmpty else { continue }
+            other.outSeq += 1
+            other.connection.send(.update(seq: other.outSeq, sections: accepted))
+        }
+    }
+
+    /// Ends the part of every guest whose operation the hub refused for
+    /// good (§2.4a, §7.4): it holds what the hub does not, and its resync
+    /// would be refused again. `project_full` for a size cap, else
+    /// `operation_refused`.
+    private func refuseRefused(_ errors: [CollabProject.ReceiveError]) {
+        let refusals = errors.filter(\.isRefusal)
+        for id in Set(refusals.map(\.op.replica)) {
+            guard var member = members[id], !member.removed else { continue }
+            member.removed = true
+            members[id] = member
+            let why = CollabSession.endMessage(for: refusals.filter { $0.op.replica == id }) ?? CollabSession.refusedMessage
+            let code = why == CollabSession.projectFullMessage ? "project_full" : "operation_refused"
+            onEvent(.refused(reason: "\(code) from participant \(id)"))
+            if let key = member.link, let link = links[key] {
+                link.connection.refuse(code: code, message: why)
+            }
         }
     }
 

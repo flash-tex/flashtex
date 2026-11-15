@@ -89,14 +89,10 @@ extension EngineV3Session {
     }
 
     /// 1-based line and 0-based byte column of `byte` in `text`.
+    /// Counted with `memchr` (`EditorDiagnostics.newlines(before:in:)`).
     static func lineAndColumn(byte: Int, in text: String) -> (Int, Int) {
-        var line = 1, start = 0, i = 0
-        for b in text.utf8 {
-            if i >= byte { break }
-            if b == 0x0A { line += 1; start = i + 1 }
-            i += 1
-        }
-        return (line, max(0, byte - start))
+        let (count, start) = EditorDiagnostics.newlines(before: byte, in: text)
+        return (count + 1, max(0, byte - start))
     }
 }
 

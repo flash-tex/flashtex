@@ -69,7 +69,7 @@ impl Globals {
                 }
                 if c != b' ' as i32 || f.line.last().is_some_and(|&l| l != 32) {
                     if f.line.len() + 1 > SFD_BUF_SIZE {
-                        self.pdftex_fail("buffer overflow at file subfont.c, line 95");
+                        self.check_buf_fail("subfont.c", 95);
                     }
                     f.line.push(c as u8);
                 }
@@ -79,7 +79,7 @@ impl Globals {
             }
             // append_eol(p, sfd_line, SFD_BUF_SIZE)
             if f.line.len() + 2 > SFD_BUF_SIZE {
-                self.pdftex_fail("buffer overflow at file subfont.c, line 97");
+                self.check_buf_fail("subfont.c", 97);
             }
             let n = f.line.len();
             if n > 1 && f.line[n - 1] != 10 {
@@ -222,7 +222,7 @@ impl Globals {
             buf.truncate(z);
         }
         if buf.len() + 4 > SFD_BUF_SIZE {
-            self.pdftex_fail("buffer overflow at file subfont.c, line 196");
+            self.check_buf_fail("subfont.c", 196);
         }
         buf.extend_from_slice(b".sfd");
         let Some(sfd) = self.read_sfd(st, &buf) else {

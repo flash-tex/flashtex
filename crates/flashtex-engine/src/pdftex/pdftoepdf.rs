@@ -444,8 +444,14 @@ impl Globals {
 
     /// `pdftex_fail("...<%s>", obj->getTypeName())`.
     fn fail_type(&mut self, msg: &str, obj: &Obj) -> ! {
+        self.fail_type_then(msg, obj, "")
+    }
+
+    /// `pdftex_fail("...<%s>...", obj->getTypeName())`, with `after` after
+    /// the `>`.
+    fn fail_type_then(&mut self, msg: &str, obj: &Obj, after: &str) -> ! {
         let t = String::from_utf8_lossy(&obj.type_name()).into_owned();
-        self.pdftex_fail(&format!("{msg}{t}>"))
+        self.pdftex_fail(&format!("{msg}{t}>{after}"))
     }
 
     /// `copyFontDict`: the font dictionary with pdfTeX's descriptor, font
@@ -720,7 +726,7 @@ impl Globals {
                 let num = self.add_other(cx, r);
                 self.pdf_printf(format!("{num} 0 R").as_bytes());
             }
-            _ => self.fail_type("PDF inclusion: type <", obj),
+            _ => self.fail_type_then("PDF inclusion: type <", obj, " cannot be copied"),
         }
     }
 

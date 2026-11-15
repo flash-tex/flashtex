@@ -55,7 +55,10 @@ pub fn check_structure(pdf: &[u8]) -> Result<Structure, String> {
     let xref_offset: usize = ascii_line(pdf, sx + "startxref\n".len())?
         .parse()
         .map_err(|_| "startxref is not a number")?;
-    if !pdf[xref_offset..].starts_with(b"xref\n") {
+    if !pdf
+        .get(xref_offset..)
+        .is_some_and(|s| s.starts_with(b"xref\n"))
+    {
         return Err(format!("startxref {xref_offset} does not point at 'xref'"));
     }
     let mut pos = xref_offset + "xref\n".len();
@@ -98,12 +101,15 @@ pub fn check_structure(pdf: &[u8]) -> Result<Structure, String> {
             ));
         }
         let body_start = offset + expect.len();
-        let end = find(&pdf[body_start..], b"endobj").ok_or(format!("object {n} has no endobj"))?;
-        if find(&pdf[body_start..body_start + end], b"stream\n").is_some() {
+        let body = pdf
+            .get(body_start..)
+            .ok_or(format!("object {n} has no endobj"))?;
+        let end = find(body, b"endobj").ok_or(format!("object {n} has no endobj"))?;
+        if find(&body[..end], b"stream\n").is_some() {
             stream_objects.push(n);
         }
     }
-    if !pdf[pos..].starts_with(b"trailer\n") {
+    if !pdf.get(pos..).is_some_and(|s| s.starts_with(b"trailer\n")) {
         return Err("xref table not followed by trailer".into());
     }
     let trailer = ascii_line(pdf, pos + "trailer\n".len())?;
@@ -295,4 +301,27 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 fn rfind(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).rposition(|w| w == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_structure;
+
+    #[test]
+    fn oversized_startxref_returns_error() {
+        let pdf = b"%PDF-1.4\nstartxref\n999999999\n%%EOF\n";
+        assert_eq!(
+            check_structure(pdf).unwrap_err(),
+            "startxref 999999999 does not point at 'xref'"
+        );
+    }
+
+    #[test]
+    fn oversized_xref_entry_offset_returns_error() {
+        let pdf = b"%PDF-1.4\nxref\n0 2\n0000000000 65535 f \n9999999999 00000 n \ntrailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n9\n%%EOF\n";
+        assert_eq!(
+            check_structure(pdf).unwrap_err(),
+            "xref entry 1 offset 9999999999 does not point at \"1 0 obj\\n\""
+        );
+    }
 }
