@@ -522,7 +522,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
                     let w = rds(&mut i, 4)?;
                     self.rule(a, w);
                     if op == 132 {
-                        self.r.h = self.r.h.wrapping_add(w);
+                        // dvi.c's `do_setrule`: `dvi_right(width)`
+                        self.right(w);
                     }
                 }
                 133..=136 => {
@@ -673,7 +674,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
                         gids.push(rd(&mut i, 2)? as u16);
                     }
                     self.set_glyphs(&xy, &gids);
-                    self.r.h = self.r.h.wrapping_add(w);
+                    // dvi.c's `do_glyphs`: `dvi_right(width)`
+                    self.right(w);
                 }
                 248 => return Ok(()), // post: past the last page
                 _ => return Err(format!("XDV opcode {op} in a page")),
@@ -740,7 +742,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
         }
         self.track(0, wd, ht, dp);
         if advance {
-            self.r.h = self.r.h.wrapping_add(wd);
+            // dvi.c's `dvi_set`: `dvi_right(width)`
+            self.right(wd);
         }
     }
 
@@ -981,7 +984,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
         r
     }
 
-    /// A move to the right by `d` (DVI's `right`, `w` and `x`): dvipdfmx's
+    /// A move to the right by `d` (DVI's `right`, `w` and `x`, and the
+    /// advance after a character, a set rule and a glyph run): dvipdfmx's
     /// `dvi_right`. With `dvipdfmx:catch_phantom` on, the box the move
     /// crosses widens the link being tracked.
     fn right(&mut self, d: i32) {
