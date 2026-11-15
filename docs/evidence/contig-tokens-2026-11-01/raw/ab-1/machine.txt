@@ -1,0 +1,5 @@
+Linux nixos 6.18.58 #1-NixOS SMP PREEMPT_DYNAMIC @1792571549 x86_64 GNU/Linux
+CPU(s):                                  16
+Model name:                              AMD Ryzen 7 7800X3D 8-Core Processor
+CPU(s) scaling MHz:                      87%
+5.50 12.80 12.48 25/2550 4032432
