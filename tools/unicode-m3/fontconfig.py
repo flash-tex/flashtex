@@ -42,11 +42,40 @@ def files_under(d):
     return sorted(out)
 
 
-def system_dirs():
-    """fontconfig's default directories on Debian/Ubuntu (/etc/fonts/fonts.conf)."""
+def port_dirs():
+    """The system directories the port scans by itself on Linux
+    (font-discovery's `default_dirs`): fontconfig's defaults on Debian/Ubuntu."""
     home = os.path.expanduser("~")
     return ["/usr/share/fonts", "/usr/local/share/fonts",
             os.path.join(home, ".fonts"), os.path.join(home, ".local/share/fonts")]
+
+
+def fontconfig_dirs():
+    """The directories of the fonts the system's own fontconfig lists (fc-list
+    under /etc/fonts/fonts.conf), which xelatex sees through the <include>.
+    Elsewhere than Debian/Ubuntu they need not be under port_dirs(): on NixOS
+    every one is in /nix/store (#2525)."""
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k != "FONTCONFIG_FILE"}
+    try:
+        out = subprocess.run(["fc-list", "-f", "%{file}\n"], env=env, capture_output=True,
+                             text=True, timeout=120).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return sorted({os.path.dirname(f) for f in out.splitlines() if os.path.isabs(f)})
+
+
+def outside(dirs, roots):
+    """The directories of `dirs` under none of `roots`."""
+    def under(d, r):
+        return d == r or d.startswith(r.rstrip("/") + "/")
+    return [d for d in dirs if not any(under(d, r) for r in roots)]
+
+
+def system_dirs():
+    """Every system font directory xelatex can see: the port's own and
+    fontconfig's."""
+    return port_dirs() + outside(fontconfig_dirs(), port_dirs())
 
 
 def config(tl_dirs, cache_dir, sys_dirs):
@@ -82,6 +111,9 @@ def _self_test():
         assert "<glob>%s</glob>" % rejected[0] in text
         assert "OnlyHere" not in text
         assert text.index("<include") < text.index("<dir>")
+    # NixOS: fontconfig's directories are in /nix/store, not under the port's own
+    assert outside(["/nix/store/x-gyre/share/fonts", "/usr/share/fonts/truetype", "/usr/share/fontsx"],
+                   ["/usr/share/fonts"]) == ["/nix/store/x-gyre/share/fonts", "/usr/share/fontsx"]
 
 
 def main(argv=None):
@@ -98,7 +130,8 @@ def main(argv=None):
         ap.error("--texlive and --out are required")
     tl_dirs = [os.path.join(a.texlive, "texmf-dist", "fonts", x) for x in ("opentype", "truetype")]
     os.makedirs(a.out, exist_ok=True)
-    text, rejected = config(tl_dirs, os.path.join(a.out, "fc-cache"), system_dirs())
+    sys_dirs = system_dirs()
+    text, rejected = config(tl_dirs, os.path.join(a.out, "fc-cache"), sys_dirs)
     path = os.path.join(a.out, "fonts.conf")
     with open(path, "w") as f:
         f.write(text)
@@ -107,7 +140,9 @@ def main(argv=None):
     for r in rejected:
         print("  rejected %s" % r, file=sys.stderr)
     print("FONTCONFIG_FILE=%s" % path)
-    print("FLASHTEX_FONT_DIRS=%s" % ":".join(tl_dirs))
+    # The system directories the port does not scan by itself go after TeX
+    # Live's, so both engines see the same system fonts (NixOS: #2525).
+    print("FLASHTEX_FONT_DIRS=%s" % ":".join(tl_dirs + outside(sys_dirs, port_dirs())))
     print("FLASHTEX_CACHE_DIR=%s" % os.path.join(a.out, "flashtex-cache"))
     return 0
 
