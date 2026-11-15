@@ -201,6 +201,10 @@ impl Fonts for KeptFonts {
         }
     }
 
+    fn is_watched(&self, path: &std::path::Path) -> bool {
+        self.watched.contains_key(path)
+    }
+
     fn watched(&self) -> Vec<PathBuf> {
         self.watched.keys().cloned().collect()
     }
