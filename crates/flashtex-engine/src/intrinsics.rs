@@ -1309,6 +1309,21 @@ impl Globals {
         }
     }
 
+    /// `get_next` popped a used-up token list, during a recording
+    /// (changes/boxmemo.ch). A recording ends at `big_switch` while its
+    /// body is still on the stack (`flashtex_intr_switch`), so popping the
+    /// call's own level means `get_next` goes on to read past the call.
+    /// `flashtex_intr_next`'s level test alone missed one that came from a
+    /// parameter of the macro the call is in (`\\let\\x= ` as the body's
+    /// end, called as `\\hook#1`): its `out_param` pushes the argument's
+    /// list at the body's old level (lane AUDIT-MATH).
+    pub fn flashtex_intr_popped(&mut self) {
+        let base = self.st(S_REC_BASE);
+        if base != 0 && self.input_ptr < base {
+            self.rec_abort(Why::Level);
+        }
+    }
+
     /// `macro_call` fed a body to the scanner, during a recording.
     pub fn flashtex_intr_fed(&mut self) {
         if self.st(S_REC_BASE) == 0 {

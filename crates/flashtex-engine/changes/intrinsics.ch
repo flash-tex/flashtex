@@ -437,6 +437,7 @@ procedure flashtex_intr_unsave; external;
 procedure flashtex_intr_def(@!p:pointer;@!t:quarterword;@!e:integer;@!k:integer); external;
 procedure flashtex_intr_touch(@!p:pointer); external;
 procedure flashtex_intr_next; external;
+procedure flashtex_intr_popped; external;
 procedure flashtex_intr_expand; external;
 procedure flashtex_intr_read(@!p:pointer); external;
 procedure flashtex_intr_fed; external;
