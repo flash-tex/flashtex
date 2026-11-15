@@ -32,7 +32,8 @@
 //!   `cur_chr`, `cur_cs`, `cur_tok`, `cur_val`, `cur_val_level`, `radix`,
 //!   `cur_order`, `def_ref`, `long_state`); memory-allocation state and
 //!   statistics (`avail`, `rover`, `dyn_used`, `var_used`, `lo_mem_max`,
-//!   `hi_mem_min`, `mem_end`, the `max_*` high-water marks), pseudo-printing
+//!   `hi_mem_min`, `mem_end`, the `max_*` high-water marks and their `pk_*`
+//!   shadows), pseudo-printing
 //!   scratch (`tally`, `first_count`, `trick_count`, `base_ptr`) and the
 //!   intrinsics' and checkpoints' own bookkeeping (`intr_*`, `ckpt_*`,
 //!   `macro_prof_on`). `EXCLUDED_SCALARS` is the list.
@@ -79,6 +80,12 @@ const EXCLUDED_SCALARS: &[&str] = &[
     "max_buf_stack",
     "max_save_stack",
     "max_nest_stack",
+    // their shadows (changes/stackpeak.ch)
+    "pk_in_stack",
+    "pk_param_stack",
+    "pk_buf_stack",
+    "pk_save_stack",
+    "pk_nest_stack",
     "tally",
     "first_count",
     "trick_count",

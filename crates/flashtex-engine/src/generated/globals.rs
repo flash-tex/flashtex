@@ -1292,6 +1292,16 @@ pub struct Globals {
     pub bm_font_version: i32,
     // §1924
     pub bm_hyph_version: i32,
+    // §1927
+    pub pk_in_stack: i32,
+    // §1927
+    pub pk_nest_stack: i32,
+    // §1927
+    pub pk_param_stack: i32,
+    // §1927
+    pub pk_buf_stack: i32,
+    // §1927
+    pub pk_save_stack: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
     /// The engine's state outside the word space (`--host-state`).
@@ -1815,6 +1825,11 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>();
 
@@ -2641,6 +2656,11 @@ impl Globals {
             bm_cand: __arena.arr(__r_bm_cand, 630193),
             bm_font_version: 0,
             bm_hyph_version: 0,
+            pk_in_stack: 0,
+            pk_nest_stack: 0,
+            pk_param_stack: 0,
+            pk_buf_stack: 0,
+            pk_save_stack: 0,
             arena: __arena,
             host: Default::default(),
         })
@@ -3166,6 +3186,11 @@ impl Globals {
         v.pod(&mut self.bm_at_switch);
         v.pod(&mut self.bm_font_version);
         v.pod(&mut self.bm_hyph_version);
+        v.pod(&mut self.pk_in_stack);
+        v.pod(&mut self.pk_nest_stack);
+        v.pod(&mut self.pk_param_stack);
+        v.pod(&mut self.pk_buf_stack);
+        v.pod(&mut self.pk_save_stack);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).
