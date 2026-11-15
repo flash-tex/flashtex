@@ -1001,7 +1001,10 @@ pub fn system_curl() -> PathBuf {
 }
 
 /// Remove the partial downloads (`*.tmp-<pid>`) that hosts which no longer
-/// run left in the package cache (this user's files only). Called at start.
+/// run left in the package cache's `.tarballs` directory, where downloads
+/// are written (this user's files only; nothing else in the cache is
+/// touched). Called at start. Liveness is judged by pid on this machine:
+/// see [`crate::watchdog::sweep_stale_temp_dirs`] for the assumption.
 pub fn sweep_stale_downloads(cache: &Path) -> usize {
     use std::os::unix::fs::MetadataExt;
     fn walk(dir: &Path, depth: u32, removed: &mut usize) {
@@ -1037,7 +1040,7 @@ pub fn sweep_stale_downloads(cache: &Path) -> usize {
         }
     }
     let mut removed = 0;
-    walk(cache, 0, &mut removed);
+    walk(&cache.join(".tarballs"), 0, &mut removed);
     removed
 }
 
@@ -1375,16 +1378,21 @@ mod tests {
     fn stale_partial_downloads_are_swept() {
         let dir = std::env::temp_dir().join(format!("ftth-dlsweep-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let sub = dir.join("preview/hello");
+        let sub = dir.join(".tarballs/preview");
         std::fs::create_dir_all(&sub).unwrap();
-        let dead = sub.join(format!("0.1.0.tar.tmp-{}", (1 << 22) + 7));
-        let live = sub.join(format!("0.1.0.tar.tmp-{}", std::process::id()));
-        let keep = sub.join("0.1.0.tar.gz");
-        for f in [&dead, &live, &keep] {
+        let dead = sub.join(format!("hello-0.1.0.tar.tmp-{}", (1 << 22) + 7));
+        let live = sub.join(format!("hello-0.1.0.tar.tmp-{}", std::process::id()));
+        let keep = sub.join("hello-0.1.0.tar.gz");
+        // Outside .tarballs: a package's own file named like a partial
+        // download is never touched.
+        let pkg = dir.join("preview/hello/0.1.0");
+        std::fs::create_dir_all(&pkg).unwrap();
+        let own = pkg.join(format!("data.tmp-{}", (1 << 22) + 7));
+        for f in [&dead, &live, &keep, &own] {
             std::fs::write(f, "x").unwrap();
         }
         assert_eq!(sweep_stale_downloads(&dir), 1);
-        assert!(!dead.exists() && live.exists() && keep.exists());
+        assert!(!dead.exists() && live.exists() && keep.exists() && own.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

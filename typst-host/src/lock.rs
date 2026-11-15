@@ -213,10 +213,13 @@ fn read_text(root: &Path) -> Result<Option<String>, String> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
     // One open that never follows a symlink (no check-then-read race); the
-    // root is canonical.
+    // root is canonical. O_NONBLOCK: opening a FIFO (or a device) for
+    // reading would otherwise block until a writer appears, before the
+    // regular-file check below and outside the watchdog's watch; on a
+    // regular file it changes nothing.
     let mut f = match std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(root.join(FILE))
     {
         Ok(f) => f,
@@ -594,6 +597,33 @@ mod tests {
         }
         sweep_stale_temps(&root);
         assert!(!dead.exists() && live.exists() && other.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A FIFO named like the lock is refused at once: opening it for
+    /// reading must not wait for a writer (a project from a zip, a tar or a
+    /// synced folder can hold one). Run on a thread so that a regression
+    /// fails the test instead of hanging it.
+    #[test]
+    fn a_fifo_lock_is_refused_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("ftth-lockfifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.canonicalize().unwrap();
+        let fifo =
+            std::ffi::CString::new(root.join(FILE).into_os_string().into_encoded_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let r = root.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_text(&r));
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("reading a FIFO lock blocked");
+        let e = got.expect_err("a FIFO is not a lock");
+        assert!(e.contains("not a regular file"), "{e}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
