@@ -82,6 +82,57 @@ fn production_capacities_and_glue_display() {
     assert!(log.contains("> 3.0pt plus 1.0fill minus 2.0pt."), "{log}");
 }
 
+/// A register at -2^31 (TeX does not check `\advance` for overflow), where
+/// web2c's C negates it in `abs` and `negate`, which C leaves undefined and
+/// clang compiles as if the negation were exact: scan_dimen's
+/// `abs(cur_val)>=@'10000000000` holds (web2rust `--exact-abs`),
+/// `print_scaled` prints `-32768.0pt`, and `init_randoms` starts from 2^31
+/// halved (changes/intmin.ch). The expected log is TeX Live 2026's pdftex's
+/// (arm64 and x86-64 on macOS give the same, 2026-11-01: `pdftex -ini t.tex`)
+/// after `(./t.tex`, which the cwd resolver prints as `(t.tex`.
+#[test]
+fn int_min_registers_as_texlive_prints_them() {
+    let d = scratch("intmin");
+    std::fs::write(
+        d.join("t.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\n\
+         \\count0=-2147483647 \\advance\\count0 by -1\n\
+         \\dimen0=\\count0 sp \\showthe\\dimen0\n\
+         \\dimen1=-16383.99999pt \\advance\\dimen1 by \\dimen1 \\advance\\dimen1 by -2sp\n\
+         \\showthe\\dimen1\n\
+         \\pdfsetrandomseed\\count0\n\
+         \\message{\\pdfuniformdeviate 1000, \\pdfuniformdeviate 1000000, \\pdfnormaldeviate}\n\
+         \\end\n",
+    )
+    .unwrap();
+    let _ = initex(&d, "t.tex");
+    let log = std::fs::read_to_string(d.join("t.log")).unwrap();
+    let sp = |n: usize| " ".repeat(n);
+    let expected = format!(
+        "(t.tex\n\
+         ! Dimension too large.\n\
+         l.3 \\dimen0=\\count0 sp \n\
+         {}\\showthe\\dimen0\n\
+         I can't work with sizes bigger than about 19 feet.\n\
+         Continue and I'll use the largest value I can.\n\
+         \n\
+         > -16383.99998pt.\n\
+         l.3 \\dimen0=\\count0 sp \\showthe\\dimen0\n\
+         {}\n\
+         \n\
+         > -32768.0pt.\n\
+         l.5 \\showthe\\dimen1\n\
+         {}\n\
+         \n\
+         741, 224026, -30694 )\n\
+         No pages of output.\n",
+        sp(23),
+        sp(38),
+        sp(19)
+    );
+    assert!(log.ends_with(&expected), "{log}");
+}
+
 /// `\pdfsnapy` with a snap glue of width 0: pdftex.web's `gap_amount`
 /// computes `(cur_pos-pdf_snapy_refpos) div snap_unit` with `snap_unit=0`.
 /// TeX Live's arm64 pdftex (whose `sdiv` gives 0) ships the page; its x86-64
