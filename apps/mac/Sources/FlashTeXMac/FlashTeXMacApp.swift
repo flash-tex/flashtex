@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // no autosave is in flight (`quitNeedsAsking` settled them) and none pending runs.
             model.cancelPendingAutosave()
             model.preserveDirtyBuffers(reason: "quit without saving")
+            model.dropUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
             return true
         default: return false
         }

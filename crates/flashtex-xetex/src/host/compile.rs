@@ -335,6 +335,9 @@ fn engine_command(
         // of its own makes each lookup about once, and the memo's
         // bookkeeping costs more than it saves (kpathsea answers alike)
         .env("FLASHTEX_LOOKUP_MEMO", "off")
+        // `\include{chapters/one}`: its `.aux` in the output directory's
+        // `chapters/`, made when needed (`system::make_output_subdir`, #1654)
+        .env(flashtex_engine::system::OUTPUT_SUBDIRS_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
