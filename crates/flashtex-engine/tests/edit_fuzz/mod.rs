@@ -57,6 +57,8 @@ pub struct Outcome {
     /// `SOURCES` declared (new or moved).
     pub span_shifts: usize,
     pub declared: usize,
+    /// `DIAG`s (`diag-v1`, spec §6.7), for a client that accepted it.
+    pub diags: Vec<flashtex_display_list::diag::Diag>,
 }
 
 pub fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -75,6 +77,7 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
     let mut progress = 0;
     let mut progress_files = vec![];
     let (mut span_shifts, mut declared) = (0, 0);
+    let mut diags = vec![];
     let done = loop {
         let ev = match first.take() {
             Some(e) => e,
@@ -142,6 +145,7 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
             }
             Event::Pages(j) => pages_msgs.push(j),
             Event::Image(j) => view.images.push(j),
+            Event::Diag(d) => diags.push(d),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
             Event::Other(k, body) if k == flashtex_display_list::kind::SPAN_SHIFT => {
@@ -175,6 +179,7 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
         progress_files,
         span_shifts,
         declared,
+        diags,
     }
 }
 

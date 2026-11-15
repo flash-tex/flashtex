@@ -379,6 +379,32 @@ xdvipdfmx tracks its position with the exact advance, but a viewer advances
 by `/W`, so the drift accumulates along the TJ. Vertical positions are off by
 up to 0.0005 bp, which is Td's 3 decimals.
 
+**TFM text in Type 1 fonts drifts more (VERIFIED 2026-11-08, PC, TL 2026
+x86_64-linux).** The corpus's TFM glyphs above are short runs in math. A
+whole justified line drifts much further. The test file was plain XeTeX,
+`\hsize=200pt`, one paragraph of "one two three … seventeen" in CMR10.
+`precision.py ref.pdf j.xdv cand.pdf j.xdv` gave:
+
+* **xdvipdfmx's PDF:** up to **0.244 bp = 0.0245 em** from TeX at the end of
+  a line, growing along it.
+* **FlashTeX's writer:** 0.00025 bp from TeX.
+
+The cause is in xdvipdfmx (type1.c's `add_metrics`). It writes `/Widths` from
+the Type 1 program's own charstring widths, which in the AMS CM fonts are
+integers: `e` is 444 and `n` is 555, where the TFM has 444.446 and 555.560.
+Its TJ kerns, though, assume the TFM's advances. A viewer advances by
+`/Widths`, so each glyph adds the difference.
+
+Summing (`/Widths` − TFM width) over the glyphs before each one predicts the
+measured offset of every glyph to within 0.01 bp. The remainder is TJ's
+integer kerns. The offset resets at each line's `Td`.
+
+So in a plain XeTeX or legacy-encoded document with running text in TFM
+Type 1 fonts, the structural comparison reports `glyph-position`
+differences beyond `0.01 bp + 0.005 em`. Those are xdvipdfmx's drift, not
+the candidate's. The XDV check is what decides such a case. The `cases/`
+documents use OpenType text and stay within the tolerance.
+
 So "0.01 bp" is not xdvipdfmx's precision: its glyphs are up to 0.0011 em
 (CFF) and 0.005 em (TrueType) from TeX's positions. The lane decided
 (2026-10-09) that FlashTeX's writer does not reproduce that drift and places
