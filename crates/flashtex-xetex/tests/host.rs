@@ -2822,11 +2822,12 @@ fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
 /// (`FLASHTEX_UNICODE_INPROCESS=0`, the oracle, a second host on the same
 /// files), its `IMAGE` keys included, and the oracle's key changes with
 /// each picture. The steps are #2260's `images_replaced_in_place`: after
-/// two replacements of `img.png`, `fig.pdf` (page 3) is replaced by a PDF
-/// of the same size, which leaves the XDV as it was, and a converged run's
-/// document was taken over with the old picture's key. Then `fig.pdf` is
-/// written back with the size and modification time it had (`cp -p`), so
-/// only its status-change time says it changed (the #2296 ruling).
+/// two replacements of `img.png`, `fig.pdf` (page 3) is replaced by
+/// another PDF of the same box, which leaves the XDV as it was, and a
+/// converged run's document was taken over with the old picture's key.
+/// Then `fig.pdf` is rewritten with other bytes of the same size (its
+/// trailer's `/ID` changed) and its modification time put back (`cp -p`),
+/// so only its status-change time says it changed (the #2296 ruling).
 #[test]
 fn a_picture_replaced_in_place_is_sent_again() {
     if !texlive() {
@@ -2861,18 +2862,25 @@ fn a_picture_replaced_in_place_is_sent_again() {
         .unwrap()
     };
     let (pdf_a, pdf_b) = (pic("example-image-a.pdf"), pic("example-image-b.pdf"));
-    assert_eq!(pdf_a.len(), pdf_b.len(), "the test's premise: PDFs of the same size");
+    // (b with the first hex digit of its `/ID` changed: the same size)
+    let mut pdf_b2 = pdf_b.clone();
+    let id = pdf_b2
+        .windows(5)
+        .position(|w| w == b"/ID [")
+        .and_then(|i| pdf_b2[i..].iter().position(|&c| c == b'<').map(|k| i + k + 1))
+        .expect("example-image-b.pdf's /ID");
+    pdf_b2[id] = if pdf_b2[id] == b'0' { b'1' } else { b'0' };
     // (file, bytes, whether its modification time is put back)
     let steps: Vec<Vec<(&str, Vec<u8>, bool)>> = vec![
         vec![
             ("main.tex", doc.clone().into_bytes(), false),
             ("img.png", pic("example-image-a.png"), false),
-            ("fig.pdf", pdf_a.clone(), false),
+            ("fig.pdf", pdf_a, false),
         ],
         vec![("img.png", pic("example-image-b.png"), false)],
         vec![("img.png", pic("example-image-16x9.png"), false)],
         vec![("fig.pdf", pdf_b, false)],
-        vec![("fig.pdf", pdf_a, true)],
+        vec![("fig.pdf", pdf_b2, true)],
     ];
     let proj = dir.join("proj");
     std::fs::create_dir_all(&proj).unwrap();
