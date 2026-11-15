@@ -39,6 +39,8 @@
 --change crates/flashtex-xetex/changes/resident.ch
 # The checkpoints of a resident engine: S0 at the document's start (src/ckpt.rs).
 --change crates/flashtex-xetex/changes/checkpoint.ch
+--change crates/flashtex-xetex/changes/intrinsics.ch
+
 # The diagnostics side channel (src/diag.rs): each error's and warning's place,
 # input stack and help, for diag-v1.
 --change crates/flashtex-xetex/changes/diagnostics.ch

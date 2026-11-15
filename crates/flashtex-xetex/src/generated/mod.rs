@@ -21,6 +21,7 @@
 // with the change file crates/flashtex-xetex/changes/displaylist.ch
 // with the change file crates/flashtex-xetex/changes/resident.ch
 // with the change file crates/flashtex-xetex/changes/checkpoint.ch
+// with the change file crates/flashtex-xetex/changes/intrinsics.ch
 // with the change file crates/flashtex-xetex/changes/diagnostics.ch.
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]

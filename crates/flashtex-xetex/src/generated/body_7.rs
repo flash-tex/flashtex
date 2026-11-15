@@ -244,6 +244,9 @@ impl Globals {
                                             self.temp_ptr = self.LR_ptr;
                                             self.LR_ptr = self.mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                             {
+                                                if self.intr_verify_on {
+                                                    self.flashtex_intr_cell(self.temp_ptr, 1i32);
+                                                }
                                                 { let __ix1469 = self.temp_ptr; let __v1470 = self.avail; self.mem[crate::ix::U((__ix1469) as usize)].set_hh_rh(__v1470); }
                                                 self.avail = self.temp_ptr;
                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -460,6 +463,9 @@ impl Globals {
                                                                             self.temp_ptr = self.LR_ptr;
                                                                             self.LR_ptr = self.mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                                                             {
+                                                                                if self.intr_verify_on {
+                                                                                    self.flashtex_intr_cell(self.temp_ptr, 1i32);
+                                                                                }
                                                                                 { let __ix1492 = self.temp_ptr; let __v1493 = self.avail; self.mem[crate::ix::U((__ix1492) as usize)].set_hh_rh(__v1493); }
                                                                                 self.avail = self.temp_ptr;
                                                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -583,6 +589,9 @@ impl Globals {
                                         self.temp_ptr = self.LR_ptr;
                                         self.LR_ptr = self.mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                         {
+                                            if self.intr_verify_on {
+                                                self.flashtex_intr_cell(self.temp_ptr, 1i32);
+                                            }
                                             { let __ix1498 = self.temp_ptr; let __v1499 = self.avail; self.mem[crate::ix::U((__ix1498) as usize)].set_hh_rh(__v1499); }
                                             self.avail = self.temp_ptr;
                                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -2444,6 +2453,9 @@ impl Globals {
     pub fn alter_box_dimen(&mut self) {
         let mut c: small_number = 0; // §1301
         let mut b: halfword = 0; // §1301
+        if self.intr_verify_on {
+            self.flashtex_intr_op(6i32, 0i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_register_num();
         if (self.cur_val < 256i32) {
@@ -3171,6 +3183,9 @@ impl Globals {
                                         }
                                     }
                                     {
+                                        if self.intr_verify_on {
+                                            self.flashtex_intr_cell(self.def_ref, 1i32);
+                                        }
                                         { let __ix1670 = self.def_ref; let __v1671 = self.avail; self.mem[crate::ix::U((__ix1670) as usize)].set_hh_rh(__v1671); }
                                         self.avail = self.def_ref;
                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -3700,6 +3715,9 @@ impl Globals {
         let mut c: i32 = 0; // §1329
         let mut n: i32 = 0; // §1329
         let mut k: i32 = 0; // §1329
+        if self.intr_verify_on {
+            self.flashtex_intr_op(16i32, 0i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_four_bit_int();
         n = self.cur_val;
@@ -3844,6 +3862,9 @@ impl Globals {
         }
         self.begin_token_list(self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh(), backed_up);
         {
+            if self.intr_verify_on {
+                self.flashtex_intr_cell(self.def_ref, 1i32);
+            }
             { let __ix1683 = self.def_ref; let __v1684 = self.avail; self.mem[crate::ix::U((__ix1683) as usize)].set_hh_rh(__v1684); }
             self.avail = self.def_ref;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -5965,7 +5986,12 @@ impl Globals {
                 if (self.ckpt_request != 0i32) {
                     self.flashtex_checkpoint_hook();
                 }
+                if self.intr_verify_on {
+                    self.flashtex_intr_switch();
+                }
+                self.intr_at_switch = self.intr_verify_on;
                 self.get_x_token();
+                self.intr_at_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {
@@ -7054,6 +7080,9 @@ impl Globals {
                             { let __ix1901 = self.lig_stack; self.mem[crate::ix::U((__ix1901) as usize)].set_hh_rh((268435455i32).wrapping_neg()); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                             self.dl_new_node(self.lig_stack);
+                            if self.intr_verify_on {
+                                self.flashtex_intr_cell(self.lig_stack, 1i32);
+                            }
                         }
                     }
                 }
@@ -7140,6 +7169,9 @@ impl Globals {
                     {
                         self.char_warning(self.main_f, self.cur_chr);
                         {
+                            if self.intr_verify_on {
+                                self.flashtex_intr_cell(self.lig_stack, 1i32);
+                            }
                             { let __ix1913 = self.lig_stack; let __v1914 = self.avail; self.mem[crate::ix::U((__ix1913) as usize)].set_hh_rh(__v1914); }
                             self.avail = self.lig_stack;
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -7152,6 +7184,9 @@ impl Globals {
                     {
                         self.char_warning(self.main_f, self.cur_chr);
                         {
+                            if self.intr_verify_on {
+                                self.flashtex_intr_cell(self.lig_stack, 1i32);
+                            }
                             { let __ix1915 = self.lig_stack; let __v1916 = self.avail; self.mem[crate::ix::U((__ix1915) as usize)].set_hh_rh(__v1916); }
                             self.avail = self.lig_stack;
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
@@ -7273,6 +7308,9 @@ impl Globals {
                             { let __ix1921 = self.lig_stack; self.mem[crate::ix::U((__ix1921) as usize)].set_hh_rh((268435455i32).wrapping_neg()); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                             self.dl_new_node(self.lig_stack);
+                            if self.intr_verify_on {
+                                self.flashtex_intr_cell(self.lig_stack, 1i32);
+                            }
                         }
                     }
                 }

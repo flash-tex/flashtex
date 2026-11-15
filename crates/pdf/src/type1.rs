@@ -174,6 +174,54 @@ fn int_token(b: &[u8], at: usize, what: &str) -> R<(i64, usize)> {
     Ok((v, e))
 }
 
+/// Checks the clear-text `/FontMatrix` as dvipdfm-x `t1_load.c` `parse_part1`
+/// reads it: six PostScript numbers in `[..]` or `{..}` (`parse_nvalue`, then
+/// `CHECK_ARGN_EQ(6)`), compared by value with `[0.001 0 0 0.001 0 0]`. URW's
+/// `[0.001 0.0 0.0 0.001 0.0 0.0]` is therefore the default matrix. Any other
+/// matrix changes the width scaling (`type1.c` `add_metrics`), which this writer
+/// does not implement, so it stays unsupported.
+fn check_font_matrix(c: &[u8]) -> R<()> {
+    let Some(at) = find(c, b"/FontMatrix", 0) else {
+        return Ok(());
+    };
+    let line_end = find(c, b"\n", at).unwrap_or(c.len());
+    let shown = || String::from_utf8_lossy(&c[at..line_end]).trim().to_owned();
+    let mut i = at + 11;
+    while i < c.len() && is_ws(c[i]) {
+        i += 1;
+    }
+    if i >= c.len() || (c[i] != b'[' && c[i] != b'{') {
+        return Err(Type1Error::Malformed(format!("FontMatrix: {}", shown())));
+    }
+    i += 1;
+    let close = c[i..]
+        .iter()
+        .position(|&b| b == b'}' || b == b']')
+        .map(|p| i + p)
+        .ok_or(Type1Error::Truncated("FontMatrix"))?;
+    let inner = String::from_utf8_lossy(&c[i..close]).into_owned();
+    let mut vals = Vec::new();
+    for t in inner.split_ascii_whitespace() {
+        vals.push(
+            t.parse::<f64>()
+                .map_err(|_| Type1Error::Malformed(format!("FontMatrix value {t:?}")))?,
+        );
+    }
+    if vals.len() != 6 {
+        return Err(Type1Error::Malformed(format!(
+            "FontMatrix has {} values",
+            vals.len()
+        )));
+    }
+    if vals != [0.001, 0.0, 0.0, 0.001, 0.0, 0.0] {
+        return Err(Type1Error::Unsupported(format!(
+            "FontMatrix other than [0.001 0 0 0.001 0 0]: {}",
+            shown()
+        )));
+    }
+    Ok(())
+}
+
 impl Type1Font {
     /// Parses a PFB file.
     pub fn parse_pfb(pfb: &[u8]) -> R<Type1Font> {
@@ -288,19 +336,7 @@ impl Type1Font {
         {
             self.italic_angle = Some(String::from_utf8_lossy(&c[s..e]).into_owned());
         }
-        if let Some(at) = find(c, b"/FontMatrix", 0) {
-            let line_end = find(c, b"\n", at).unwrap_or(c.len());
-            let m: String = String::from_utf8_lossy(&c[at..line_end])
-                .chars()
-                .filter(|ch| !ch.is_whitespace())
-                .collect();
-            if !m.starts_with("/FontMatrix[0.001000.00100]") {
-                return Err(Type1Error::Unsupported(format!(
-                    "FontMatrix other than [0.001 0 0 0.001 0 0]: {}",
-                    String::from_utf8_lossy(&c[at..line_end]).trim()
-                )));
-            }
-        }
+        check_font_matrix(c)?;
         Ok(())
     }
 
@@ -939,6 +975,24 @@ mod tests {
         assert_eq!(enc, vector);
         let cs = encrypt(&[139, 13], CHARSTRING_R, &[0; 4]);
         assert_eq!(decrypt(&cs, CHARSTRING_R, 4), [139, 13]);
+    }
+
+    #[test]
+    fn font_matrix_compared_by_value() {
+        // URW base 35 (utmr8a.pfb): the default matrix spelled with `0.0` (#2376).
+        let urw = b"/FontMatrix [0.001 0.0 0.0 0.001 0.0 0.0] readonly def\n";
+        assert!(check_font_matrix(urw).is_ok());
+        assert!(check_font_matrix(b"/FontMatrix [0.001 0 0 0.001 0 0]readonly def\n").is_ok());
+        assert!(check_font_matrix(b"/FontMatrix{0.001 0 0 0.001 0 0}def\n").is_ok());
+        assert!(check_font_matrix(b"/FontName /X def\n").is_ok());
+        assert!(matches!(
+            check_font_matrix(b"/FontMatrix [0.0005 0 0 0.0005 0 0] def\n"),
+            Err(Type1Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            check_font_matrix(b"/FontMatrix [0.001 0 0 0.001 0] def\n"),
+            Err(Type1Error::Malformed(_))
+        ));
     }
 
     #[test]

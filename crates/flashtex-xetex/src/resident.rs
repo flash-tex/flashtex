@@ -1565,6 +1565,8 @@ impl Engine {
         // the diagnostics side channel: the terminal is captured
         g.host.diag.on = true;
         system::set_no_pdf(g, c.no_pdf);
+        // (after the restore above: S₀ holds the mode of the run that took it)
+        g.set_intrinsics_verify(crate::intrinsics::enabled());
         // S₀ is armed by the run's first `big_switch` (`crate::ckpt`); a run
         // from S₀ or a page asks for no S₀
         g.ckpt_request = if want_s0 { REQ_LOOKUP } else { 0 };
@@ -1600,6 +1602,7 @@ impl Engine {
                     Start::Format => g.run_after_format(),
                     Start::S0 | Start::Page(_) => g.resume_main_control(),
                 }
+                g.write_intrinsics_report();
                 system::final_end(g)
             })),
             Err(e) => {
