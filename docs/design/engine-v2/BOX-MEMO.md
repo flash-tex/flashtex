@@ -279,8 +279,10 @@ The call writes each of these arrays from its pointer up, with no gap. At its st
 puts a marker (a value TeX never stores there) 0, 1, 2, 4, ... places above each pointer, in dead
 memory. The first marker still there at the end bounds how far up the call went (`src/capacity.rs`).
 An offer replays only where each overflow test would pass with that bound on top of the pointers as
-they are now. A recording that wrote an array's last place, or came within 64 characters of the
-pool's top, is abandoned. D9 does the same, and also keeps #2265's bounds on the stacks.
+they are now, with 64 characters to spare in the pool (a `str_room` may ask for more than is then
+written) and three strings in the string table (`end_name` asks for three whatever it makes). A
+recording that wrote an array's last place, or came within that slack of the pool's or the string
+table's top, is abandoned. D9 does the same, and also keeps #2265's bounds on the stacks.
 
 ### 4.3 The effects: an operation log, as D9 keeps one
 

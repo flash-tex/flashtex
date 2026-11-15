@@ -34,7 +34,10 @@
 //!   `first+b >= buf_size`;
 //! - the string table: `make_string` stops when `str_ptr=max_strings`, so
 //!   a call that had `s` strings of its own at once overflows when
-//!   `str_ptr+s > max_strings`;
+//!   `str_ptr+s > max_strings`. `end_name` (§517, a file name scanned)
+//!   stops when `str_ptr+3 > max_strings`, whether it then makes three
+//!   strings or one, so a call replays only where
+//!   `str_ptr+s+STR_SLACK <= max_strings`;
 //! - the pool: `str_room(n)` stops when `pool_ptr+n > pool_size`, and a
 //!   print into a full pool drops the character (§58: `if
 //!   pool_ptr<pool_size then append_char`; `tokens_to_string` stops at the
@@ -45,8 +48,8 @@
 //!
 //! Where a test would fail, or the bound is not tight enough to tell, the
 //! call runs for real, which is always right. A recording that wrote an
-//! array's last place, or came within the slack of the pool's top, may have
-//! been cut short there, so it is abandoned.
+//! array's last place, or came within the slack of the pool's or the string
+//! table's top, may have been cut short there, so it is abandoned.
 
 use crate::generated::consts::{buf_size, max_strings, pool_size};
 use crate::generated::Globals;
@@ -57,6 +60,10 @@ const MARK: i32 = -0x5a5a_5a5b;
 /// More room than the call wrote, for a `str_room(n)` that asks for more
 /// than it then writes.
 const POOL_SLACK: i32 = 64;
+
+/// More strings than the call had at once, for `end_name`'s test, which
+/// asks for three whatever it then makes.
+const STR_SLACK: i32 = 3;
 
 /// Where a recording started: `first`, `pool_ptr`, `str_ptr`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -142,7 +149,7 @@ impl Globals {
 
     /// What the call used since `p` (a recording's end), or `None` when it
     /// may have been cut short: it wrote an array's last place, came within
-    /// the slack of the pool's top, or moved `first`.
+    /// the slack of the pool's or the string table's top, or moved `first`.
     pub(crate) fn cap_need(&self, p: &Probe) -> Option<Need> {
         if self.first != p.first {
             return None;
@@ -157,7 +164,9 @@ impl Globals {
             pool: n[1],
             strings: n[2],
         };
-        if p.pool + need.pool + POOL_SLACK > pool_size {
+        if p.pool + need.pool + POOL_SLACK > pool_size
+            || p.str_ptr + need.strings + STR_SLACK > max_strings
+        {
             return None;
         }
         Some(need)
@@ -168,6 +177,6 @@ impl Globals {
     pub(crate) fn cap_room_ok(&self, n: &Need) -> bool {
         (n.buf == 0 || self.first + n.buf < buf_size)
             && self.pool_ptr + n.pool + POOL_SLACK <= pool_size
-            && self.str_ptr + n.strings <= max_strings
+            && self.str_ptr + n.strings + STR_SLACK <= max_strings
     }
 }
