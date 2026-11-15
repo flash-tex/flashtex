@@ -29,6 +29,11 @@ final class LinkBorderMeasureTests: XCTestCase {
         var insideLinks: Int, outsideLinks: Int
         /// Mean RGB of PDFKit's pixels that differ inside the links.
         var insideMean: [Double]
+        /// PDFKit against PDFKit with these links hidden (`shouldDisplay =
+        /// false`): what the annotations alone draw, in the border bands and
+        /// elsewhere. Same renderer on both sides, so no glyph or rule
+        /// difference counts; nil when the hidden render failed.
+        var annotationInside: Int?, annotationOutside: Int?
     }
 
     /// Counts the pixels where two RGBA bitmaps differ: `inside` in a thin
@@ -87,6 +92,12 @@ final class LinkBorderMeasureTests: XCTestCase {
                         return (CGRect(x: r.minX * scale, y: Double(h) - r.maxY * scale, width: r.width * scale, height: r.height * scale), band)
                     }
                     let (inside, outside, sum) = Self.countBorderPixels(pa, pb, width: w, height: h, rects: rects)
+                    // The annotations alone: the same PDFKit render with these links hidden.
+                    let shown = links.map(\.shouldDisplay)
+                    links.forEach { $0.shouldDisplay = false }
+                    let hidden = PreviewParityTests.pdfKitRender(kit, i, scale).map { DL3Parity.rgba($0) }
+                    zip(links, shown).forEach { $0.shouldDisplay = $1 }
+                    let ann = hidden.flatMap { $0.count == pb.count ? Self.countBorderPixels($0, pb, width: w, height: h, rects: rects) : nil }
                     let row = Row(fixture: name, page: i + 1, scale: scale, links: links.count,
                                   borders: links.map { Double($0.border?.lineWidth ?? -1) },
                                   colors: links.map { l in
@@ -94,13 +105,14 @@ final class LinkBorderMeasureTests: XCTestCase {
                                       return [Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent)]
                                   },
                                   insideLinks: inside, outsideLinks: outside,
-                                  insideMean: inside > 0 ? sum.map { $0 / Double(inside) } : [])
+                                  insideMean: inside > 0 ? sum.map { $0 / Double(inside) } : [],
+                                  annotationInside: ann?.inside, annotationOutside: ann?.outside)
                     rows.append(row)
-                    print("link-borders: \(name) p\(i + 1) at \(scale)x: \(links.count) links (border widths \(row.borders)), PDFKit differs from Core Graphics in \(inside) px inside the links' rectangles and \(outside) px outside; mean differing colour inside \(row.insideMean.map { Int($0.rounded()) })")
+                    print("link-borders: \(name) p\(i + 1) at \(scale)x: \(links.count) links (border widths \(row.borders)), PDFKit differs from Core Graphics in \(inside) px inside the links' rectangles and \(outside) px outside; mean differing colour inside \(row.insideMean.map { Int($0.rounded()) }); the annotations alone (PDFKit, links shown vs hidden): \(ann.map { "\($0.inside) px in the border bands, \($0.outside) px elsewhere" } ?? "hidden render failed")")
                 }
             }
         }
-        print("link-borders: \(rows.count) page renders with links; \(rows.filter { $0.insideLinks > 0 }.count) where PDFKit draws something in a link rectangle that Core Graphics does not")
+        print("link-borders: \(rows.count) page renders with links; \(rows.filter { $0.insideLinks > 0 }.count) where PDFKit draws something in a link's border band that Core Graphics does not; \(rows.filter { ($0.annotationInside ?? 0) > 0 }.count) where the link annotations alone draw there (PDFKit, shown vs hidden)")
         XCTAssertFalse(rows.isEmpty, "no page with a link was measured in \(dir.path)")
         if let out = env["FLASHTEX_V3_PARITY_OUT"] {
             let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
