@@ -168,7 +168,11 @@ impl<'a> Writer<'a> {
     /// (pages are flushed when the document closes). Each is one object
     /// however many pages use it; the last one, written at the close, has
     /// a newline added (`pdf_doc_close_page_tree`).
-    fn bop_eop(&mut self, at_end: &Option<Arc<Vec<u8>>>, last: &Option<Arc<Vec<u8>>>) -> Option<u32> {
+    fn bop_eop(
+        &mut self,
+        at_end: &Option<Arc<Vec<u8>>>,
+        last: &Option<Arc<Vec<u8>>>,
+    ) -> Option<u32> {
         let s = at_end.as_ref().or(last.as_ref())?;
         let key = Arc::as_ptr(s) as usize;
         if let Some(&o) = self.bop_eop.get(&key) {
