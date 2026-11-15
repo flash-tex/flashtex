@@ -54,6 +54,12 @@ extern const_string *flashtex_db_lookup (kpathsea kpse, const_string key);
    (db.c, packed_build), or NULL for none. The program sets it before a
    kpathsea instance reads ls-R.  */
 extern char *flashtex_lsr_cache_dir;
+/* ... and a string that changes with every build of the program (its
+   build id): cache files written by another build are not read.  */
+extern char *flashtex_lsr_cache_salt;
+
+/* FlashTeX change (2026-10-09): free the packed index (kpathsea_finish). */
+extern void flashtex_db_free (kpathsea kpse);
 
 /* Insert the filename FNAME into the database.
    Called by mktex() in tex-make.c.  */

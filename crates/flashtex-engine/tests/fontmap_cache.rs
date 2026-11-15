@@ -93,6 +93,41 @@ fn a_cached_parse_writes_what_a_parse_writes() {
         "a run from the cache differs from a parse"
     );
 
+    // 1b. A cache file damaged (a byte of its body changed) or cut short
+    // is refused (its checksum, its length), parsed again and replaced.
+    let file = std::fs::read_dir(cache.join("fontmaps"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "bin"))
+        .unwrap();
+    let good = std::fs::read(&file).unwrap();
+    for damage in ["byte", "short"] {
+        let mut b = good.clone();
+        match damage {
+            "byte" => {
+                let i = b.len() - 9;
+                b[i] ^= 0x5a;
+            }
+            _ => b.truncate(b.len() - 1),
+        }
+        std::fs::write(&file, &b).unwrap();
+        let say = run(&job, &["&plain doc"], Some(&cache));
+        assert!(
+            say.contains("[fontmap] damaged") && say.contains("[fontmap] stored"),
+            "a {damage} damaged cache file was not refused and replaced: {say}"
+        );
+        assert!(
+            outputs(&job) == parsed,
+            "a run after a {damage} damaged cache differs"
+        );
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            good,
+            "not rewritten ({damage})"
+        );
+    }
+
     // 2. The map file changed: parsed again, and what the new file says.
     std::fs::write(
         job.join("test.map"),
