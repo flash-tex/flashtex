@@ -290,6 +290,27 @@ fn the_page_discards_tail_is_dead_once_the_list_is_flushed() {
     assert!(stat(&s, "hits") >= 1, "{s}");
 }
 
+#[test]
+fn a_par_over_waiting_contributions_is_not_the_one_over_none() {
+    // (lane AUDIT-MATH) in the main vertical list a `\\par` builds the page
+    // (tex.web §1091): with nothing waiting on the contribution list that
+    // changes nothing, and a call recorded there was replayed as nothing
+    // after a `\\vskip` that was waiting, which stayed off the page:
+    // `\\pagetotal` after it was 0pt and 10pt where pdfTeX has 10pt and 30pt
+    let s = check(
+        "par-contrib",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\vsize=100pt \\maxdepth=2pt \\output={\\global\\setbox9\\box255 \\deadcycles=0 }\n\
+         \\def\\measure{\\par}\n\
+         \\hbox{}\\measure\\message{[\\the\\pagetotal]}\n\
+         \\hbox{}\\vskip10pt\\relax\\measure\\message{[\\the\\pagetotal]}\n\
+         \\hbox{}\\vskip20pt\\relax\\measure\\message{[\\the\\pagetotal]}\n\
+         \\hbox{}\\measure\\message{[\\the\\pagetotal]}\\end\n",
+    );
+    // the last call, over no contributions again, is the first's
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";

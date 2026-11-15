@@ -361,6 +361,12 @@ struct Context {
     /// `\prevdepth`) at the call: a draw call's first spaces and lines
     /// depend on it.
     aux: u64,
+    /// In the main vertical list, whether contributions wait for the page
+    /// builder: a `\par` there builds the page (tex.web §1091), which
+    /// moves them and changes nothing when there are none. A call recorded
+    /// with none replayed as nothing over waiting ones, and `\pagetotal`
+    /// after it was the normal path's of before them (lane AUDIT-MATH).
+    contrib: bool,
 }
 
 /// How K2 keeps the value at one `eqtb` location.
@@ -449,6 +455,7 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
         ctx.hyph_version,
         ctx.aux as i32,
         (ctx.aux >> 32) as i32,
+        ctx.contrib as i32,
         k1.len() as i32,
         k2.len() as i32,
         k4.len() as i32,
@@ -2064,6 +2071,8 @@ impl Globals {
             font_version: self.bm_font_version,
             hyph_version: self.bm_hyph_version,
             aux: self.cur_list.aux_field.0,
+            contrib: self.cur_list.mode_field == k::vmode
+                && self.cur_list.tail_field != self.cur_list.head_field,
         }
     }
 
