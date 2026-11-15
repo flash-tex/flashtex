@@ -10,7 +10,8 @@
 % |open_or_close_in| and \.{\\XeTeXinputencoding}, whose input files a check does
 % not compare (the files' positions and encodings); 17
 % |save_for_after| at level |p|; 18 the end of |get_next|, which reads past
-% the call when the token comes from below its body's input level), and
+% the call when the token comes from below its body's input level; 20
+% |new_font|, which writes the font's identifier outside |eq_define|), and
 % |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 %
@@ -203,6 +204,15 @@ begin c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
 @y
 begin if intr_verify_on then flashtex_intr_op(6,0,0,0);
 c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
+@z
+
+@x xetex.web - \.{\\font} writes its identifier outside |eq_define|: not replayable (kind 20)
+begin if job_name=0 then open_log_file;
+  {avoid confusing \.{texput} with the font name}
+@y
+begin if intr_verify_on then flashtex_intr_op(20,0,0,0);
+if job_name=0 then open_log_file;
+  {avoid confusing \.{texput} with the font name}
 @z
 
 @x xetex.web - \.{\\openin} and \.{\\closein}: not replayable (kind 16)
