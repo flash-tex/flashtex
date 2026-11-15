@@ -1010,9 +1010,9 @@ fn l5_ifcsname_of_a_short_name_is_a_read() {
 /// defines the active `Q` and `R`, a formula on the first page is the only
 /// reader of each before `\end{document}` reads the `.aux` again, and an
 /// edit on the last page changes the definition the `.aux` holds: the `.aux`
-/// pass must restart before the formula (it restarted at page 2, where the
-/// second `.aux` read is, and kept the formula's page), and every compile
-/// equals scratch runs.
+/// pass must restart before the formula (it restarted after both pages were
+/// shipped, in `\end{document}`, and kept the formula's page), and every
+/// compile equals scratch runs.
 #[test]
 fn l5_an_active_math_character_is_a_read() {
     let Some(e) = env() else {
