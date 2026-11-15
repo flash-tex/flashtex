@@ -2480,6 +2480,10 @@ impl Globals {
         if self.bm_rec_on || self.intr_rec_on {
             return;
         }
+        // (a run made again after `main memory size`: `crate::capacity`)
+        if crate::capacity::replays_off() {
+            return;
+        }
         let cs = self.warning_index;
         // the body must be the top level, as `Feed` left it
         if self.cur_input.state_field != TOKEN_LIST || self.cur_input.index_field != k::macro_ {
@@ -2609,6 +2613,7 @@ impl Globals {
                 let (k2, k4) = (self.bm_k2(), k4_now);
                 return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
             }
+            crate::capacity::note_replay();
             if let Some(t) = self.bm_replay(cs, i) {
                 self.cur_tok = t;
                 self.back_input();

@@ -67,10 +67,27 @@
 //!
 //! An offer replays only where `hi_mem_min - lo_mem_max` is at least that.
 //! Then the normal path cannot stop with `main memory size`, so leaving it
-//! out is exact. Where a later `main memory size` fires still depends on
-//! whether calls were replayed (the normal path grows `lo_mem_max` for
-//! good, a replay does not): that is the host's to catch (#2309's second
-//! half).
+//! out is exact.
+//!
+//! **A later `main memory size`** still depends on whether calls were
+//! replayed: the normal path grows `lo_mem_max` for good and a replay does
+//! not, so a run that replayed stops later than pdfTeX does. Such a run is
+//! thrown away and made again without replays (#2309's second half, the
+//! Commander's ruling), so a `main memory size` that reaches the log only
+//! ever comes from the normal path:
+//! - `get_avail` and `get_node` call [`Globals::flashtex_cap_mem_full`]
+//!   before `overflow("main memory size", ...)` (changes/boxmemo.ch).
+//! - The command-line engine starts over there: the same command line
+//!   with `FLASHTEX_BOXMEMO=off FLASHTEX_INTRINSICS=off` ([`rerun_process`]).
+//!   Its files are written again from their start. What the first attempt
+//!   printed on the terminal stays there.
+//! - A resident engine (the hosts) lets the run end and tells its host
+//!   ([`take_rerun`]), which runs the document again from the format with
+//!   replays switched off ([`set_replays_off`]) until a compile ends
+//!   without that overflow.
+//!
+//! Not covered: a document pdfTeX stops on with `main memory size` that
+//! fits here because replays left it the room (#2309).
 //!
 //! Where a test would fail, or the bound is not tight enough to tell, the
 //! call runs for real, which is always right. A recording that wrote an
@@ -131,6 +148,110 @@ fn marks(lo: i32, top: i32) -> impl Iterator<Item = i32> {
         .chain((span >= 0).then_some(span))
 }
 
+thread_local! {
+    /// A run of this thread stopped with `main memory size`.
+    static MEM_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Calls replayed (BOX-MEMO and D9, not their verify modes) by the
+    /// engines of this thread since [`new_run`]. Never restored with a
+    /// checkpoint: it counts the replays of abandoned runs too, and a state
+    /// opened from disk counts as one ([`unknown_history`]), which only
+    /// errs towards running again.
+    static REPLAYS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Replays and recordings are switched off (`set_replays_off`).
+    static OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A call was replayed.
+pub(crate) fn note_replay() {
+    REPLAYS.with(|r| r.set(r.get() + 1));
+}
+
+/// A run from the format begins: no state it leaves has a replay behind it
+/// yet.
+pub fn new_run() {
+    REPLAYS.with(|r| r.set(0));
+    MEM_FULL.with(|f| f.set(false));
+}
+
+/// The engine goes on from a state another process left (S₀, S₁): whether
+/// a replay is behind it is not known.
+pub fn unknown_history() {
+    note_replay();
+}
+
+/// Whether offers are refused: BOX-MEMO and D9 neither replay nor record.
+pub fn replays_off() -> bool {
+    OFF.with(|o| o.get())
+}
+
+/// Switch replays and recordings off or back on, for every engine of this
+/// thread. Only between runs.
+pub fn set_replays_off(off: bool) {
+    OFF.with(|o| o.set(off));
+}
+
+/// Whether the rule is on (`FLASHTEX_MEM_RERUN=0` turns it off, to see the
+/// run it replaces).
+fn rerun_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLASHTEX_MEM_RERUN").map_or(true, |v| v != "0"))
+}
+
+/// What a host does after a run of its engine ended (not one it stopped):
+/// `true` when the run stopped with `main memory size` after replays, and
+/// replays are now off: the host runs the document again from the format.
+/// A run that ended without that overflow switches replays back on.
+pub fn take_rerun() -> bool {
+    let full = MEM_FULL.with(|f| f.replace(false));
+    if !rerun_enabled() {
+        return false;
+    }
+    if !full {
+        set_replays_off(false);
+        return false;
+    }
+    if replays_off() || REPLAYS.with(|r| r.get()) == 0 {
+        // (the normal path's own overflow: pdfTeX's)
+        return false;
+    }
+    set_replays_off(true);
+    true
+}
+
+/// The command-line engine starts over without replays (module
+/// documentation). Returns only if it could not.
+fn rerun_process() {
+    use std::io::Write;
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut args = std::env::args_os();
+    let arg0 = args.next();
+    eprintln!("flashtex: main memory ran out after replayed calls; running again without replays");
+    let _ = std::io::stdout().flush();
+    let mut c = std::process::Command::new(exe);
+    c.args(args)
+        .env("FLASHTEX_BOXMEMO", "off")
+        .env("FLASHTEX_INTRINSICS", "off");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // (the name it was called by chooses the format: `pdflatex`)
+        if let Some(a) = arg0 {
+            c.arg0(a);
+        }
+        let e = c.exec();
+        eprintln!("flashtex: could not run again: {e}");
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = arg0;
+        if let Ok(st) = c.status() {
+            std::process::exit(st.code().unwrap_or(1));
+        }
+    }
+}
+
 impl Probe {
     /// The probe of a recording that started with these pointers (D9 keeps
     /// them in the word space, so that a restore inside a recording finds
@@ -162,6 +283,17 @@ impl Probe {
 }
 
 impl Globals {
+    /// `get_avail` and `get_node`, about to stop with `main memory size`
+    /// (changes/boxmemo.ch; module documentation, "A later `main memory
+    /// size`").
+    pub fn flashtex_cap_mem_full(&mut self) {
+        if crate::system::is_resident() {
+            MEM_FULL.with(|f| f.set(true));
+        } else if rerun_enabled() && !replays_off() && REPLAYS.with(|r| r.get()) > 0 {
+            rerun_process();
+        }
+    }
+
     fn cap_at(&self, a: usize, i: i32) -> i32 {
         let i = i as usize;
         match a {

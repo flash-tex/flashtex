@@ -2401,6 +2401,92 @@ fn intrinsics_recorded_after_an_edit_converge() {
     }
 }
 
+/// #2309 (the Commander's ruling, second half): a replay takes less of main
+/// memory than the call it stands for, so a run that replayed calls stops
+/// with `main memory size` later than pdfTeX does. After an edit before
+/// them, the four `\measure` calls are in the edit's window: the first is
+/// recorded and the others replayed, the fourth where its normal path grows
+/// variable-size memory by its 40,000 words of kerns. The macros that follow
+/// then ran out of memory about twelve later than in a scratch run, and the
+/// log said so. The host now throws such a run away and compiles from the
+/// format with replays off; the compile after that one has them again.
+#[test]
+fn a_run_that_replayed_and_runs_out_of_main_memory_is_compiled_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("memory");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str, fill: &str| -> String {
+        format!(
+            "\\documentclass{{article}}\n\\newcount\\kc \\newcount\\fc\n\
+             \\def\\kloop{{\\ifnum\\kc<20000 \\advance\\kc 1 \\kern0.1pt \\expandafter\\kloop\\fi}}\n\
+             \\def\\measure{{\\begingroup\\setbox0\\hbox{{\\kc=0 \\kloop}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\def\\T{{{}}}\n\
+             \\def\\fill{{\\ifnum\\fc<{fill} \\advance\\fc 1 \\message{{\\the\\fc}}\
+             \\expandafter\\edef\\csname m\\the\\fc\\endcsname{{\\T}}\\expandafter\\fill\\fi}}\n\
+             \\begin{{document}}\nA {word} paragraph.\\par\n\
+             \\measure\\measure\\measure\n\\kc=0 \\setbox1\\hbox{{\\kloop}}\n\\measure\n\
+             \\fill\nThe end.\n\\end{{document}}\n",
+            "t".repeat(10_000)
+        )
+    };
+    let env = [("FLASHTEX_BOXMEMO_NAMES", "measure")];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let full = "TeX capacity exceeded, sorry [main memory size=5000000]";
+    // from the format: nothing is recorded outside an edit's window, so
+    // this is the normal path's overflow
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("first", "10000"))],
+        "cold",
+    );
+    assert!(!r.contains("without replays"), "{r}");
+    let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
+    assert!(log.contains(full), "{log}");
+    // an edit before the calls: recorded, replayed, and compiled again
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("second", "10000"))],
+        "the edit",
+    );
+    assert!(r.contains("again without replays"), "{r}");
+    // the next one runs without replays (the last run ended in that
+    // overflow), and is right too
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("third", "10000"))],
+        "again",
+    );
+    assert!(!r.contains("without replays"), "{r}");
+    // a document that fits: compiled without replays, which then come back
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("fourth", "20"))],
+        "it fits",
+    );
+    assert!(!r.contains("without replays"), "{r}");
+    let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
+    assert!(!log.contains(full), "{log}");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("fifth", "20"))],
+        "with replays",
+    );
+}
+
 /// P4-EDIT-LATENCY: every converged compile adds a PDF-position correction
 /// to each later checkpoint it keeps, and a restore of one of them applies
 /// them all in order, rebuilding `rs_seen` once after the last. Letter

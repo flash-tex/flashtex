@@ -24,11 +24,20 @@ fn scratch(tag: &str) -> PathBuf {
     d
 }
 
+thread_local! {
+    /// More of the environment for this test's engines (each test runs on a
+    /// thread of its own).
+    static ENV: std::cell::RefCell<Vec<(&'static str, &'static str)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 struct Run {
     log: String,
     stats: String,
     /// The PDF, when the test made one.
     pdf: Option<Vec<u8>>,
+    /// Standard error.
+    err: String,
 }
 
 /// Run `\input t` in INITEX with BOX-MEMO in `mode`, offering `names`.
@@ -47,6 +56,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         .env("FLASHTEX_BOXMEMO_NAMES", names)
         .env("FLASHTEX_BOXMEMO_STATS", &stats)
         .env("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1")
+        .envs(ENV.with(|e| e.borrow().clone()))
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
@@ -58,6 +68,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         log: std::fs::read_to_string(dir.join("t.log")).unwrap(),
         stats: std::fs::read_to_string(&stats).unwrap_or_default(),
         pdf,
+        err: err.into_owned(),
     }
 }
 
@@ -677,6 +688,9 @@ fn a_replay_keeps_main_memorys_overflow() {
     // replayed where about 18,000 words are left and its normal path stops
     // with `main memory size` (on main: `[survived]`, exit 0). `\box1`
     // takes up the words the first calls freed
+    // (the offer's own test, without the rule that would then start the run
+    // over because calls were replayed before: `src/capacity.rs`)
+    ENV.with(|e| e.borrow_mut().push(("FLASHTEX_MEM_RERUN", "0")));
     let src = common::memory_case(
         "measure",
         "\\def\\kloop{\\ifnum\\count3<20000 \\advance\\count3 1 \\kern0.1pt \\expandafter\\kloop\\fi}\n\
@@ -690,6 +704,32 @@ fn a_replay_keeps_main_memorys_overflow() {
     assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
     let s = check("capacity-mem", &src);
     assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_run_that_replayed_and_runs_out_of_main_memory_is_made_again() {
+    // (#2309, the ruling's second half) the fourth call has room, so it is
+    // replayed, and a replay does not grow `lo_mem_max` by the 40,000 words
+    // of the call's kerns, which stay variable-size memory for good. The
+    // macros that follow therefore ran out of memory twelve of them later
+    // than with BOX-MEMO off (step 487, not 475). The engine now starts
+    // over without replays when a run that replayed stops with `main
+    // memory size`, so the log is the normal path's
+    let src = common::memory_drift_case(
+        "measure",
+        "\\def\\kloop{\\ifnum\\count3<20000 \\advance\\count3 1 \\kern0.1pt \\expandafter\\kloop\\fi}\n\
+         \\def\\measure{\\begingroup\\setbox0\\hbox{\\count3=0 \\kloop}\\global\\dimen1=\\wd0 \\endgroup}",
+        "\\count3=0 \\setbox1\\hbox{\\kloop}",
+        "\\expandafter\\edef\\csname m\\the\\count1\\endcsname{\\T}",
+    );
+    let d = scratch("memory-drift");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "measure");
+    assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
+    assert!(!off.err.contains(common::MEMORY_AGAIN), "{}", off.err);
+    let on = run(&d, "on", "measure");
+    assert_eq!(off.log, on.log, "log with BOX-MEMO on differs");
+    assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
 }
 
 #[test]

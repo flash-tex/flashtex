@@ -3709,6 +3709,7 @@ impl Globals {
                     p = self.hi_mem_min;
                     if (self.hi_mem_min <= self.lo_mem_max) {
                         {
+                            self.flashtex_cap_mem_full();
                             self.runaway();
                             self.overflow(304i32, ((mem_max).wrapping_add(1i32)).wrapping_sub(mem_min));
                         }
@@ -3847,6 +3848,7 @@ impl Globals {
                     }
                 }
                 // §143
+                self.flashtex_cap_mem_full();
                 self.overflow(304i32, ((mem_max).wrapping_add(1i32)).wrapping_sub(mem_min));
             }
             if __goto_1 <= 1 { // found

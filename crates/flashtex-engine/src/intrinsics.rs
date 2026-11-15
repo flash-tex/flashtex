@@ -1825,6 +1825,10 @@ impl Globals {
         if self.intr_rec_on || self.bm_rec_on {
             return false;
         }
+        // (a run made again after `main memory size`: `crate::capacity`)
+        if crate::capacity::replays_off() {
+            return false;
+        }
         let cs = self.cur_cs;
         let slot = if self.intr_cand[cs as usize] != 0 {
             (self.intr_cand[cs as usize] - 1) as usize
@@ -1876,6 +1880,7 @@ impl Globals {
                         crate::intrinsics_verify::begin(self, s);
                         return false;
                     }
+                    crate::capacity::note_replay();
                     self.replay(s);
                     return true;
                 }

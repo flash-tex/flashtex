@@ -515,6 +515,15 @@ impl Session {
                     let restore_s = t1.elapsed().as_secs_f64();
                     let t2 = Instant::now();
                     let status = g.resume_to_end()?;
+                    // (#2309) a run that replayed calls and then ran out of
+                    // main memory did not stop where pdfTeX does: again
+                    // from the format, without replays (`crate::capacity`)
+                    if crate::capacity::take_rerun() {
+                        let mut r = self.cold()?;
+                        r.mode = "cold-after-memory".into();
+                        r.total_s = t0.elapsed().as_secs_f64();
+                        return Ok(r);
+                    }
                     let run_s = t2.elapsed().as_secs_f64();
                     let times = g.layer().shipout_times.clone();
                     return Ok(Report {
@@ -555,6 +564,7 @@ impl Session {
         system::truncate_external_effects(0);
         system::record_reads(true);
         system::set_command_line(vec![self.first_line.clone()]);
+        crate::capacity::new_run();
         let mut g = Globals::new();
         g.arm_begin_document();
         g.checkpoint_every_shipout(self.every_shipout);
@@ -563,6 +573,15 @@ impl Session {
         let status = g.run_to_end();
         system::record_reads(false);
         let status = status?;
+        // (#2309, as in `compile`: replays are off for the second run, so it
+        // is not made a third time)
+        if crate::capacity::take_rerun() {
+            drop(g);
+            let mut r = self.cold()?;
+            r.mode = "cold-after-memory".into();
+            r.total_s = t0.elapsed().as_secs_f64();
+            return Ok(r);
+        }
         let run_s = t0.elapsed().as_secs_f64();
         let (s0_id, reads, checkpoint_s, errors) = {
             let l = g.layer();
@@ -821,6 +840,8 @@ impl Session {
     /// or another process). `Err` if the file does not fit this engine or
     /// S₀'s key no longer holds; the caller then starts with `cold`.
     pub fn open_s0(o: RunOptions, path: &str) -> Result<(Session, OpenReport), String> {
+        // (whether the run that left S₀ replayed is not known)
+        crate::capacity::unknown_history();
         let mut s: Option<Session> = None;
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));

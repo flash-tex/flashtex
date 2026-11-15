@@ -4771,6 +4771,11 @@ pub fn set_resident(on: bool) {
     RESIDENT.with(|r| r.set(on));
 }
 
+/// Whether the engine runs inside a host that outlives the run.
+pub fn is_resident() -> bool {
+    RESIDENT.with(|r| r.get())
+}
+
 /// Forget that a run was terminating (a new run in the same process).
 pub fn reset_run_flags() {
     TERMINATING.store(false, Ordering::SeqCst);

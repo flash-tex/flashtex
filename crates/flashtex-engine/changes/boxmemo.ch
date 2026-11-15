@@ -47,8 +47,20 @@
 %   much room between |lo_mem_max| and |hi_mem_min|. They are kept
 %   whether a recording is in progress or not (a test of a flag would
 %   cost what the update does), and nothing else reads them.
+% * |flashtex_cap_mem_full| before each |overflow("main memory size",...)|:
+%   where that overflow fires depends on whether calls were replayed, so
+%   a run that replayed is made again without replays (src/capacity.rs).
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
+
+@x pdftex.web l.3126 - get_avail: a run that replayed and runs out of main memory is made again
+    begin runaway; {if memory is exhausted, display possible runaway text}
+    overflow("main memory size",mem_max+1-mem_min);
+@y
+    begin flashtex_cap_mem_full;
+    runaway; {if memory is exhausted, display possible runaway text}
+    overflow("main memory size",mem_max+1-mem_min);
+@z
 
 @x pdftex.web l.3134 (after changes/displaylist.ch) - get_avail: the largest |dyn_used| since a recording's start
 dl_new_node(p);
@@ -68,6 +80,13 @@ get_avail:=p;
     if dyn_used>cap_dyn_peak then cap_dyn_peak:=dyn_used;
     dl_new_node(#);
     end;
+@z
+
+@x pdftex.web l.3224 - get_node: ... and here
+overflow("main memory size",mem_max+1-mem_min);
+@y
+flashtex_cap_mem_full;
+overflow("main memory size",mem_max+1-mem_min);
 @z
 
 @x pdftex.web l.3227 (after changes/displaylist.ch) - get_node: the words given out since a recording's start
@@ -576,6 +595,7 @@ procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
+procedure flashtex_cap_mem_full; external;
 
 @* \[55] Index.
 @z

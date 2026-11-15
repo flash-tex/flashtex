@@ -144,6 +144,32 @@ pub fn capacity_cases(m: &str, body: &str, big: usize, fill: usize) -> Vec<(&'st
     ]
 }
 
+/// What the command-line engine says on standard error when it starts over
+/// without replays (`src/capacity.rs`, #2309).
+#[allow(dead_code)]
+pub const MEMORY_AGAIN: &str = "running again without replays";
+
+/// An INITEX file whose `main memory size` overflow comes later when calls
+/// of the macro `m` were replayed (#2309): `defs` (which define `\m`),
+/// three calls, `after` (what takes up the memory those calls freed), one
+/// more call, which a replay makes without growing main memory as the call
+/// does, and then `step` (what takes memory of the other kind: `\T`'s
+/// 10,000 tokens in a macro after a call that makes nodes, a box of nodes
+/// after one that makes tokens) until memory runs out, each step with its
+/// number, `\count1`, in the log.
+#[allow(dead_code)]
+pub fn memory_drift_case(m: &str, defs: &str, after: &str, step: &str) -> String {
+    format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\catcode`\\%=14 \\scrollmode\n\
+         {defs}\n\\{m}\\{m}\\{m}\n{after}\n\\{m}\n\
+         \\def\\T{{{}}}\n\
+         \\count1=0 \\def\\fill{{\\ifnum\\count1<10000 \\advance\\count1 1 \\message{{\\the\\count1}}\
+         {step}\\expandafter\\fill\\fi}}\n\
+         \\fill\n\\end\n",
+        "t".repeat(10_000)
+    )
+}
+
 /// The message [`memory_case`]'s file stops with.
 #[allow(dead_code)]
 pub const MEMORY_FULL: &str = "! TeX capacity exceeded, sorry [main memory size=5000000]";
