@@ -161,7 +161,7 @@ fn fmt_g13(v: f64) -> String {
             s.to_string()
         }
     };
-    if x < P && x >= -4 {
+    if (-4..P).contains(&x) {
         trim(&format!("{:.*}", (P - 1 - x) as usize, v))
     } else {
         let m = trim(mant);
@@ -234,7 +234,9 @@ fn pack_index(items: &[Vec<u8>], out: &mut Vec<u8>) {
     out.extend_from_slice(&(items.len() as u16).to_be_bytes());
     out.push(offsize as u8);
     let mut off = 1usize;
-    let put = |o: usize, out: &mut Vec<u8>| out.extend_from_slice(&(o as u32).to_be_bytes()[4 - offsize..]);
+    let put = |o: usize, out: &mut Vec<u8>| {
+        out.extend_from_slice(&(o as u32).to_be_bytes()[4 - offsize..])
+    };
     put(off, out);
     for it in items {
         off += it.len();
@@ -284,7 +286,10 @@ fn is_space(c: u8) -> bool {
 }
 
 fn is_delim(c: u8) -> bool {
-    matches!(c, b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'%')
+    matches!(
+        c,
+        b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'%'
+    )
 }
 
 struct Lexer<'a> {
@@ -342,7 +347,11 @@ impl Lexer<'_> {
             }
             b'(' => self.literal(),
             b'>' | b']' | b'}' => {
-                let n = if c == b'>' && self.at(self.i + 1) == b'>' { 2 } else { 1 };
+                let n = if c == b'>' && self.at(self.i + 1) == b'>' {
+                    2
+                } else {
+                    1
+                };
                 let t = Tok::Other(self.s[self.i..self.i + n].to_vec());
                 self.i += n;
                 Some(t)
@@ -548,13 +557,6 @@ impl Lexer<'_> {
         }
     }
 
-    fn int(&mut self) -> Option<i32> {
-        match self.token()? {
-            Tok::Int(i) => Some(i),
-            _ => None,
-        }
-    }
-
     /// The binary bytes after `RD`/`-|` (or `readstring`): `len` of
     /// them, decrypted with `lenIV` as `t1_decrypt` (`None` past the end).
     fn binary(&mut self, len: usize, len_iv: i32, last: usize) -> Option<Vec<u8>> {
@@ -584,7 +586,10 @@ impl Lexer<'_> {
     fn encoding(&mut self) -> Option<Vec<Option<Vec<u8>>>> {
         let named = |t: &dyn Fn(i32) -> Option<&'static str>| {
             (0..256)
-                .map(|c| t(c).filter(|n| *n != ".notdef").map(|n| n.as_bytes().to_vec()))
+                .map(|c| {
+                    t(c).filter(|n| *n != ".notdef")
+                        .map(|n| n.as_bytes().to_vec())
+                })
                 .collect::<Vec<_>>()
         };
         let op = |t: &Option<Tok>, o: &[u8]| matches!(t, Some(Tok::Other(x)) if x == o);
@@ -668,7 +673,12 @@ impl Lexer<'_> {
     }
 
     /// `parse_subrs`: `None` is its failure (-1).
-    fn subrs(&mut self, len_iv: i32, out: &mut Option<Vec<Vec<u8>>>, warn: &mut Vec<String>) -> Option<()> {
+    fn subrs(
+        &mut self,
+        len_iv: i32,
+        out: &mut Option<Vec<Vec<u8>>>,
+        warn: &mut Vec<String>,
+    ) -> Option<()> {
         let count = match self.token()? {
             Tok::Int(n) if n >= 0 => n as usize,
             _ => {
@@ -711,7 +721,12 @@ impl Lexer<'_> {
 
     /// `parse_charstrings`: the glyphs, `.notdef` first, then the others
     /// in the program's order. `None` is its failure (-1).
-    fn charstrings(&mut self, len_iv: i32, out: &mut Vec<(Vec<u8>, Vec<u8>)>, warn: &mut Vec<String>) -> Option<()> {
+    fn charstrings(
+        &mut self,
+        len_iv: i32,
+        out: &mut Vec<(Vec<u8>, Vec<u8>)>,
+        warn: &mut Vec<String>,
+    ) -> Option<()> {
         let count = match self.token()? {
             Tok::Int(n) if (0..=64999).contains(&n) => n as usize,
             _ => {
@@ -765,6 +780,8 @@ pub struct Loaded {
     pub private: Dict,
     /// The FontInfo strings, by key.
     pub strings: Vec<(&'static str, Vec<u8>)>,
+    /// `/FontName` (at most 127 bytes, as `parse_part1` keeps it).
+    pub font_name: Vec<u8>,
     /// The built-in encoding (`parse_encoding`), when the font has one:
     /// a glyph name or none for each code.
     pub encoding: Option<Vec<Option<Vec<u8>>>>,
@@ -794,6 +811,28 @@ impl Loaded {
         let subr = |i: usize| subrs.get(i).cloned();
         let cs = self.glyphs.get(gid).map_or(&[][..], |g| &g.1);
         t1char::metrics(cs, &subr, subrs.len(), warn)
+    }
+
+    /// `get_font_attr`'s `/Flags`: Symbolic, Serif unless the FontName has
+    /// "Sans", SmallCap when it has "Caps", Italic for a non-zero
+    /// ItalicAngle, ForceBold (FixedPitch never: `parse_part1` does not
+    /// read `isFixedPitch` into the Private DICT).
+    pub fn flags(&self) -> u32 {
+        let has = |s: &[u8]| self.font_name.windows(s.len()).any(|w| w == s);
+        let mut f = 4;
+        if self.top.get("ItalicAngle", 0).is_some_and(|a| a != 0.0) {
+            f |= 64;
+        }
+        if self.private.get("ForceBold", 0).is_some_and(|b| b != 0.0) {
+            f |= 1 << 18;
+        }
+        if !has(b"Sans") {
+            f |= 2;
+        }
+        if has(b"Caps") {
+            f |= 1 << 17;
+        }
+        f
     }
 
     /// `get_font_attr`'s CapHeight, Ascent and Descent: the tops of "H"
@@ -844,6 +883,7 @@ pub fn load(pfb: &[u8], warn: &mut Vec<String>) -> Result<Loaded, Fatal> {
         top: Dict::default(),
         private: Dict::default(),
         strings: Vec::new(),
+        font_name: Vec::new(),
         encoding: None,
         subrs: None,
         glyphs: Vec::new(),
@@ -852,7 +892,14 @@ pub fn load(pfb: &[u8], warn: &mut Vec<String>) -> Result<Loaded, Fatal> {
     if !lx.seek_operator(b"begin") {
         return Err(FAILED1.into());
     }
-    const SKEYS: [&str; 6] = ["version", "Notice", "FullName", "FamilyName", "Weight", "Copyright"];
+    const SKEYS: [&str; 6] = [
+        "version",
+        "Notice",
+        "FullName",
+        "FamilyName",
+        "Weight",
+        "Copyright",
+    ];
     while lx.i < lx.s.len() {
         let Some(key) = lx.get_next_key() else {
             break;
@@ -866,7 +913,16 @@ pub fn load(pfb: &[u8], warn: &mut Vec<String>) -> Result<Loaded, Fatal> {
                 }
             }
             "FontName" => {
-                lx.svalue().ok_or(FAILED1)?;
+                let mut n = lx.svalue().ok_or(FAILED1)?;
+                if n.len() > 127 {
+                    warn.push(format!(
+                        "FontName too long: {} ({} bytes)",
+                        String::from_utf8_lossy(&n),
+                        n.len()
+                    ));
+                    n.truncate(127);
+                }
+                l.font_name = n;
             }
             "Encoding" => {
                 l.encoding = Some(lx.encoding().ok_or(FAILED1)?);
@@ -942,11 +998,9 @@ pub fn load(pfb: &[u8], warn: &mut Vec<String>) -> Result<Loaded, Fatal> {
                 l.private.add(k, 1);
                 l.private.set(k, 0, v[0]);
             }
-            "ForceBold" => {
-                if lx.bvalue().ok_or(FAILED2)? {
-                    l.private.add("ForceBold", 1);
-                    l.private.set("ForceBold", 0, 1.0);
-                }
+            "ForceBold" if lx.bvalue().ok_or(FAILED2)? => {
+                l.private.add("ForceBold", 1);
+                l.private.set("ForceBold", 0, 1.0);
             }
             _ => {}
         }
@@ -996,6 +1050,9 @@ pub struct Converted {
     pub charset: Vec<u8>,
     /// Codes the C drops (mapped to `.notdef`, or a glyph the font lacks).
     pub dropped: BTreeSet<u16>,
+    /// `add_metrics`: each code kept, its glyph's width scaled by the
+    /// FontMatrix to 1000 units per em (not rounded).
+    pub widths: std::collections::BTreeMap<u16, f64>,
 }
 
 /// `pdf_font_load_type1` and `write_fontfile`: the program `l` (from
@@ -1034,9 +1091,14 @@ pub fn convert(
     let mut prev: i32 = -2;
     let mut kept: Vec<(u16, &[u8])> = Vec::new();
     for &code in used.iter().filter(|&&c| c <= 0xff) {
-        let name = enc.get(code as usize).map(Vec::as_slice).unwrap_or(b".notdef");
+        let name = enc
+            .get(code as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(b".notdef");
         if name == b".notdef" {
-            warn.push(format!("Character mapped to .notdef used in font: {fullname}"));
+            warn.push(format!(
+                "Character mapped to .notdef used in font: {fullname}"
+            ));
             dropped.insert(code);
             continue;
         }
@@ -1069,11 +1131,13 @@ pub fn convert(
     let subrs = l.subrs.as_deref().unwrap_or(&[]);
     let subr = |i: usize| subrs.get(i).cloned();
     let mut cstrings: Vec<Vec<u8>> = Vec::new();
+    let mut wx: Vec<f64> = Vec::new();
     let mut gid = 0;
     while gid < glyphs.len() {
         let cs = &l.glyphs[l.lookup(glyphs[gid].as_bytes())].1;
         let (t2, gm) = t1char::convert(cs, &subr, subrs.len(), default_width, nominal, warn)?;
         cstrings.push(t2);
+        wx.push(gm.sbw[2]);
         if let Some(s) = gm.seac {
             for code in [s.achar, s.bchar] {
                 let name = standard_encoding_name(code as i32);
@@ -1156,41 +1220,23 @@ pub fn convert(
     let mut idx = Vec::new();
     pack_index(&[top], &mut idx);
     out[topdict_at..topdict_at + idx.len()].copy_from_slice(&idx);
+    let scaling = l.top.get("FontMatrix", 0).map_or(1.0, |m| 1000.0 * m);
+    let widths = kept
+        .iter()
+        .map(|(code, name)| {
+            let g = glyphs
+                .iter()
+                .position(|g| g.as_bytes() == *name)
+                .unwrap_or(0);
+            (*code, scaling * wx.get(g).copied().unwrap_or(0.0))
+        })
+        .collect();
     Ok(Converted {
         program: out,
         charset: pdfcharset,
         dropped,
+        widths,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reals_as_cff_packs_them() {
-        let r = |v: f64| {
-            let mut o = Vec::new();
-            pack_real(v, &mut o);
-            o
-        };
-        assert_eq!(r(0.001), [30, 0x0a, 0x00, 0x1f]);
-        assert_eq!(r(-0.5), [30, 0xe0, 0xa5, 0xff]);
-        assert_eq!(r(0.039625), [30, 0x0a, 0x03, 0x96, 0x25, 0xff]);
-        assert_eq!(fmt_g13(1e-5), "1e-05");
-        assert_eq!(fmt_g13(0.0001), "0.0001");
-        assert_eq!(fmt_g13(123456.5), "123456.5");
-    }
-
-    #[test]
-    fn integers_and_offsets() {
-        let mut o = Vec::new();
-        put_number(500.0, false, &mut o);
-        put_number(-250.0, false, &mut o);
-        put_number(0.0, false, &mut o);
-        put_number(42.0, true, &mut o);
-        assert_eq!(o, [0xf8, 0x88, 0xfb, 0x8e, 139, 29, 0, 0, 0, 42]);
-    }
 }
 
 /// t1_load.c's `ISOLatin1Encoding`.
@@ -1452,3 +1498,33 @@ const ISO_LATIN1: [Option<&str>; 256] = [
     Some("thorn"),
     Some("ydieresis"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reals_as_cff_packs_them() {
+        let r = |v: f64| {
+            let mut o = Vec::new();
+            pack_real(v, &mut o);
+            o
+        };
+        assert_eq!(r(0.001), [30, 0x0a, 0x00, 0x1f]);
+        assert_eq!(r(-0.5), [30, 0xe0, 0xa5, 0xff]);
+        assert_eq!(r(0.039625), [30, 0x0a, 0x03, 0x96, 0x25, 0xff]);
+        assert_eq!(fmt_g13(1e-5), "1e-05");
+        assert_eq!(fmt_g13(0.0001), "0.0001");
+        assert_eq!(fmt_g13(123456.5), "123456.5");
+    }
+
+    #[test]
+    fn integers_and_offsets() {
+        let mut o = Vec::new();
+        put_number(500.0, false, &mut o);
+        put_number(-250.0, false, &mut o);
+        put_number(0.0, false, &mut o);
+        put_number(42.0, true, &mut o);
+        assert_eq!(o, [0xf8, 0x88, 0xfb, 0x8e, 139, 29, 0, 0, 0, 42]);
+    }
+}

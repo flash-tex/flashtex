@@ -9,6 +9,11 @@
 //! Live 2026's `xetex -ini` + xdvipdfmx 20260317 on this input, with the
 //! same files in the working directory: `/Ascent 694 /CapHeight 683.5
 //! /Descent -369` (its FontBBox is `-10 -250 1000 900`).
+//!
+//! The program is embedded as xdvipdfmx embeds it: converted to a bare CFF
+//! (`/FontFile3 /Subtype /Type1C`, type1.c `write_fontfile`) with the
+//! descriptor's `/CharSet (/H/b/p)`. `ftxbox-Hpb.cff` is that stream from
+//! the same run (subset tag `ZPECFV`).
 
 use flashtex_pdf::reader::{Obj, PdfFile};
 use std::path::PathBuf;
@@ -56,5 +61,26 @@ fn type1_descriptor_metrics_are_xdvipdfmxs() {
     assert_eq!(num("Ascent").as_deref(), Some("694"));
     assert_eq!(num("CapHeight").as_deref(), Some("683.5"));
     assert_eq!(num("Descent").as_deref(), Some("-369"));
+    // the program: xdvipdfmx's Type1C, byte for byte but for the tag
+    let charset = match fd.get("CharSet") {
+        Some(Obj::String(s)) => s.clone(),
+        o => panic!("CharSet {o:?}"),
+    };
+    assert_eq!(charset, b"/H/b/p");
+    assert_eq!(num("StemV").as_deref(), Some("80"));
+    let ff = pdf.resolve(fd.get("FontFile3").expect("/FontFile3"));
+    let Obj::Stream { dict, .. } = ff else {
+        panic!("FontFile3 {ff:?}")
+    };
+    assert_eq!(dict.get("Subtype").and_then(Obj::as_name), Some("Type1C"));
+    let got = pdf.decode_stream(ff).unwrap();
+    let base = font.get("BaseFont").and_then(Obj::as_name).unwrap();
+    let tag = base.split('+').next().unwrap().as_bytes();
+    let mut got = got;
+    if let Some(i) = got.windows(7).position(|w| w[..6] == *tag && w[6] == b'+') {
+        got[i..i + 6].copy_from_slice(b"ZPECFV");
+    }
+    let want = std::fs::read(data.join("ftxbox-Hpb.cff")).unwrap();
+    assert_eq!(got, want);
     let _ = std::fs::remove_dir_all(&dir);
 }

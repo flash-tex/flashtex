@@ -900,12 +900,7 @@ fn encode(
             }
         }
     }
-    let index_of = |id: f64| {
-        stems
-            .iter()
-            .position(|s| s.id == id as usize)
-            .unwrap_or(0)
-    };
+    let index_of = |id: f64| stems.iter().position(|s| s.id == id as usize).unwrap_or(0);
     let mask_len = n.div_ceil(8);
     let mut k = 0;
     while k < cd.path.len() {
@@ -948,10 +943,7 @@ fn encode(
         }
     }
     if let Some(s) = cd.seac.filter(|_| cd.flags & FLAG_USE_SEAC != 0) {
-        put_numbers(
-            &[s.adx, s.ady, s.bchar as f64, s.achar as f64],
-            &mut out,
-        )?;
+        put_numbers(&[s.adx, s.ady, s.bchar as f64, s.achar as f64], &mut out)?;
         warn.push(
             "Obsolete four arguments of \"endchar\" will be used for Type 1 \"seac\" operator."
                 .into(),
@@ -977,8 +969,16 @@ pub fn convert(
     cd.stems.sort_by(|a, b| {
         b.horizontal
             .cmp(&a.horizontal)
-            .then(a.pos.partial_cmp(&b.pos).unwrap_or(std::cmp::Ordering::Equal))
-            .then(a.del.partial_cmp(&b.del).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                a.pos
+                    .partial_cmp(&b.pos)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(
+                a.del
+                    .partial_cmp(&b.del)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
     let out = encode(&cd, default_width, nominal_width, warn)?;
     Ok((out, cd))

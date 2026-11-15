@@ -1274,64 +1274,64 @@ impl<'a> Writer<'a> {
         encoding: &[Vec<u8>],
         used: &BTreeSet<u16>,
     ) -> Result<(), String> {
-        let t1 = flashtex_pdf::type1::Type1Font::parse_pfb(&r.program)
+        // xdvipdfmx embeds a Type 1 font converted to a bare CFF
+        // (`/FontFile3 /Subtype /Type1C`): t1_load.c, type1.c, t1_char.c
+        let mut warn = Vec::new();
+        let l =
+            super::type1c::load(&r.program, &mut warn).map_err(|e| format!("{ps_name}: {e}"))?;
+        let (cap_height, ascent, descent) = l
+            .vertical_metrics(&mut warn)
             .map_err(|e| format!("{ps_name}: {e}"))?;
-        let names: BTreeSet<String> = used
-            .iter()
-            .filter_map(|&c| encoding.get(c as usize))
-            .map(|n| String::from_utf8_lossy(n).into_owned())
-            .filter(|n| n != ".notdef")
-            .collect();
-        let sub = t1.subset(&names).map_err(|e| format!("{ps_name}: {e}"))?;
-        let flashtex_pdf::exact::FontProgram::Type1 {
-            bytes,
-            length1,
-            length2,
-            length3,
-        } = &sub.program
-        else {
-            return Err(format!("{ps_name}: not a Type 1 program"));
+        let stem_v = l.private.get("StdVW", 0).unwrap_or(88.0);
+        let italic_angle = l.top.get("ItalicAngle", 0).unwrap_or(0.0);
+        let flags = l.flags();
+        // add_metrics: the FontBBox, `ROUND(v, 1.0)`
+        let mut bbox = [0.0; 4];
+        for (i, v) in bbox.iter_mut().enumerate() {
+            let b = l
+                .top
+                .get("FontBBox", i)
+                .ok_or_else(|| format!("{ps_name}: No FontBBox?"))?;
+            *v = (b + 0.5).floor();
+        }
+        // the BaseFont is the program's own FontName (type1.c
+        // `pdf_font_open_type1`: `t1_get_fontname`), not the map's name
+        let font_name = if l.font_name.is_empty() {
+            ps_name.to_string()
+        } else {
+            String::from_utf8_lossy(&l.font_name).into_owned()
         };
-        let tag = subset_tag(ps_name, used);
-        let base = format!("{tag}+{ps_name}");
+        let tag = subset_tag(&font_name, used);
+        let base = format!("{tag}+{font_name}");
+        let conv = super::type1c::convert(l, &base, encoding, used, &mut warn)
+            .map_err(|e| format!("{ps_name}: {e}"))?;
         let ff = self.alloc();
-        let d = format!(" /Length1 {length1} /Length2 {length2} /Length3 {length3}");
-        self.stream(ff, d.as_bytes(), bytes, true);
-        let bbox = t1.font_bbox().unwrap_or([0, -250, 1000, 750]);
-        let (cap_height, ascent, descent) =
-            type1_vertical_metrics(&t1).map_err(|e| format!("{ps_name}: {e}"))?;
+        self.stream(ff, b" /Subtype /Type1C", &conv.program, true);
+        let mut charset = Vec::new();
+        super::pdfobj::write_string(&conv.charset, &mut charset);
         let fd = self.alloc();
+        let p = |v: f64| super::num::p_dtoa(v, 8);
         let d = format!(
-            "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
-            type1_flags(
-                t1.font_name().unwrap_or(ps_name),
-                t1.italic_angle().unwrap_or("0"),
-                type1_force_bold(&r.program)
-            ),
-            bbox[0],
-            bbox[1],
-            bbox[2],
-            bbox[3],
-            t1.italic_angle().unwrap_or("0"),
-            super::num::p_dtoa(ascent, 8),
-            super::num::p_dtoa(descent, 8),
-            super::num::p_dtoa(cap_height, 8),
-            t1.std_vw().unwrap_or(80)
+            "<</Type /FontDescriptor /FontName /{base} /Flags {flags} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile3 {ff} 0 R /CharSet {}>>",
+            p(bbox[0]),
+            p(bbox[1]),
+            p(bbox[2]),
+            p(bbox[3]),
+            p(italic_angle),
+            p(ascent),
+            p(descent),
+            p(cap_height),
+            p(stem_v),
+            String::from_utf8_lossy(&charset)
         );
         self.object(fd, d.as_bytes());
         let first = used.iter().next().copied().unwrap_or(0).min(255);
         let last = used.iter().next_back().copied().unwrap_or(0).min(255);
-        // the program's own widths, `ROUND(w, 0.1)`, 0 for codes not used
-        // (type1.c add_metrics; the supported FontMatrix scales by 1)
+        // the converted glyphs' widths, `ROUND(w, 0.1)`, 0 for codes not
+        // used (type1.c add_metrics)
         let mut wa = String::from("[");
         for c in first..=last {
-            let w = if used.contains(&c) {
-                encoding
-                    .get(c as usize)
-                    .map_or(0.0, |g| type1_width(&t1, &String::from_utf8_lossy(g)))
-            } else {
-                0.0
-            };
+            let w = conv.widths.get(&c).map_or(0.0, |&w| round_width(w));
             let _ = write!(wa, " {}", n(w, 8));
         }
         wa.push_str(" ]");
@@ -2096,103 +2096,9 @@ impl FaceInfo {
     }
 }
 
-/// Whether a PFB program's Private dict says `/ForceBold true` (its
-/// eexec-encrypted part, decrypted).
-fn type1_force_bold(pfb: &[u8]) -> bool {
-    let mut at = 0;
-    while pfb.get(at) == Some(&0x80) {
-        let Some(len) = pfb
-            .get(at + 2..at + 6)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
-        else {
-            return false;
-        };
-        let body = pfb.get(at + 6..at + 6 + len).unwrap_or(&[]);
-        if pfb.get(at + 1) == Some(&2) {
-            let plain = flashtex_pdf::type1::decrypt(body, 55665, 4);
-            return plain.windows(15).any(|w| w == b"/ForceBold true");
-        }
-        at += 6 + len;
-    }
-    false
-}
-
-/// A Type 1 font's `/CapHeight`, `/Ascent` and `/Descent` as xdvipdfmx's
-/// `get_font_attr` (type1.c) finds them: the top of the bounding box
-/// (`t1char_get_metrics`, [`super::t1char`]) of glyph `H`, the bottom of
-/// `p` and the top of `b`; `FontBBox`'s top, bottom and top without them
-/// (680, -190 and 690 without a `FontBBox`). As in the C, only the first
-/// name of each of its lists (`H P Pi Rho`, `p q mu eta`, `b h lambda`)
-/// counts: `cff_glyph_lookup` gives glyph 0, `.notdef`, for a name the
-/// font lacks, so a font without `p` takes `.notdef`'s box (measured:
-/// CMSY10's `/Ascent 0 /Descent 0 /CapHeight 683`).
-fn type1_vertical_metrics(t1: &flashtex_pdf::type1::Type1Font) -> Result<(f64, f64, f64), String> {
-    let (mut cap, mut asc, mut desc) = match t1.font_bbox() {
-        Some(b) => (b[3] as f64, b[3] as f64, b[1] as f64),
-        None => (680.0, 690.0, -190.0),
-    };
-    let subr = |i: usize| t1.decrypted_subr(i);
-    let mut warn = Vec::new();
-    let mut bbox = |name: &str| -> Result<Option<[f64; 4]>, String> {
-        let Some(cs) = t1
-            .decrypted_charstring(name)
-            .or_else(|| t1.decrypted_charstring(".notdef"))
-        else {
-            return Ok(None);
-        };
-        Ok(Some(
-            super::t1char::metrics(&cs, &subr, t1.subr_count(), &mut warn)?.bbox,
-        ))
-    };
-    // t1_load.c `parse_charstrings`: a font without `.notdef` does not
-    // load ("No .notdef glyph???"); `get_font_attr` interprets "space"
-    // (for `defaultWidthX`) first, so an error there is fatal too
-    if t1.decrypted_charstring(".notdef").is_none() {
-        return Err("No .notdef glyph???".into());
-    }
-    bbox("space")?;
-    if let Some(b) = bbox("H")? {
-        cap = b[3];
-    }
-    if let Some(b) = bbox("p")? {
-        desc = b[1];
-    }
-    if let Some(b) = bbox("b")? {
-        asc = b[3];
-    }
-    Ok((cap, asc, desc))
-}
-
-/// Glyph `name`'s `/Widths` entry as xdvipdfmx's `add_metrics` (type1.c)
-/// writes it: the charstring's width, `ROUND(w, 0.1)`; 0 for a glyph the
-/// program lacks.
-fn type1_width(t1: &flashtex_pdf::type1::Type1Font, name: &str) -> f64 {
-    t1.advance_width(name).map_or(0.0, |w| {
-        ((w.num as f64 / w.den as f64) / 0.1 + 0.5).floor() * 0.1
-    })
-}
-
-/// A Type 1 font's `/Flags` as xdvipdfmx's `get_font_attr` (type1.c) sets
-/// them from its program's `FontName` and `ItalicAngle`: Symbolic, Serif
-/// unless the name contains `Sans`, SmallCap if it contains `Caps`, Italic
-/// for an angle other than 0, ForceBold from the Private dict. (Its
-/// FixedPitch also comes from the Private dict, where a Type 1 font's
-/// `isFixedPitch` is not.)
-fn type1_flags(font_name: &str, italic_angle: &str, force_bold: bool) -> u32 {
-    let mut f = 4;
-    if force_bold {
-        f |= 1 << 18;
-    }
-    if !font_name.contains("Sans") {
-        f |= 2;
-    }
-    if font_name.contains("Caps") {
-        f |= 1 << 17;
-    }
-    if italic_angle.trim().parse::<f64>().is_ok_and(|a| a != 0.0) {
-        f |= 64;
-    }
-    f
+/// type1.c `add_metrics`'s `ROUND(w, 0.1)`.
+fn round_width(w: f64) -> f64 {
+    (w / 0.1 + 0.5).floor() * 0.1
 }
 
 fn color_op(c: &mut Vec<u8>, v: &[f64], stroke: bool) {
@@ -2870,17 +2776,22 @@ mod tests {
                 .ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .filter(|p| !p.is_empty())?;
-            let data = std::fs::read(path).ok()?;
-            Some((flashtex_pdf::type1::Type1Font::parse_pfb(&data).ok()?, data))
+            std::fs::read(path).ok()
         };
-        let Some((cmr, _)) = font("cmr10.pfb") else {
+        let Some(cmr) = font("cmr10.pfb") else {
             eprintln!("skipped: no cmr10.pfb (TeX Live)");
             return;
         };
-        let w: Vec<f64> = ["fi", "H", "e", "l", "o"]
-            .iter()
-            .map(|g| type1_width(&cmr, g))
-            .collect();
+        let mut enc = vec![b".notdef".to_vec(); 256];
+        let names = ["fi", "H", "e", "l", "o"];
+        for (i, g) in names.iter().enumerate() {
+            enc[i] = g.as_bytes().to_vec();
+        }
+        let used: BTreeSet<u16> = (0..names.len() as u16).collect();
+        let l = super::super::type1c::load(&cmr, &mut Vec::new()).unwrap();
+        let conv =
+            super::super::type1c::convert(l, "AAAAAA+CMR10", &enc, &used, &mut Vec::new()).unwrap();
+        let w: Vec<f64> = used.iter().map(|c| round_width(conv.widths[c])).collect();
         assert_eq!(w, [555.0, 750.0, 444.0, 277.0, 500.0]);
         for (name, flags) in [
             ("cmr10.pfb", 6),
@@ -2889,16 +2800,8 @@ mod tests {
             ("cmsy10.pfb", 70),
             ("cmbx12.pfb", 262150),
         ] {
-            let (t1, data) = font(name).unwrap();
-            assert_eq!(
-                type1_flags(
-                    t1.font_name().unwrap(),
-                    t1.italic_angle().unwrap_or("0"),
-                    type1_force_bold(&data)
-                ),
-                flags,
-                "{name}"
-            );
+            let l = super::super::type1c::load(&font(name).unwrap(), &mut Vec::new()).unwrap();
+            assert_eq!(l.flags(), flags, "{name}");
         }
     }
 

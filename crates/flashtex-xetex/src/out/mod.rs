@@ -41,8 +41,8 @@ pub mod pdf;
 pub mod pdfobj;
 pub mod special;
 pub mod t1char;
-pub mod type1c;
 pub mod tounicode;
+pub mod type1c;
 
 use crate::generated::consts::{dvi_buf_size, font_base, int_base, mag_code};
 use crate::generated::Globals;
