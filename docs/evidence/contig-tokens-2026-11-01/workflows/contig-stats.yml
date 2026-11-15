@@ -1,0 +1,88 @@
+# Lane CONTIG-TOKENS (PR #2016, the always-on LAZY-FLUSH): the Commander's oracle check of the
+# printed memory accounting. One arXiv paper (the first of the 13 the lane measures) and one beamer
+# deck (fixtures/beamer-v3/long-deck) compiled with \tracingstats=2 by TeX Live's pdfTeX, by the
+# PR's base and by the PR, P-T1's way (scripts/stats.py); the memory-usage line of every shipout,
+# the memory block and the rest of the log are compared with pdfTeX's. A push to
+# agent/kabir-claude-contig/pcstats-* runs it on the NixOS PC's runner (in-repo code only; DESIGN
+# §9.3). Measurement branch only, never merged; scratch in ~/.cache/flashtex-agents/contig/, removed
+# at the end.
+name: contig-stats
+
+on:
+  push:
+    branches: ["agent/kabir-claude-contig/pcstats-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contig-stats
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: "4"
+      CFG: docs/evidence/contig-tokens-2026-11-01/bench.json
+      S: docs/evidence/contig-tokens-2026-11-01/scripts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: scratch
+        run: |
+          set -euo pipefail
+          W="$HOME/.cache/flashtex-agents/contig/stats-$GITHUB_RUN_ID"
+          mkdir -p "$W/tmp"
+          { echo "W=$W"; echo "TMPDIR=$W/tmp"; } >> "$GITHUB_ENV"
+          { uname -a; command -v pdftex kpsewhich; pdftex --version | head -1; } | tee "$W/machine.txt"
+      - name: build each ref, its format
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
+          python3 -c "import json,os; [print(k, v) for k, v in json.load(open(os.environ['CFG']))['builds'].items()]" > "$W/builds.txt"
+          while read -r name ref; do
+            src="$W/src-$name"
+            git worktree add --detach "$src" "$ref" >/dev/null
+            (cd "$src" && CARGO_TARGET_DIR="$W/target-$name" nice -n 5 cargo build --release --locked -q -p flashtex-engine --bin flashtex-initex)
+            d="$W/bin-$name"; mkdir -p "$d/fmt"
+            cp "$W/target-$name/release/flashtex-initex" "$src/crates/flashtex-engine/pdftex.pool" "$d/"
+            ln -sf "$d/flashtex-initex" "$d/pdftex"
+            (cd "$src" && git rev-parse HEAD) > "$d/BUILD"
+            (cd "$d/fmt" && FLASHTEX_POOL="$d/pdftex.pool" "$d/pdftex" -ini -jobname=pdflatex -progname=pdflatex \
+               -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >/dev/null 2>&1) || { tail -20 "$d/fmt/pdflatex.log"; exit 1; }
+            echo "$name $ref: $(sha256sum "$d/fmt/pdflatex.fmt" | cut -c1-16)"
+            git worktree remove --force "$src"
+            rm -rf "$W/target-$name"
+          done < "$W/builds.txt"
+      - name: the documents, \tracingstats=2, against pdfTeX
+        run: |
+          set -euo pipefail
+          paper=$(python3 "$S/fetchdocs.py" "$W/corpus" 0/13)
+          echo "paper: $paper"
+          mkdir -p "$W/out"; cp "$W/machine.txt" "$W/out/"
+          rc=0
+          nice -n 5 python3 "$S/stats.py" "$W/out" --oracle "$(command -v pdftex)" \
+            --engine main="$W/bin-main" --engine lazy="$W/bin-lazy" \
+            "$paper" "$PWD/fixtures/beamer-v3/long-deck:main.tex" 2> >(tee "$W/out/stats.err" >&2) || rc=$?
+          cat "$W/out/report.md" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contig-stats
+          path: ${{ env.W }}/out
+          retention-days: 30
+      - name: clean up
+        if: always()
+        run: |
+          git worktree prune || true
+          rm -rf "$W"
