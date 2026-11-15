@@ -707,60 +707,82 @@ impl<'a, M: Metrics> Builder<'a, M> {
     /// dvi.c's `dvi_set` (`advance`) and `dvi_put`: character `c` of the
     /// current font, which is a font program's glyph or a virtual font's
     /// packet.
+    ///
+    /// The width it advances by has two rules, each its side's own, and
+    /// both are meant. A font of the XDV stream, virtual or not, advances
+    /// by the engine's width of the character: TeX's arithmetic, which
+    /// every later position of the stream assumes (the rule here for every
+    /// TFM font). A font a VF file names advances by `sqxfw(size, fix
+    /// word)` of its TFM file, xdvipdfmx's rule for every character: TeX
+    /// knows nothing of the inside of a packet. The two can differ by 1 sp.
     fn set_char(&mut self, c: u32, advance: bool) {
         let Some(k) = self.font else {
             if self.vf_nest > 0 {
                 // a packet's character with no font: the VF file defines
-                // none (dvi.c's fatal "No font selected!")
-                self.cur().unsupported("No font selected!".into(), None);
+                // none (fatal in dvi.c)
+                self.doc.errors.push("No font selected!".into());
             }
             return;
         };
-        let Some(l) = self.doc.fonts.font(k).cloned() else {
+        // what is needed of the font, without a copy of its names
+        let Some(l) = self.doc.fonts.font(k) else {
             return;
         };
         let FontDef::Tfm(t) = &l.def else {
             // a native font's characters come as glyphs
             return;
         };
-        let dims = match k {
-            FontRef::Dvi(k) => self.metrics.tfm_char(k, c),
+        let (tsize, res, vf) = (t.size, l.res, l.vf);
+        let problem = l.problem.clone();
+        let dims = match (k, &l.tfm) {
+            (FontRef::Dvi(k), _) => Ok(self.metrics.tfm_char(k, c)),
             // a virtual font's own font: its TFM file's fix words at its
             // size, `sqxfw(font->size, tfm_get_fw_width(...))`
-            FontRef::Located(_) => l.tfm.as_ref().and_then(|m| {
+            (FontRef::Located(_), Some(m)) => {
                 let ch = c as i32;
-                Some((
-                    sqxfw(t.size, m.fw_width(ch)?),
-                    sqxfw(t.size, m.fw_height(ch)?),
-                    sqxfw(t.size, m.fw_depth(ch)?),
-                ))
-            }),
+                match (m.fw_width(ch), m.fw_height(ch), m.fw_depth(ch)) {
+                    (Some(w), Some(h), Some(d)) => {
+                        Ok(Some((sqxfw(tsize, w), sqxfw(tsize, h), sqxfw(tsize, d))))
+                    }
+                    // below the TFM file's first character (fatal in tfm.c)
+                    _ => Err(format!("Invalid char: {ch}")),
+                }
+            }
+            // (a font with a `problem`: no TFM file)
+            (FontRef::Located(_), None) => Ok(None),
         };
-        let (wd, ht, dp) = dims.unwrap_or((0, 0, 0));
-        if let (None, Some(v)) = (&l.problem, l.vf) {
+        let (wd, ht, dp) = match dims {
+            Ok(d) => d.unwrap_or((0, 0, 0)),
+            Err(e) => {
+                self.doc.errors.push(e);
+                return;
+            }
+        };
+        if let (None, Some(v)) = (&problem, vf) {
             // the packet draws what there is to draw, and its characters
             // widen a link, not this one's box
             self.vf_set_char(c as i32, v);
             if advance {
-                self.r.h = self.r.h.wrapping_add(wd);
+                // dvi.c's `dvi_set`: `dvi_right(width)`, with the virtual
+                // font the current one again
+                self.right(wd);
             }
             return;
         }
-        if let Some(p) = &l.problem {
-            let p = p.clone();
+        if let Some(p) = problem {
             self.cur().unsupported(p, None);
         } else {
-            if t.size > 0 {
-                let w = wd as f64 / t.size as f64 * 1000.0;
+            if tsize > 0 {
+                let w = wd as f64 / tsize as f64 * 1000.0;
                 self.doc
                     .fonts
                     .widths
-                    .entry(l.res)
+                    .entry(res)
                     .or_default()
                     .entry(c.min(0xFFFF) as u16)
                     .or_insert(w);
             }
-            let size = self.dvi_to_bp(t.size);
+            let size = self.dvi_to_bp(tsize);
             let m = self.glyph_matrix(size, 1.0, 0.0);
             let (x, y) = self.stream_point();
             let here = self.here;
@@ -768,11 +790,11 @@ impl<'a, M: Metrics> Builder<'a, M> {
             s.sync_fill(None, None);
             s.sync_text_render(0);
             s.sync_glyph_matrix(m);
-            s.use_font(l.res);
+            s.use_font(res);
             s.sync_span(here.0);
             let (px, py) = s.to_page(x, y);
             s.push(Item::Glyph {
-                font: l.res,
+                font: res,
                 code: c.min(0xFFFF) as u16,
                 x: px,
                 y: py,
@@ -781,7 +803,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
         }
         self.track(0, wd, ht, dp);
         if advance {
-            self.r.h = self.r.h.wrapping_add(wd);
+            // dvi.c's `dvi_set`: `dvi_right(width)`
+            self.right(wd);
         }
     }
 
@@ -789,8 +812,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
     /// place in the run's virtual fonts) at the current point: its packet's
     /// commands, between `dvi_vf_init` and `dvi_vf_finish`. Every length of
     /// the packet is a fix word scaled by the font's size (`sqxfw`). Where
-    /// xdvipdfmx stops with a fatal error the rest of the packet is left
-    /// and the page is flagged INCOMPLETE.
+    /// xdvipdfmx stops with a fatal error (a packet cut short, an opcode a
+    /// packet may not hold, a nesting too deep) the rest of the packet is
+    /// left and the run fails, as its does (`Doc::errors`).
     fn vf_set_char(&mut self, ch: i32, vf: usize) {
         let Some(v) = self.doc.fonts.vfs.get(vf).cloned() else {
             return;
@@ -802,8 +826,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         // dvi_vf_init: the state is pushed, w, x, y and z are zero, and
         // the font is the first the VF file defines (none if it has none)
         if self.vf_nest >= VF_NESTING_MAX {
-            self.cur()
-                .unsupported("Virtual fonts nested too deeply!".into(), None);
+            self.doc
+                .errors
+                .push("Virtual fonts nested too deeply!".into());
             return;
         }
         self.stack.push(self.r);
@@ -828,7 +853,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
                     let cmd = match cmd {
                         Ok(c) => c,
                         Err(e) => {
-                            self.cur().unsupported(msg(format_args!("{e}")), None);
+                            self.doc.errors.push(msg(format_args!("{e}")));
                             break;
                         }
                     };

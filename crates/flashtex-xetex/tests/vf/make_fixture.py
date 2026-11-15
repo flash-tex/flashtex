@@ -16,7 +16,13 @@ Writes, next to this file:
 * `fxvfn.vf`, `fxvfn.tfm`: a virtual font whose first font is `fxvf` (a
   virtual font in a virtual font, at another size);
 * `pdftex.map`: the two map entries (no entry for the virtual fonts);
-* `vf.tex`: the INITEX input.
+* `vf.tex`: the INITEX input;
+* `phantom.tex`: links around characters of the virtual fonts with
+  `dvipdfmx:catch_phantom` on and off (every advance, of the virtual
+  font's character and of each character of its packet, goes through
+  dvi.c's `dvi_right`);
+* `fxvfbad.vf`, `fxvfbad.tfm`, `bad.tex`: a packet holding an opcode a
+  packet may not hold, which is fatal in xdvipdfmx.
 
 With `--oracle` (TeX Live 2026 on the path, and tools/xetex-pdfparity's
 Python needs: qpdf and fontTools) it then runs TeX Live's `xetex -ini` on
@@ -26,7 +32,9 @@ xdvipdfmx draws the page with them, and writes what its PDF shows to
 the link's rectangle, in bp. That file is the test's expected data;
 nothing in it is written by hand. It also keeps the page as TeX Live's
 `xetex -no-pdf` writes it, `vf.xdv`, which tools/xetex-pdfparity/test_vf.py
-reads.
+reads; the link rectangles of `phantom.tex` (`expected-phantom.json`); and
+what xdvipdfmx does with `bad.tex` (`expected-bad.json`: its exit status
+as XeTeX reports it, whether a PDF was written, and its message).
 """
 import json
 import os
@@ -246,10 +254,39 @@ TEX = r"""\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
 \end
 """
 
+PHANTOM = r"""\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\pdfpagewidth=612bp \pdfpageheight=792bp
+\baselineskip=60pt \lineskiplimit=-1000pt
+\font\v=fxvf at 12pt
+\font\n=fxvfn
+\def\link#1{\special{pdf:bann <</Type/Annot/Subtype/Link/Border[0 0 0]/A<</S/URI/URI(#1)>>>>}}
+\shipout\vbox{%
+\hbox{\special{dvipdfmx:catch_phantom true}\link{1}\v a\special{pdf:eann}}%
+\hbox{\link{2}\v b\special{pdf:eann}}%
+\hbox{\link{3}\n a\special{pdf:eann}}%
+\hbox{\link{4}\n b\special{pdf:eann}}%
+\hbox{\special{dvipdfmx:catch_phantom true height 20pt depth 5pt}\link{5}\v c\special{pdf:eann}}%
+\hbox{\link{6}\v d\special{pdf:eann}}%
+\hbox{\link{7}\v g\special{pdf:eann}}%
+\hbox{\special{dvipdfmx:catch_phantom false}\link{8}\v a\special{pdf:eann}}}
+\end
+"""
+
+# `a` of fxvfbad: `A`, then `bop`, which vf.c does not expect in a packet
+FXVFBAD = {"a": (0.5, 0.7, 0.0)}
+FXVFBAD_PACKETS = {"a": A + bytes([139]) + B}
+BAD = r"""\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\pdfpagewidth=612bp \pdfpageheight=792bp
+\font\v=fxvfbad
+\shipout\hbox{\v a}
+\end
+"""
+
 MAP = "fxvfbase FxVfBase <fxvfbase.pfb\nfxvfslant FxVfBase \" .25 SlantFont \" <fxvfbase.pfb\n"
 
 FILES = ["fxvfbase.pfb", "fxvfbase.tfm", "fxvfslant.tfm", "fxvf.vf", "fxvf.tfm",
-         "fxvfn.vf", "fxvfn.tfm", "pdftex.map", "vf.tex"]
+         "fxvfn.vf", "fxvfn.tfm", "pdftex.map", "vf.tex", "phantom.tex",
+         "fxvfbad.vf", "fxvfbad.tfm", "bad.tex"]
 
 
 def make():
@@ -258,7 +295,8 @@ def make():
         with open(src, "w") as f:
             f.write(t1_source())
         subprocess.run(["t1asm", "-b", src, os.path.join(HERE, "fxvfbase.pfb")], check=True)
-        for name, chars in (("fxvfbase", BASE), ("fxvfslant", BASE), ("fxvf", FXVF), ("fxvfn", FXVFN)):
+        for name, chars in (("fxvfbase", BASE), ("fxvfslant", BASE), ("fxvf", FXVF), ("fxvfn", FXVFN),
+                            ("fxvfbad", FXVFBAD)):
             p = os.path.join(tmp, name + ".pl")
             with open(p, "w") as f:
                 f.write(pl(chars))
@@ -270,8 +308,11 @@ def make():
         f.write(vf(FXVFN_FONTS, FXVFN_PACKETS, FXVFN))
     with open(os.path.join(HERE, "pdftex.map"), "w") as f:
         f.write(MAP)
-    with open(os.path.join(HERE, "vf.tex"), "w") as f:
-        f.write(TEX)
+    with open(os.path.join(HERE, "fxvfbad.vf"), "wb") as f:
+        f.write(vf(FXVF_FONTS[:1], FXVFBAD_PACKETS, FXVFBAD))
+    for name, text in (("vf.tex", TEX), ("phantom.tex", PHANTOM), ("bad.tex", BAD)):
+        with open(os.path.join(HERE, name), "w") as f:
+            f.write(text)
 
 
 def oracle():
@@ -321,6 +362,25 @@ def oracle():
             "media_box": page.box["MediaBox"],
             "glyphs": glyphs, "rules": rules, "links": links,
         }
+        # the links of phantom.tex
+        r = subprocess.run(["xetex", "-ini", "-interaction=nonstopmode", "phantom.tex"], cwd=tmp, env=env,
+                           capture_output=True, text=True)
+        if not os.path.exists(os.path.join(tmp, "phantom.pdf")):
+            sys.exit("xetex wrote no PDF of phantom.tex:\n" + r.stdout + r.stderr)
+        pm = extract(os.path.join(tmp, "phantom.pdf")).pages[0]
+        phantom = {"oracle": out["oracle"],
+                   "links": [{"uri": a["action"]["URI"], "rect": a["rect"]} for a in pm.annots]}
+        # bad.tex: xdvipdfmx stops
+        r = subprocess.run(["xetex", "-ini", "-interaction=nonstopmode", "bad.tex"], cwd=tmp, env=env,
+                           capture_output=True, text=True)
+        said = [l for l in (r.stdout + r.stderr).splitlines() if "xdvipdfmx" in l or "opcode" in l]
+        bad = {"oracle": out["oracle"], "xetex_exit": r.returncode,
+               "pdf": os.path.exists(os.path.join(tmp, "bad.pdf")), "said": said}
+    for name, data in (("expected-phantom.json", phantom), ("expected-bad.json", bad)):
+        with open(os.path.join(HERE, name), "w") as f:
+            json.dump(data, f, indent=1, sort_keys=True)
+            f.write("\n")
+    print("phantom: %d links; bad: exit %d, pdf %s" % (len(phantom["links"]), bad["xetex_exit"], bad["pdf"]))
     with open(os.path.join(HERE, "expected.json"), "w") as f:
         json.dump(out, f, indent=1, sort_keys=True)
         f.write("\n")

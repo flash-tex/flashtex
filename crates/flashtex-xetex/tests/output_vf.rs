@@ -34,6 +34,10 @@ const FILES: &[&str] = &[
     "fxvfn.tfm",
     "pdftex.map",
     "vf.tex",
+    "phantom.tex",
+    "fxvfbad.vf",
+    "fxvfbad.tfm",
+    "bad.tex",
 ];
 
 /// sp per bp.
@@ -50,26 +54,37 @@ fn run_dir(tag: &str) -> PathBuf {
     d
 }
 
-/// Run the fixture's `vf.tex` and read the display list: the fonts and
-/// the page.
-fn run(tag: &str) -> (Vec<Font>, Page, PathBuf) {
+/// Run INITEX on the fixture's `job`.tex in a directory of its own, with
+/// the display list going to `job`.dl3 there.
+fn engine(tag: &str, job: &str) -> (std::process::Output, PathBuf) {
     let dir = run_dir(tag);
     for f in FILES {
         std::fs::copy(fixture().join(f), dir.join(f)).unwrap();
     }
-    let dl = dir.join("vf.dl3");
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-xetex"))
         .current_dir(&dir)
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env("FLASHTEX_RESOLVER", "cwd")
-        .env("FLASHTEX_DISPLAY_LIST", &dl)
-        .args(["-ini", "-interaction=nonstopmode", "vf.tex"])
+        .env("FLASHTEX_DISPLAY_LIST", dir.join(format!("{job}.dl3")))
+        .args(["-ini", "-interaction=nonstopmode", &format!("{job}.tex")])
         .output()
         .expect("run flashtex-xetex");
-    let log = std::fs::read_to_string(dir.join("vf.log")).unwrap_or_default();
+    (out, dir)
+}
+
+/// Run the fixture's `vf.tex` and read the display list: the fonts and
+/// the page.
+fn run(tag: &str) -> (Vec<Font>, Page, PathBuf) {
+    run_job(tag, "vf")
+}
+
+fn run_job(tag: &str, job: &str) -> (Vec<Font>, Page, PathBuf) {
+    let (out, dir) = engine(tag, job);
+    let dl = dir.join(format!("{job}.dl3"));
+    let log = std::fs::read_to_string(dir.join(format!("{job}.log"))).unwrap_or_default();
     assert!(
-        log.contains("Output written on vf.pdf (1 page"),
+        log.contains(&format!("Output written on {job}.pdf (1 page")),
         "{log}\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -264,4 +279,59 @@ fn the_pdf_has_the_fonts_the_virtual_fonts_name() {
         let base = f.get("BaseFont").and_then(Obj::as_name).unwrap();
         assert!(base.ends_with("FxVfBase"), "{base}");
     }
+}
+
+/// Links around characters of virtual fonts with `dvipdfmx:catch_phantom`
+/// on (the font's size, then a box of 20pt and 5pt) and off: dvi.c's
+/// `dvi_set` ends in `dvi_right(width)` for a virtual font's character,
+/// and so does each character and rule of its packet with the packet's
+/// own font current, so each of those advances widens the link by the
+/// phantom box. The rectangles are xdvipdfmx's (expected-phantom.json).
+#[test]
+fn links_around_virtual_font_characters_take_the_phantom_box() {
+    let (_fonts, p, _dir) = run_job("phantom", "phantom");
+    assert_eq!(p.unsupported, Vec::<String>::new());
+    let expected = std::fs::read_to_string(fixture().join("expected-phantom.json")).unwrap();
+    let expected = Json::parse(&expected).unwrap();
+    let want = expected.get("links").and_then(Json::as_array).unwrap();
+    assert_eq!(want.len(), 8);
+    assert_eq!(p.links.len(), want.len(), "{:?}", p.links);
+    let height = p.pdf_box[3];
+    for (l, w) in p.links.iter().zip(want) {
+        let uri = w.str_field("uri").unwrap();
+        assert_eq!(l.kind, LinkKind::Uri);
+        assert_eq!(l.data, uri.as_bytes());
+        let r = l.rect.map(|v| v as f64 / SP);
+        let got = [r[0], height - r[3], r[2], height - r[1]];
+        let wr = nums(w.get("rect").unwrap());
+        for k in 0..4 {
+            assert!(
+                (got[k] - wr[k]).abs() <= 0.01,
+                "link {uri}: {got:?} against {wr:?}"
+            );
+        }
+    }
+}
+
+/// A packet holding an opcode a packet may not hold (`bop`): xdvipdfmx
+/// stops ("xdvipdfmx:fatal: Unexpected opcode in vf file") and XeTeX's
+/// run ends with status 1 (expected-bad.json). Here the run fails too,
+/// and says why.
+#[test]
+fn a_fatal_error_in_a_packet_fails_the_run() {
+    let expected = std::fs::read_to_string(fixture().join("expected-bad.json")).unwrap();
+    let expected = Json::parse(&expected).unwrap();
+    assert_eq!(expected.int_field("xetex_exit"), Some(1));
+    let said = expected.get("said").and_then(Json::as_array).unwrap();
+    assert!(said
+        .iter()
+        .any(|l| l.as_str() == Some("xdvipdfmx:fatal: Unexpected opcode in vf file")));
+
+    let (out, _dir) = engine("bad", "bad");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("virtual font fxvfbad: Unexpected opcode in vf file: 139"),
+        "{err}"
+    );
 }

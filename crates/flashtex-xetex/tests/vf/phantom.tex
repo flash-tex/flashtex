@@ -1,0 +1,16 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\pdfpagewidth=612bp \pdfpageheight=792bp
+\baselineskip=60pt \lineskiplimit=-1000pt
+\font\v=fxvf at 12pt
+\font\n=fxvfn
+\def\link#1{\special{pdf:bann <</Type/Annot/Subtype/Link/Border[0 0 0]/A<</S/URI/URI(#1)>>>>}}
+\shipout\vbox{%
+\hbox{\special{dvipdfmx:catch_phantom true}\link{1}\v a\special{pdf:eann}}%
+\hbox{\link{2}\v b\special{pdf:eann}}%
+\hbox{\link{3}\n a\special{pdf:eann}}%
+\hbox{\link{4}\n b\special{pdf:eann}}%
+\hbox{\special{dvipdfmx:catch_phantom true height 20pt depth 5pt}\link{5}\v c\special{pdf:eann}}%
+\hbox{\link{6}\v d\special{pdf:eann}}%
+\hbox{\link{7}\v g\special{pdf:eann}}%
+\hbox{\special{dvipdfmx:catch_phantom false}\link{8}\v a\special{pdf:eann}}}
+\end

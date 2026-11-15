@@ -1,7 +1,8 @@
 //! Virtual fonts, as xdvipdfmx reads and runs them: a port of TeX Live
-//! 2026's dvipdfm-x `vf.c` (the VF file and its packets), the TFM half of
-//! `tfm.c` (the fix-word widths, heights and depths a packet's characters
-//! advance by) and `numbers.c`'s `sqxfw` (the scaling of every fix word).
+//! 2026's dvipdfm-x 20260317 (third_party/dvipdfmx has the pin): `vf.c`
+//! (the VF file and its packets), the TFM half of `tfm.c` (the fix-word
+//! widths, heights and depths a packet's characters advance by) and
+//! `numbers.c`'s `sqxfw` (the scaling of every fix word).
 //!
 //! A TFM font of the XDV stream with no font map entry is looked for as a
 //! virtual font (`dvi_locate_font`, [`super::fonts::Fonts::locate`]). Each
@@ -13,6 +14,15 @@
 //! This module is the file formats and the arithmetic only, with no state
 //! of a run, so that it is tested on bytes alone. Where xdvipdfmx stops
 //! with a fatal `ERROR`, these functions return an `Err` with its message.
+//!
+//! **What a fatal error of xdvipdfmx's becomes** (it writes no PDF). One
+//! met while a packet runs (a packet cut short, an opcode a packet may
+//! not hold, a character below its font's first, no font, a nesting too
+//! deep) fails the run, as its does: `Doc::errors`, the rule of `out/` for
+//! the C's fatal errors. A font that cannot be had at all (a VF or TFM
+//! file that cannot be read) is `out/fonts.rs`'s rule for every font that
+//! cannot be drawn, with or without a map entry: a resource with a
+//! `problem`, and the pages that use it flagged INCOMPLETE.
 //!
 //! Not ported: Omega's OFM metrics and OVF files (`tfm.c`'s `read_ofm`,
 //! the `kpse_ovf_format` search) and pTeX's JFM metrics; XeTeX loads
