@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct FlashTeXPadApp: App {
     @StateObject private var model = PadModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // UI tests: start from the default canvas gestures and a closed
@@ -26,9 +27,7 @@ struct FlashTeXPadApp: App {
                     // Auto-reconnect to the last paired Mac (Keychain pairing; remembered
                     // address, then Bonjour by fingerprint). Skipped when a test pairs
                     // explicitly or asks for a quiet launch.
-                    if !args.contains("-flashtexpad-test-mac"), !args.contains("-flashtexpad-no-autoreconnect"),
-                       ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-                       model.pairedMac != nil {
+                    if Self.reconnectsByItself, model.pairedMac != nil {
                         Task { await model.autoReconnect() }
                     }
                     if let i = args.firstIndex(of: "-flashtexpad-open"), i + 1 < args.count {
@@ -39,6 +38,28 @@ struct FlashTeXPadApp: App {
                         }
                     }
                 }
+                // Back from another app: reconnect a link iOS dropped while the
+                // app was suspended; going away: finish the capture writes.
+                .onChange(of: scenePhase) { _, phase in Self.sceneChanged(to: phase, model: model) }
         }
+    }
+
+    /// Background: the grant is taken here, synchronously; active: reconnect.
+    @MainActor static func sceneChanged(to phase: ScenePhase, model: PadModel) {
+        switch phase {
+        case .background:
+            model.enteredBackground()
+        case .active where reconnectsByItself:
+            Task { await model.scenePhaseChanged(to: .active) }
+        default:
+            break
+        }
+    }
+
+    /// Not when a test pairs explicitly, asks for a quiet launch, or hosts XCTest.
+    static var reconnectsByItself: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        return !args.contains("-flashtexpad-test-mac") && !args.contains("-flashtexpad-no-autoreconnect")
+            && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
     }
 }

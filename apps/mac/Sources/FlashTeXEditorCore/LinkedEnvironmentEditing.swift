@@ -83,6 +83,34 @@ public enum LinkedEnvironmentEditing {
         public func covers(_ edit: NSRange) -> Bool {
             edit.location >= active.location && NSMaxRange(edit) <= NSMaxRange(active)
         }
+
+        /// The session once its partner was rewritten to `newName` (`partnerEdit`
+        /// applied to a buffer of `now` units, before the rewrite): both spans
+        /// read `newName`, in the coordinates after the rewrite. The editor
+        /// carries it to the next keystroke instead of scanning the buffer
+        /// again (`continuesRename(in:)` checks it still describes the text).
+        public func renamed(to newName: String, in now: Int) -> LinkedSession {
+            let s = advanced(to: now)
+            let newLength = (newName as NSString).length
+            let delta = newLength - s.partner.length
+            var out = LinkedSession(active: s.active, partner: NSRange(location: s.partner.location, length: newLength),
+                                    name: newName, length: now + delta)
+            if s.partner.location < s.active.location { out.active.location += delta }
+            return out
+        }
+
+        /// Whether `text` still shows this session: its length, and both name
+        /// spans braced and reading `name`. A renamed-to verbatim-like name
+        /// changes how the text after it lexes, so it never carries.
+        public func continuesRename(in text: NSString) -> Bool {
+            guard text.length == length, !SyntaxHighlighter.verbatimEnvironments.contains(name), name != "comment" else { return false }
+            for r in [active, partner] {
+                guard r.location >= 1, NSMaxRange(r) < text.length,
+                      text.character(at: r.location - 1) == 0x7B, text.character(at: NSMaxRange(r)) == 0x7D,
+                      text.substring(with: r) == name else { return false }
+            }
+            return true
+        }
     }
 
     /// Starts (or, during an IME composition, continues) a linked session for
@@ -141,6 +169,44 @@ public enum LinkedEnvironmentEditing {
     /// True when `caret` sits in (or at the end of) the `{name}` of `\begin` /
     /// `\end` on its line. O(line), no document pair scan: ordinary typing
     /// next to `\end{document}` must not pay the lexical scan.
+    /// False only when the name around `caret` cannot have a partner: it is
+    /// braced on the caret's line (`{name}`, no other brace inside) and
+    /// `{name}` occurs nowhere else in `text`. A partner `\begin{name}` or
+    /// `\end{name}` would contain that literal, so `linkedNames` would answer
+    /// nil anyway; this answers it with a literal search instead of the
+    /// whole-buffer lex. Typing a new environment's name (`\begin{itemi…`,
+    /// no `\end` yet) is the case it is for: every keystroke used to lex the
+    /// buffer to find no pair. A name never spans lines, so a caret with no
+    /// `{` before it or no `}` after it on its line is on no name; a brace
+    /// inside the group (`{a{b}c}`) leaves it unsure: true.
+    public static func mayLink(at caret: Int, in text: NSString) -> Bool {
+        let n = text.length
+        guard caret >= 0, caret <= n else { return true }
+        var open = caret - 1
+        while open >= 0 {
+            let c = text.character(at: open)
+            if c == 0x7B { break }
+            if c == 0x0A { return false }
+            if c == 0x7D { return true }
+            open -= 1
+        }
+        guard open >= 0 else { return false }
+        var close = caret
+        while close < n {
+            let c = text.character(at: close)
+            if c == 0x7D { break }
+            if c == 0x0A { return false }
+            if c == 0x7B { return true }
+            close += 1
+        }
+        guard close < n else { return false } // unclosed on its line: not a use
+        let braced = text.substring(with: NSRange(location: open, length: close + 1 - open))
+        let before = text.range(of: braced, options: .literal, range: NSRange(location: 0, length: open))
+        if before.location != NSNotFound { return true }
+        let after = text.range(of: braced, options: .literal, range: NSRange(location: close + 1, length: n - close - 1))
+        return after.location != NSNotFound
+    }
+
     public static func isOnEnvironmentName(in text: NSString, at caret: Int) -> Bool {
         guard text.length > 0 else { return false }
         let i = min(max(0, caret), text.length)

@@ -1119,6 +1119,20 @@ impl<'a, E: Env> Interp<'a, E> {
                         if !self.forms.contains(&n) {
                             self.forms.push(n);
                         }
+                        // The client draws the form in the last told
+                        // colours and mode: tell the pending ones first
+                        // (unless the check above already said they
+                        // cannot be told: no second report).
+                        if self.gs.fill.n != 0 {
+                            self.tell_fill();
+                        }
+                        if self.gs.stroke.n != 0 {
+                            self.tell_stroke();
+                        }
+                        if self.gs.tr != self.gs.told_tr && self.gs.tr <= 3 {
+                            self.page.items.push(Item::TextRender(self.gs.tr));
+                            self.gs.told_tr = self.gs.tr;
+                        }
                         self.page.items.push(Item::Form { id: n, matrix: mi });
                     } else {
                         let what = format!("Do /{}", String::from_utf8_lossy(nm));
@@ -1742,6 +1756,85 @@ mod tests {
         assert_eq!(
             at("/Pattern cs /P1 scn").1,
             vec!["a form drawn in a colour space v3 cannot express".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_form_tells_the_state_it_is_drawn_in() {
+        // The client draws the form in the last TOLD colours and text
+        // render mode, so the page tells the pending ones before each
+        // FORM (the form itself sets no colour: pdfTeX writes none at a
+        // form's start; see a_form_drawn_in_another_state).
+        let told = |s: &[u8]| {
+            let out = interpret(
+                &mut TestEnv,
+                StreamKind::Page,
+                0,
+                s,
+                fx("792"),
+                Mat::IDENTITY,
+                &[],
+            );
+            assert!(out.page.unsupported.is_empty(), "{s:?}");
+            out.page
+                .items
+                .iter()
+                .filter(|i| {
+                    matches!(
+                        i,
+                        Item::FillColor(_)
+                            | Item::StrokeColor(_)
+                            | Item::TextRender(_)
+                            | Item::Form { .. }
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let form = |id: u32| Item::Form { id, matrix: 0 };
+        let red = Item::FillColor(Color(vec![1.0, 0.0, 0.0]));
+        assert_eq!(told(b"1 0 0 rg /Fm1 Do"), vec![red.clone(), form(1)]);
+        assert_eq!(
+            told(b"0 0 1 RG /Fm1 Do"),
+            vec![Item::StrokeColor(Color(vec![0.0, 0.0, 1.0])), form(1)]
+        );
+        assert_eq!(told(b"1 Tr /Fm1 Do"), vec![Item::TextRender(1), form(1)]);
+        // The second form re-tells the new colour ...
+        assert_eq!(
+            told(b"1 0 0 rg /Fm1 Do 0 0 1 rg /Fm1 Do"),
+            vec![
+                red.clone(),
+                form(1),
+                Item::FillColor(Color(vec![0.0, 0.0, 1.0])),
+                form(1),
+            ]
+        );
+        // ... while a form whose state is already told adds no items.
+        assert_eq!(
+            told(b"1 0 0 rg /Fm1 Do /Fm1 Do"),
+            vec![red, form(1), form(1)]
+        );
+        // An unsupported fill (reported once, never told) does not keep a
+        // valid pending stroke colour from being told before the form.
+        let out = interpret(
+            &mut TestEnv,
+            StreamKind::Page,
+            0,
+            b"/Pattern cs /P1 scn 0 0 1 RG /Fm1 Do",
+            fx("792"),
+            Mat::IDENTITY,
+            &[],
+        );
+        let strokes: Vec<_> = out
+            .page
+            .items
+            .iter()
+            .filter(|i| matches!(i, Item::StrokeColor(_) | Item::Form { .. }))
+            .cloned()
+            .collect();
+        assert_eq!(
+            strokes,
+            vec![Item::StrokeColor(Color(vec![0.0, 0.0, 1.0])), form(1)]
         );
     }
 

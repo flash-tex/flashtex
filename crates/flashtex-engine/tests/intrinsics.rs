@@ -29,11 +29,20 @@ struct Run {
 
 /// Run `\input t` in INITEX with the intrinsics in `mode`.
 fn run(dir: &Path, mode: &str, names: &str) -> Run {
+    run_in(dir, mode, names, false)
+}
+
+/// [`run`], in e-TeX mode with `etex`.
+fn run_in(dir: &Path, mode: &str, names: &str, etex: bool) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .args(["-ini", "\\input t"])
+        .args(if etex {
+            &["-ini", "-etex", "\\input t"][..]
+        } else {
+            &["-ini", "\\input t"][..]
+        })
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")
@@ -71,11 +80,16 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_in(tag, src, false)
+}
+
+/// [`check`], in e-TeX mode with `etex`.
+fn check_in(tag: &str, src: &str, etex: bool) -> String {
     let d = scratch(tag);
     std::fs::write(d.join("t.tex"), src).unwrap();
-    let off = run(&d, "off", "hook");
-    let on = run(&d, "on", "hook");
-    let verify = run(&d, "verify", "hook");
+    let off = run_in(&d, "off", "hook", etex);
+    let on = run_in(&d, "on", "hook", etex);
+    let verify = run_in(&d, "verify", "hook", etex);
     assert_eq!(off.log, on.log, "{tag}: log with intrinsics on differs");
     assert_eq!(
         off.log, verify.log,
@@ -157,6 +171,56 @@ fn tracing_falls_back() {
     assert_eq!(stat(&s, "Tracing"), 1, "{s}");
 }
 
+/// In `error_stop_mode` an error answered with an empty line changes no
+/// count (`error` returns before `incr(error_count)`), `history` is already
+/// `error_message_issued` after an earlier error, and before the log is
+/// open (the first line, not `\input`) it writes no log and leaves the
+/// terminal at the start of a line. Before, the recording took such a run
+/// for pure and the replays dropped two of the three `Invalid code` errors.
+#[test]
+fn an_error_answered_at_the_terminal_is_not_pure() {
+    let d = scratch("err");
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let errors = |mode: &str| {
+        let stats = d.join(format!("stats-{mode}.txt"));
+        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .args([
+                "-ini",
+                "\\catcode`\\{=1 \\catcode`\\}=2 \\undefined\
+                 \\def\\hook{\\catcode1=300 }\\hook\\hook\\hook\\end",
+            ])
+            .current_dir(&d)
+            .env("FLASHTEX_POOL", &pool)
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FORCE_SOURCE_DATE", "1")
+            .env("FLASHTEX_INTRINSICS", mode)
+            .env("FLASHTEX_INTRINSIC_NAMES", "hook")
+            .env("FLASHTEX_INTRINSICS_STATS", &stats)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run flashtex-initex");
+        use std::io::Write;
+        // an empty answer to each prompt (EOF at a prompt is a fatal error)
+        let _ = child.stdin.take().unwrap().write_all(b"\n\n\n\n\n\n");
+        let out = child.wait_with_output().unwrap();
+        let term = String::from_utf8_lossy(&out.stdout).into_owned();
+        let s = std::fs::read_to_string(&stats).unwrap_or_default();
+        (term.matches("! Invalid code").count(), s)
+    };
+    let (off, _) = errors("off");
+    assert_eq!(off, 3);
+    let (on, s) = errors("on");
+    assert_eq!(on, 3, "{s}");
+    assert_eq!(stat(&s, "replays"), 0, "{s}");
+    assert_eq!(stat(&s, "Error"), 1, "{s}");
+    let (verify, s) = errors("verify");
+    assert_eq!(verify, 3, "{s}");
+    assert_eq!(stat(&s, "verify_differences"), 0, "{s}");
+}
+
 #[test]
 fn impure_macro_is_not_replayed() {
     // \message writes to the log; \hbox typesets; \aftergroup leaves the group
@@ -215,4 +279,199 @@ fn verify_all_on_the_test_file() {
     assert_eq!(off.log, all.log);
     assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
     assert!(stat(&all.stats, "verified") >= 2, "{}", all.stats);
+}
+
+/// Both paths make a `\def`'s list from the same free node, so the `eqtb`
+/// entry they leave is the same word and only the tokens at that node can
+/// tell them apart. A replay that ends each list it makes with another
+/// token (`FLASHTEX_INTRINSICS_FAULT=token`) must be a difference in every
+/// verified call; before, the verifier compared such a list only by its
+/// reference count and passed both calls.
+#[test]
+fn verify_compares_a_list_at_the_same_node_by_its_tokens() {
+    let d = scratch("samenode");
+    std::fs::write(
+        d.join("t.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\\def\\a{A}\\def\\b{B}\
+         \\def\\hook{\\def\\y{\\a\\b}}\n\
+         \\hook\\hook\\message{[\\meaning\\y]}\\hook\\message{[\\meaning\\y]}\\end\n",
+    )
+    .unwrap();
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let stats = d.join("stats-fault.txt");
+    let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args(["-ini", "\\input t"])
+        .current_dir(&d)
+        .env("FLASHTEX_POOL", pool)
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .env("FLASHTEX_INTRINSICS", "verify")
+        .env("FLASHTEX_INTRINSIC_NAMES", "hook")
+        .env("FLASHTEX_INTRINSICS_FAULT", "token")
+        .env("FLASHTEX_INTRINSICS_STATS", &stats)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run flashtex-initex");
+    assert!(out.status.code().is_some(), "{out:?}");
+    let s = std::fs::read_to_string(&stats).unwrap();
+    assert_eq!(stat(&s, "verified"), 2, "{s}");
+    assert_eq!(stat(&s, "verify_differences"), 2, "{s}");
+    assert!(s.contains("same node, tokens"), "{s}");
+}
+
+/// The `\tracingstats` memory lines of a log (`Memory usage before: ...`).
+fn memory_lines(log: &str) -> Vec<&str> {
+    log.lines()
+        .filter(|l| l.starts_with("Memory usage"))
+        .collect()
+}
+
+/// #2039: a recording kept the lists it read and defined in `mem` (pinned),
+/// so at every shipout `dyn_used` (the one-word nodes in use, the second
+/// number of each pair) was higher than pdfTeX's by their size. With the
+/// lists copied out of `mem`, the memory lines are TeX Live's pdfTeX's at
+/// every shipout while the hook is recorded, replayed, redefined around and
+/// recorded again.
+#[test]
+fn memory_usage_is_pdftex_s_while_replaying() {
+    let Some(texbin) = flashtex_engine::resolver::find_texlive_bin() else {
+        common::no_texlive();
+        return;
+    };
+    let d = scratch("mem");
+    let ship = "\\shipout\\hbox{}";
+    let src = format!(
+        "{PRELUDE}\\tracingstats=2 \\hook{ship}\\hook\\show{ship}\\hook\\hook\\show{ship}\
+         \\def\\a{{AA}}\\hook\\show{ship}\\hook\\hook\\show{ship}\\def\\w{{gone}}\\let\\z\\relax{ship}\
+         \\hook\\hook\\show{ship}\\end\n"
+    );
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let on = run(&d, "on", "hook");
+    assert!(stat(&on.stats, "replays") >= 4, "{}", on.stats);
+    let tex = d.join("tex");
+    std::fs::create_dir_all(&tex).unwrap();
+    std::fs::write(tex.join("t.tex"), &src).unwrap();
+    let out = Command::new(texbin.join("pdftex"))
+        .args(["-ini", "\\input t"])
+        .current_dir(&tex)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run pdftex");
+    assert!(out.status.code().is_some(), "pdftex: {out:?}");
+    let reference = std::fs::read_to_string(tex.join("t.log")).unwrap();
+    let want = memory_lines(&reference);
+    assert_eq!(want.len(), 7, "pdftex's log:\n{reference}");
+    assert_eq!(
+        memory_lines(&on.log),
+        want,
+        "the memory lines differ from pdftex's"
+    );
+}
+
+/// `\globaldefs<0` turns every global assignment local (tex.web §1214): a
+/// replay of the hook's `\global` and `\gdef` operations would be wrong, so
+/// a negative value, like a positive one, is a precondition failure. Inside
+/// the group the hook's global assignments are local, and once the group
+/// ends `\n` and `\last` are again what was set before it.
+#[test]
+fn negative_globaldefs_falls_back() {
+    let s = check(
+        "pre-neg",
+        &format!(
+            "{PRELUDE}\\hook\\hook\\show\\n=99 \\def\\last{{X}}\\show\n\
+             {{\\globaldefs=-1 \\hook\\show\\hook\\show\\hook\\show}}\\show\n\
+             \\hook\\show\\n=98 \\def\\last{{Y}}\\globaldefs=-1 \\hook\\show\\globaldefs=0 \\show\\end\n"
+        ),
+    );
+    assert_eq!(stat(&s, "GlobalDefs"), 4, "{s}");
+}
+
+/// Each tracing parameter on its own stops a replay: the normal path would
+/// print what it traces (here `\tracingifs` the hook's `\ifx`, and
+/// `\tracingassigns` its assignments) and a replay prints nothing. In
+/// e-TeX mode: four of them are e-TeX's.
+#[test]
+fn each_tracing_parameter_falls_back_alone() {
+    for p in [
+        "tracingmacros",
+        "tracingcommands",
+        "tracingassigns",
+        "tracingrestores",
+        "tracinggroups",
+        "tracingifs",
+    ] {
+        let s = check_in(
+            &format!("trace-{p}"),
+            &format!("{PRELUDE}\\hook\\hook\\{p}=1 \\hook\\show\\{p}=0 \\hook\\show\\end\n"),
+            true,
+        );
+        assert_eq!(stat(&s, "Tracing"), 1, "{p}: {s}");
+    }
+}
+
+/// A dependency redefined globally (`\gdef`, `geq_define`) fails the guard
+/// as a local redefinition does (`eq_define`).
+#[test]
+fn a_global_redefinition_of_a_dependency_falls_back() {
+    let s = check(
+        "gredef",
+        &format!(
+            "{PRELUDE}\\hook\\hook\\show\n\\gdef\\a{{AA}}\\hook\\show\\hook\\show\n\
+             {{\\global\\let\\b=\\a}}\\hook\\show\\end\n"
+        ),
+    );
+    assert!(stat(&s, "Deps") >= 2, "{s}");
+}
+
+/// `\partokenname` (pdfTeX 1.40.24) changes the token a non-`\long`
+/// macro's argument may not hold. Recorded while it is `\x`, the hook
+/// passes `\par` to such a macro; once it is `\par` again the normal path
+/// stops with "Runaway argument", which a replay would skip.
+#[test]
+fn a_changed_par_token_falls_back() {
+    let s = check(
+        "partoken",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\foo#1{\\def\\got{#1}}\\def\\hook{\\foo{\\par}}\n\
+         \\partokenname\\x \\hook\\hook\\hook\\message{[\\meaning\\got]}\n\
+         \\partokenname\\par \\hook\\message{[\\meaning\\got]}\\end\n",
+    );
+    assert!(stat(&s, "replays") >= 1, "{s}");
+    assert_eq!(stat(&s, "ParToken"), 1, "{s}");
+}
+
+/// `\escapechar` is the first integer pair a recording keeps (the guard
+/// checks it with the macro's own meaning): a hook that prints a control
+/// sequence's name gives another name once `\escapechar` changes.
+#[test]
+fn a_changed_escapechar_falls_back() {
+    let s = check(
+        "escape",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\hook{\\edef\\w{\\string\\relax}}\n\
+         \\hook\\hook\\hook\\message{[\\meaning\\w]}\n\
+         \\escapechar=`\\/ \\hook\\message{[\\meaning\\w]}\\hook\\message{[\\meaning\\w]}\\end\n",
+    );
+    assert!(stat(&s, "replays") >= 2, "{s}");
+    assert!(stat(&s, "WordDeps") >= 1, "{s}");
+}
+
+/// `align_state` is part of the guard: recorded in a paragraph, a hook
+/// whose body holds an alignment tab is called again in an `\halign` cell,
+/// where the normal path's `&` ends the cell (tex.web §342) and a replay
+/// would only `\let`.
+#[test]
+fn a_changed_align_state_falls_back() {
+    let s = check(
+        "align",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\&=4 \\scrollmode\n\
+         \\def\\hook{\\let\\z=&}\n\
+         \\indent\\hook\\hook\\hook\\message{[\\meaning\\z]}\\par\n\
+         \\halign{#\\cr\\relax\\hook\\message{[\\meaning\\z]}\\cr}\\message{[\\meaning\\z]}\\end\n",
+    );
+    assert!(stat(&s, "replays") >= 1, "{s}");
+    assert!(stat(&s, "Align") >= 1, "{s}");
 }

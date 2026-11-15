@@ -27,9 +27,9 @@ use flashtex_display_list::page::{
 };
 use flashtex_display_list::resource::{Font as FontRes, ImageData, Sources};
 use flashtex_display_list::sha256::{hex, sha256};
-use typst::layout::{Abs, Frame, FrameItem, GroupItem, Point, Size, Transform};
+use typst::layout::{Abs, Frame, FrameItem, FrameKind, GroupItem, Point, Size, Transform};
 use typst::model::Destination;
-use typst::syntax::{FileId, Span};
+use typst::syntax::{FileId, Span, SpanKind, SyntaxNode};
 use typst::text::{FontInstance, TextItem};
 use typst::visualize::{
     Color as TColor, Curve, CurveItem, FillRule, FixedStroke, Geometry, ImageKind, LineCap,
@@ -148,11 +148,33 @@ pub struct Tables {
     span_lines: Vec<Option<(u32, u32)>>,
     /// Per-span resolution cache for this compile.
     span_cache: HashMap<Span, Option<SpanPos>>,
-    /// Image ids by key (spec §5.2, §11.5); id - 1 → key.
+    /// Per file, this compile: its root's children's span numbers and start
+    /// offsets ([`span_range`]).
+    span_index: HashMap<FileId, RootIndex>,
+    /// Image ids by key (spec §5.2, §11.5); id - 1 → key (zero: free).
     images: HashMap<[u8; 32], u32>,
     image_keys: Vec<[u8; 32]>,
+    /// Ids no page the client holds uses any more, to rebind (§5: a later
+    /// IMAGE for an id rebinds it, so the client drops the old one).
+    free_image_ids: Vec<u32>,
+    /// Page index → the image ids its last conversion uses.
+    page_images: HashMap<usize, Vec<u32>>,
     /// IMAGE_DATA bytes sent in the current compile (the budget).
     image_bytes: u64,
+    /// Island image ids by the island page's Typst hash (E5).
+    islands: HashMap<u128, u32>,
+}
+
+/// One frame on the way from the page's frame to the item being walked:
+/// its size and kind, where the current item sits in it, and the group
+/// that holds it (`None` for the page's own frame). A PDF island rebuilds
+/// this chain around its one item, so that typst-pdf composes the same
+/// transforms in the same order (E5).
+struct Chain {
+    size: Size,
+    kind: FrameKind,
+    pos: Point,
+    group: Option<(Transform, Option<Curve>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -183,9 +205,56 @@ impl Tables {
         self.programs.len()
     }
 
+    /// Image ids bound now (images and islands the client may hold).
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+
+    /// The document has `pages` pages now: forget the image ids that no
+    /// page the client holds uses (spec §5), so that a later image rebinds
+    /// one and the client frees the old resource. Only small maps are kept
+    /// on the host (a key and an id per image); what this bounds is the
+    /// client's store and the island cache, which would otherwise grow with
+    /// every reflow (an island's key includes its place on the page).
+    pub fn release_images(&mut self, pages: usize) {
+        self.page_images.retain(|&i, _| i < pages);
+        let used: std::collections::HashSet<u32> =
+            self.page_images.values().flatten().copied().collect();
+        let mut freed = vec![];
+        self.images.retain(|_, id| {
+            let keep = used.contains(id);
+            if !keep {
+                freed.push(*id);
+            }
+            keep
+        });
+        self.islands.retain(|_, id| used.contains(id));
+        for id in freed {
+            self.image_keys[id as usize - 1] = [0; 32];
+            self.free_image_ids.push(id);
+        }
+    }
+
+    /// A new id for an image with `key`: a released one first.
+    fn bind_image(&mut self, key: [u8; 32]) -> u32 {
+        let id = match self.free_image_ids.pop() {
+            Some(id) => {
+                self.image_keys[id as usize - 1] = key;
+                id
+            }
+            None => {
+                self.image_keys.push(key);
+                self.image_keys.len() as u32
+            }
+        };
+        self.images.insert(key, id);
+        id
+    }
+
     /// A new compile begins: spans may have moved.
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
+        self.span_index.clear();
         self.program_bytes = 0;
         self.image_bytes = 0;
     }
@@ -229,6 +298,10 @@ struct Walker<'a, 'w> {
     world: &'a HostWorld<'w>,
     doc: &'a PagedDocument,
     tables: &'a mut Tables,
+    /// The Typst page being converted (its fill, bleed, frame).
+    tpage: &'a typst_layout::Page,
+    chain: Vec<Chain>,
+    pending_group: Option<(Transform, Option<Curve>)>,
     caps: ClientCaps,
     have_fonts: &'a [String],
     /// The first error that stops the compile (the font-id limit).
@@ -253,6 +326,8 @@ struct Walker<'a, 'w> {
     image_at: usize,
     image_op_gap: bool,
     images_out: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Image ids this page uses.
+    used_images: Vec<u32>,
     page: Page,
     matrices: HashMap<[u64; 6], u32>,
     unsupported: HashMap<String, u32>,
@@ -306,6 +381,9 @@ pub fn page(
         world,
         doc,
         tables,
+        tpage: tp,
+        chain: Vec::new(),
+        pending_group: None,
         caps,
         have_fonts,
         h,
@@ -324,6 +402,7 @@ pub fn page(
         image_at: 0,
         image_op_gap: false,
         images_out: Vec::new(),
+        used_images: Vec::new(),
         sources_out: Sources::default(),
         fill: None,
         stroke: None,
@@ -339,7 +418,7 @@ pub fn page(
     };
     if let Some(fill) = tp.fill_or_transparent() {
         let shape = Geometry::Rect(size).filled(fill);
-        wk.shape(&shape, Span::detached(), Transform::identity());
+        wk.shape(&shape, Span::detached(), Transform::identity(), None);
     }
     let ts = Transform::translate(tp.bleed.left, tp.bleed.top);
     wk.frame(&tp.frame, ts);
@@ -402,6 +481,8 @@ pub fn page(
         ]);
         page.meta = Some(meta.to_string());
     }
+    let used = std::mem::take(&mut wk.used_images);
+    wk.tables.page_images.insert(index, used);
     let font_list = &wk.tables.font_list;
     let image_keys = &wk.tables.image_keys;
     page.hash = page.content_hash(
@@ -434,12 +515,22 @@ pub fn page(
 
 impl<'a> Walker<'a, '_> {
     fn frame(&mut self, frame: &Frame, ts: Transform) {
+        let group = self.pending_group.take();
+        self.chain.push(Chain {
+            size: frame.size(),
+            kind: frame.kind(),
+            pos: Point::zero(),
+            group,
+        });
         for (pos, item) in frame.items() {
+            if let Some(c) = self.chain.last_mut() {
+                c.pos = *pos;
+            }
             let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
             match item {
                 FrameItem::Group(g) => self.group(g, ts),
-                FrameItem::Text(t) => self.text(t, ts),
-                FrameItem::Shape(s, span) => self.shape(s, *span, ts),
+                FrameItem::Text(t) => self.text(t, ts, item),
+                FrameItem::Shape(s, span) => self.shape(s, *span, ts, Some(item)),
                 FrameItem::Image(image, size, span) => {
                     // An SVG image's text is drawn inline in the PDF: the
                     // next run may start after glyphs of the image's own.
@@ -450,11 +541,11 @@ impl<'a> Walker<'a, '_> {
                         ImageKind::Raster(r) => self.raster(r, *size, ts),
                         ImageKind::Svg(_) => {
                             self.image_op_gap = true;
-                            self.unsupported("SVG image (display-list-v3.3 E5 island)");
+                            self.island(Some(item), "SVG image");
                         }
                         ImageKind::Pdf(_) => {
                             self.image_op_gap = true;
-                            self.unsupported("PDF image (display-list-v3.3 E5 island)");
+                            self.island(Some(item), "PDF image");
                         }
                     }
                 }
@@ -462,6 +553,154 @@ impl<'a> Walker<'a, '_> {
                 FrameItem::Tag(_) => {}
             }
         }
+        self.chain.pop();
+    }
+
+    /// The client draws PDF islands (`image-data`, spec §11.5).
+    fn islands(&self) -> bool {
+        self.caps.minor >= 3 && self.caps.image_data
+    }
+
+    /// A PDF island (E5, spec §11.5) for `item`, or, with `None`, for the
+    /// page's fill: a one-page PDF of the page's size that typst-pdf
+    /// exports with that item alone, inside the same chain of frames,
+    /// groups, transforms and clips as on the page, so that its content
+    /// stream carries the page's own numbers; drawn by an IMAGE item with
+    /// the identity matrix (the island's page space is the page's).
+    /// Without `image-data` the page is INCOMPLETE. Returns whether it is
+    /// drawn.
+    fn island(&mut self, item: Option<&FrameItem>, what: &str) -> bool {
+        if !self.islands() {
+            let m = format!("{what} (display-list-v3.3 E5 island: accept image-data)");
+            self.unsupported(&m);
+            return false;
+        }
+        let tp = self.tpage;
+        let page = match item {
+            None => typst_layout::Page {
+                frame: Frame::new(tp.frame.size(), tp.frame.kind()),
+                bleed: tp.bleed,
+                fill: tp.fill.clone(),
+                numbering: None,
+                supplement: Default::default(),
+                number: tp.number,
+            },
+            Some(item) => {
+                let mut child = item.clone();
+                let mut page_frame = None;
+                for lvl in self.chain.iter().rev() {
+                    let mut f = Frame::new(lvl.size, lvl.kind);
+                    f.push(lvl.pos, child);
+                    match &lvl.group {
+                        Some((t, clip)) => {
+                            let mut g = GroupItem::new(f);
+                            g.transform = *t;
+                            g.clip = clip.clone();
+                            child = FrameItem::Group(g);
+                        }
+                        None => {
+                            page_frame = Some(f);
+                            break;
+                        }
+                    }
+                }
+                let Some(frame) = page_frame else {
+                    let m = format!("{what}: no page frame for its island");
+                    self.unsupported(&m);
+                    return false;
+                };
+                typst_layout::Page {
+                    frame,
+                    bleed: tp.bleed,
+                    fill: typst::foundations::Smart::Custom(None),
+                    numbering: None,
+                    supplement: Default::default(),
+                    number: tp.number,
+                }
+            }
+        };
+        let h = typst::utils::hash128(&page);
+        if let Some(&id) = self.tables.islands.get(&h) {
+            self.gate("PDF island (display-list-v3.3 E5)");
+            self.used_images.push(id);
+            self.page.items.push(Item::Image { id, matrix: 0 });
+            return true;
+        }
+        let doc = PagedDocument::new(
+            typst::ecow::eco_vec![page],
+            typst::model::DocumentInfo::default(),
+        );
+        let opts = typst_pdf::PdfOptions {
+            tagged: false,
+            ..Default::default()
+        };
+        let t_island = std::time::Instant::now();
+        let exported = typst_pdf::pdf(&doc, &opts);
+        island_stats_add(
+            t_island.elapsed().as_secs_f64() * 1e3,
+            exported.as_ref().map_or(0, |b| b.len()),
+        );
+        let bytes = match exported {
+            Ok(b) => b,
+            Err(errs) => {
+                let m: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+                let m = format!("{what}: its island cannot be exported: {}", m.join("; "));
+                self.unsupported(&m);
+                return false;
+            }
+        };
+        // The image budget and the frame limit, as for raster images.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let n = bytes.len() as u64;
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        if n > frame_room || self.tables.image_bytes.saturating_add(n) > budget {
+            self.unsupported("image data over the per-compile budget (--image-budget)");
+            return false;
+        }
+        self.tables.image_bytes += n;
+        self.gate("PDF island (display-list-v3.3 E5)");
+        let b = self.page.pdf_box;
+        let info = vec![
+            ("type".to_string(), Json::Str("pdf".into())),
+            ("island".into(), Json::Bool(true)),
+            ("data".into(), Json::Bool(true)),
+            ("page".into(), Json::Int(1)),
+            ("page_box".into(), Json::Str("media".into())),
+            ("width".into(), Json::Num(b[2] - b[0])),
+            ("height".into(), Json::Num(b[3] - b[1])),
+            ("orig_x".into(), Json::Num(b[0])),
+            ("orig_y".into(), Json::Num(b[1])),
+        ];
+        let id = self.register_image(info, vec![bytes]);
+        self.tables.islands.insert(h, id);
+        self.used_images.push(id);
+        self.page.items.push(Item::Image { id, matrix: 0 });
+        true
+    }
+
+    /// The id of the image `info` with `parts` (spec §11.5), queueing its
+    /// IMAGE and IMAGE_DATA when the connection does not hold it yet.
+    fn register_image(&mut self, mut info: Vec<(String, Json)>, parts: Vec<Vec<u8>>) -> u32 {
+        let mut h = flashtex_display_list::sha256::Sha256::new();
+        h.update(b"display-list-v3 image\0");
+        h.update(Json::Obj(info.clone()).to_string().as_bytes());
+        for p in &parts {
+            h.update(&sha256(p));
+        }
+        let key = h.finish();
+        if let Some(&id) = self.tables.images.get(&key) {
+            return id;
+        }
+        let id = self.tables.bind_image(key);
+        let mut kv = vec![
+            ("id".to_string(), Json::Int(id as i64)),
+            ("key".into(), Json::Str(hex(&key))),
+        ];
+        kv.append(&mut info);
+        let body = ImageData { id, parts }.encode();
+        self.images_out
+            .push((Json::Obj(kv).to_string().into_bytes(), body));
+        id
     }
 
     fn group(&mut self, g: &GroupItem, ts: Transform) {
@@ -490,9 +729,11 @@ impl<'a> Walker<'a, '_> {
                     self.page.items.push(Item::Clip(n));
                 }
             }
+            self.pending_group = Some((g.transform, g.clip.clone()));
             self.frame(&g.frame, ts);
             self.restore();
         } else {
+            self.pending_group = Some((g.transform, g.clip.clone()));
             self.frame(&g.frame, ts);
         }
     }
@@ -575,6 +816,7 @@ impl<'a> Walker<'a, '_> {
         };
         self.gate("raster image (display-list-v3.3 E6)");
         let n = self.matrix(op.ctm);
+        self.used_images.push(id);
         self.page.items.push(Item::Image { id, matrix: n });
     }
 
@@ -597,6 +839,8 @@ impl<'a> Walker<'a, '_> {
             ("smask".into(), Json::Bool(img.mask.is_some())),
             ("icc".into(), Json::Bool(img.icc.is_some())),
         ];
+        // The key covers the encoded streams: an image the connection holds
+        // is not decoded again.
         let mut h = flashtex_display_list::sha256::Sha256::new();
         h.update(b"display-list-v3 image\0");
         h.update(Json::Obj(info.clone()).to_string().as_bytes());
@@ -646,9 +890,7 @@ impl<'a> Walker<'a, '_> {
                 return None;
             }
         };
-        let id = self.tables.image_keys.len() as u32 + 1;
-        self.tables.image_keys.push(key);
-        self.tables.images.insert(key, id);
+        let id = self.tables.bind_image(key);
         let mut kv = vec![
             ("id".to_string(), Json::Int(id as i64)),
             ("key".into(), Json::Str(hex(&key))),
@@ -713,9 +955,21 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
-    fn text(&mut self, t: &TextItem, ts: Transform) {
+    fn text(&mut self, t: &TextItem, ts: Transform, item: &FrameItem) {
         let frame = self.frame_origins(t, ts);
         let first = self.align(&frame);
+        // Gradient or tiling text: a PDF island (E5) when the client draws
+        // them.
+        if self.islands()
+            && (is_pattern(&t.fill) || t.stroke.as_ref().is_some_and(|s| is_pattern(&s.paint)))
+        {
+            if let Some(g) = t.glyphs.first() {
+                self.set_span(g.span.0, Some(g.span.1));
+            }
+            self.island(Some(item), "gradient or tiling text");
+            self.image_op_gap = true;
+            return;
+        }
         let Some(fill) = self.paint(&t.fill) else {
             return;
         };
@@ -726,6 +980,15 @@ impl<'a> Walker<'a, '_> {
             (Some(pp), Some(k)) => Some(&pp.glyphs[k..k + t.glyphs.len()]),
             _ => None,
         };
+        // Colour glyphs: typst-pdf draws them as Type 3 procedures (SVG,
+        // COLR or bitmap data), which a GLYPH's OpenType id does not
+        // reproduce. Not islanded yet and without a gate row: INCOMPLETE
+        // (DESIGN.md §15.4, §15.5), drawn or not.
+        if from_pdf.is_some_and(|pg| pg.iter().any(|g| g.type3)) {
+            self.unsupported(
+                "colour glyph (Type 3 in the PDF; display-list-v3.3 E5, not islanded yet)",
+            );
+        }
         // The paint state the PDF draws the run with (its first glyph's).
         let pdf_paint = match (self.pdf, from_pdf) {
             (Some(pp), Some(pg)) => pg.first().map(|g| &pp.paints[g.paint as usize]),
@@ -815,7 +1078,7 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
-    fn shape(&mut self, s: &Shape, span: Span, ts: Transform) {
+    fn shape(&mut self, s: &Shape, span: Span, ts: Transform, item: Option<&FrameItem>) {
         let segs = match &s.geometry {
             Geometry::Line(p) => vec![Seg::Move(0.0, 0.0), Seg::Line(p.x.to_pt(), p.y.to_pt())],
             Geometry::Rect(size) => {
@@ -846,6 +1109,20 @@ impl<'a> Walker<'a, '_> {
         } else {
             self.take_paths(&segs, m6, want, 0, krilla_skips(&segs, stroke.is_some()))
         };
+        // A gradient or tiling fill or stroke: the whole shape as a PDF
+        // island (E5) when the client draws them, its PDF paths consumed.
+        if self.islands()
+            && (s.fill.as_ref().is_some_and(is_pattern)
+                || stroke.is_some_and(|st| is_pattern(&st.paint)))
+        {
+            if ops.as_ref().is_some_and(|o| o.is_empty()) {
+                return;
+            }
+            self.set_span(span, None);
+            self.island(item, "gradient or tiling");
+            self.image_op_gap = true;
+            return;
+        }
         let fill = s.fill.as_ref().map(|p| self.paint(p));
         let stroke_paint = stroke.map(|st| self.paint(&st.paint));
         let from_pdf = ops.is_some();
@@ -1441,7 +1718,9 @@ impl<'a> Walker<'a, '_> {
         if let Some(c) = self.tables.span_cache.get(&span) {
             return *c;
         }
+        let t = std::time::Instant::now();
         let r = self.resolve_uncached(span);
+        crate::stages::add(crate::stages::Stage::Span, t);
         self.tables.span_cache.insert(span, r);
         r
     }
@@ -1449,8 +1728,22 @@ impl<'a> Walker<'a, '_> {
     fn resolve_uncached(&mut self, span: Span) -> Option<SpanPos> {
         let fid = span.id()?;
         let path = self.world.path_of(fid)?;
-        let range = self.world.range(span)?;
         let src = self.world.source(fid).ok()?;
+        let range = match span.get() {
+            SpanKind::Number { .. } => {
+                let index = self
+                    .tables
+                    .span_index
+                    .entry(fid)
+                    .or_insert_with(|| RootIndex::new(src.root()));
+                span_range(src.root(), index, span_number(span))
+            }
+            _ => None,
+        };
+        let range = match range {
+            Some(r) => r,
+            None => self.world.range(span)?,
+        };
         let line0 = src.lines().byte_to_line(range.start)?;
         let line_range = src.lines().line_to_range(line0)?;
         let line = line0 as u32 + 1;
@@ -1728,6 +2021,94 @@ fn fmt(v: f64) -> String {
     }
 }
 
+/// A span's number (the low 48 bits, as Typst packs it).
+fn span_number(span: Span) -> u64 {
+    span.into_raw().get() & ((1 << 48) - 1)
+}
+
+/// A file's root node's children: each one's span number and start offset.
+/// A long document's root has tens of thousands of children, which
+/// `Source::range` walks one by one for every span (measured 2026-10-04:
+/// 14–17 ms for one page's spans near the end of a 3 MB file).
+#[derive(Default)]
+pub struct RootIndex {
+    numbers: Vec<u64>,
+    offsets: Vec<usize>,
+}
+
+impl RootIndex {
+    fn new(root: &SyntaxNode) -> RootIndex {
+        let mut ix = RootIndex::default();
+        let mut offset = 0;
+        for c in root.children() {
+            ix.numbers.push(span_number(c.span()));
+            ix.offsets.push(offset);
+            offset += c.len();
+        }
+        ix
+    }
+}
+
+/// The byte range of the node numbered `target` under `root`: what
+/// `Source::range` returns for a numbered span without a sub-range, found
+/// by binary search. Span numbers grow from a parent to its children and
+/// from left to right among siblings (typst-syntax's numbering), so the
+/// node is in the last child whose number is not above `target`: the
+/// child `LinkedNode::find_number` would descend into.
+pub fn span_range(
+    root: &SyntaxNode,
+    index: &RootIndex,
+    target: u64,
+) -> Option<std::ops::Range<usize>> {
+    if span_number(root.span()) == target {
+        return Some(0..root.len());
+    }
+    if span_number(root.span()) > target {
+        return None;
+    }
+    let k = index.numbers.partition_point(|&n| n <= target);
+    let i = k.checked_sub(1)?;
+    find_number(&root.children().as_slice()[i], index.offsets[i], target)
+}
+
+fn find_number(node: &SyntaxNode, offset: usize, target: u64) -> Option<std::ops::Range<usize>> {
+    let number = span_number(node.span());
+    if number == target {
+        return Some(offset..offset + node.len());
+    }
+    if number > target {
+        return None;
+    }
+    let children = node.children().as_slice();
+    let k = children.partition_point(|c| span_number(c.span()) <= target);
+    let i = k.checked_sub(1)?;
+    let start = offset + children[..i].iter().map(SyntaxNode::len).sum::<usize>();
+    find_number(&children[i], start, target)
+}
+
+thread_local! {
+    static ISLANDS: std::cell::Cell<(usize, f64, f64, usize, usize)> =
+        const { std::cell::Cell::new((0, 0.0, 0.0, 0, 0)) };
+}
+
+fn island_stats_add(ms: f64, bytes: usize) {
+    ISLANDS.with(|c| {
+        let (n, t, tmax, b, bmax) = c.get();
+        c.set((n + 1, t + ms, tmax.max(ms), b + bytes, bmax.max(bytes)));
+    });
+}
+
+/// Islands exported on this thread so far: (count, total ms, max ms, total
+/// bytes, max bytes) -- for measuring their cost (tests, the suite).
+pub fn island_stats() -> (usize, f64, f64, usize, usize) {
+    ISLANDS.with(|c| c.get())
+}
+
+/// A gradient or a tiling: what v3 draws only as a PDF island (E5).
+fn is_pattern(p: &Paint) -> bool {
+    matches!(p, Paint::Gradient(_) | Paint::Tiling(_))
+}
+
 /// typst-pdf's `exif_transform`: a JPEG is not re-encoded, so its EXIF
 /// orientation is drawn as a transform of the image's box, which may swap
 /// its sides.
@@ -1779,6 +2160,50 @@ fn exif_transform(image: &RasterImage, size: Size) -> (Transform, Size) {
 mod tests {
     use super::*;
     use crate::world::{FontOptions, Fonts};
+
+    /// The span index finds every node's range exactly as Typst's own
+    /// lookup (`Source::find`, its linear walk) does, and nothing for the
+    /// numbers no node has (between nodes and past the end).
+    #[test]
+    fn span_index_agrees_with_typst_for_every_node() {
+        use typst::syntax::{LinkedNode, Source};
+        let mut text = String::from(
+            "#set page(numbering: \"1\")\n#let f(x) = { let y = x + 1; [*#y* _a_ `raw`] }\n= Heading <h>\n",
+        );
+        for i in 0..400 {
+            text.push_str(&format!(
+                "Paragraph {i} with $x^{i} + sum_(k=1)^n k$ and #f({i}) @h, \"q\".\n\n#figure([#table(columns: 2, [a], [b{i}])], caption: [c])\n- item #{{ let z = ({i}, 2); z.at(0) }}\n"
+            ));
+        }
+        text.push_str("#[nested #[deeper [*bold*] #emph[e]] end]\n");
+        let src = Source::detached(text);
+        let root = src.root();
+        let index = RootIndex::new(root);
+        fn walk<'a>(n: &LinkedNode<'a>, out: &mut Vec<LinkedNode<'a>>) {
+            out.push(n.clone());
+            for c in n.children() {
+                walk(&c, out);
+            }
+        }
+        let mut nodes = vec![];
+        walk(&LinkedNode::new(root), &mut nodes);
+        let numbers: std::collections::HashSet<u64> =
+            nodes.iter().map(|n| span_number(n.span())).collect();
+        let max = numbers.iter().copied().max().unwrap();
+        let mut checked = 0;
+        for n in &nodes {
+            let num = span_number(n.span());
+            let typst = src.find(n.span()).map(|f| f.range());
+            assert_eq!(span_range(root, &index, num), typst, "span number {num}");
+            for t in [num + 1, num.saturating_sub(1), max + 5] {
+                if !numbers.contains(&t) {
+                    assert_eq!(span_range(root, &index, t), None, "span number {t}");
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked > 20_000, "{checked} nodes");
+    }
 
     /// Review fix: past the font-id limit the compile fails with a clear
     /// error instead of wrapping a u16 id onto another font. The real limit
