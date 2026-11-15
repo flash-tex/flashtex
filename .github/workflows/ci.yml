@@ -1329,6 +1329,13 @@ jobs:
       FLASHTEX_NO_ACTIVATE: "1"
       FLASHTEX_KEYCHAIN_OFF: "1"
       FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      # This job's runner is a GitHub-hosted 3-vCPU VM (never self-hosted, see
+      # runs-on). EditorInstantTests' compile-load test bounds key latencies
+      # against the same run's floor, and the VM's pauses failed it in 16 of
+      # main's 30 runs of 11-08 to 11-10: with this set it uses the hosted
+      # limits of EditorCompileLoadLimits (EditorInstantTests.swift). A Mac
+      # (this unset) keeps the limits as they were.
+      FLASHTEX_EDITOR_HOSTED_VM: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest stable Xcode

@@ -6,6 +6,123 @@ import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
 @testable import FlashTeXMac
 
+/// The limits of `EditorInstantTests.testTheMainThreadStaysFreeWhileCompilesReportThousandsOfProblems`,
+/// every one relative to the same run's floor (the same keys with no compile answering).
+///
+/// Without `FLASHTEX_EDITOR_HOSTED_VM` (a Mac: the reference) they are as before:
+///   - more than half the compiles were answered while the keys were typed (the load was applied);
+///   - the main thread is busy at most `ratio` times as much as typing alone;
+///   - key → glyph p95 is within `budgetMs` of typing alone's (or `ratio` times it).
+///
+/// With it (CI's mac-app job, a GitHub-hosted 3-vCPU VM) those limits failed 16 of main's 30 runs
+/// of 2026-11-08 to 11-10 (`recordedHostedRuns`): the p95 bound in 15, by 1 to 183 ms. The VM
+/// pauses: in run 42686171082 a key of the floor phase, with no compile to wait for, waited 1.1 s
+/// for the main thread. A pause late-delivers every key posted during it (keys are 50 ms apart),
+/// so the p95 of 40 keys is one long pause or two short ones. There the limits are (as
+/// `RealDocStallLimits`, #2154, for the same VM):
+///   - key → glyph p95 within `hardMs`, max(5 x budget, 500 ms), of typing alone's: the freezes
+///     this test guards against cost seconds a key;
+///   - key → glyph p50 within `budgetMs` of typing alone's: a pause moves the tail, while a
+///     regression that costs every key or every compile's reply a long turn moves the median
+///     (a compile answers every other key);
+///   - the main thread's busy fraction, which is CPU time and so does not count a pause: at most
+///     `ratio` times typing alone's, or `hostedBusyOver` more than it when that is more. Typing
+///     alone was busy 16 % to 48 % of the time between those runs, and the compiles added up to 32
+///     points: 2.5 x 16 % failed the run at 48 % that 2.5 x 25 % passes;
+///   - a run in which half the compiles or fewer were answered (2 of the 30: 4 and 10 of 20, the
+///     VM at under half speed) is not a measurement of the app: `notMeasured`, a skip, and only
+///     once the p95 and busy limits above have held. It is never a pass, and a freeze still fails.
+struct EditorCompileLoadLimits {
+    var budgetMs = 100.0
+    var ratio = 2.5
+    var hosted = false
+    /// The compiles' share of the main thread allowed on the hosted VM, as a fraction of the time.
+    static let hostedBusyOver = 0.4
+
+    struct Measured: Equatable {
+        /// Key → glyph (ms): typing alone, then with the compiles answering.
+        var floorP50: Double, floorP95: Double, p50: Double, p95: Double
+        /// The main thread's busy fraction: typing alone, then with the compiles.
+        var busyFloor: Double, busy: Double
+        var compilesDone: Int, compiles: Int
+    }
+
+    enum Verdict: Equatable {
+        case passed
+        case failed([String])
+        case notMeasured(String)
+    }
+
+    static func fromEnvironment(_ e: [String: String]) -> EditorCompileLoadLimits {
+        EditorCompileLoadLimits(budgetMs: e["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100,
+                                ratio: e["FLASHTEX_EDITOR_BUSY_RATIO"].flatMap(Double.init) ?? 2.5,
+                                hosted: !["", "0"].contains(e["FLASHTEX_EDITOR_HOSTED_VM"] ?? ""))
+    }
+
+    var hardMs: Double { max(5 * budgetMs, 500) }
+
+    /// `floor` plus `over`, or `ratio` times `floor` when that is more (as `EditorInstantTests.keyBound`).
+    func bound(_ floor: Double, over: Double) -> Double { max(floor + over, ratio * floor) }
+
+    func busyBound(_ floor: Double) -> Double {
+        let byRatio = ratio * max(0.02, floor)
+        return hosted ? max(byRatio, floor + Self.hostedBusyOver) : byRatio
+    }
+
+    func verdict(_ m: Measured) -> Verdict {
+        var misses: [String] = []
+        let loadApplied = m.compilesDone > m.compiles / 2
+        let answered = "\(m.compilesDone) of \(m.compiles) compiles were answered while the keys were typed"
+        if m.busy > busyBound(m.busyFloor) {
+            misses.append("main thread busy \(m.busy) while typing during compiles, against \(m.busyFloor) typing alone "
+                + "(at most \(busyBound(m.busyFloor)))")
+        }
+        if hosted {
+            let hard = bound(m.floorP95, over: hardMs), soft = bound(m.floorP50, over: budgetMs)
+            if m.p95 > hard {
+                misses.append("key → glyph p95 \(m.p95) ms during compiles, over the hard limit \(hard) ms (typing alone \(m.floorP95) ms)")
+            }
+            if loadApplied, m.p50 > soft {
+                misses.append("key → glyph p50 \(m.p50) ms during compiles, over \(soft) ms (typing alone \(m.floorP50) ms)")
+            }
+        } else {
+            let limit = bound(m.floorP95, over: budgetMs)
+            if !loadApplied { misses.append("the compiles were not answered while typing: \(answered)") }
+            if m.p95 > limit {
+                misses.append("key → glyph p95 \(m.p95) ms during compiles, over \(limit) ms (typing alone \(m.floorP95) ms)")
+            }
+        }
+        if !misses.isEmpty { return .failed(misses) }
+        return loadApplied ? .passed : .notMeasured("not a measurement on this hosted VM: \(answered)")
+    }
+
+    /// main's mac-app runs of 2026-11-08 to 11-10 that printed this test's `EditorInstant:` line
+    /// (GitHub-hosted, artifact `mac-swift-test-log`): the run, key → glyph p50 and p95 typing
+    /// alone, the same during the compiles (ms), the busy fraction typing alone and during the
+    /// compiles, and the compiles answered, of 20.
+    private static let recordedRows: [(Int, Double, Double, Double, Double, Double, Double, Int)] = [
+        (42532886711, 24.2, 38.8, 27.0, 90.2, 0.252, 0.468, 20), (42537390446, 26.4, 50.8, 45.7, 116.8, 0.267, 0.476, 20),
+        (42625595127, 42.2, 126.3, 61.8, 193.4, 0.318, 0.464, 20), (42627671192, 24.0, 37.2, 69.0, 258.9, 0.260, 0.435, 20),
+        (42628210854, 21.9, 32.6, 36.5, 106.4, 0.224, 0.512, 20), (42630208261, 16.7, 25.7, 52.1, 155.6, 0.161, 0.484, 20),
+        (42633332042, 20.2, 33.9, 26.1, 74.0, 0.203, 0.460, 20), (42635826419, 20.4, 39.8, 22.6, 65.4, 0.221, 0.384, 20),
+        (42637138187, 36.1, 67.5, 64.4, 172.9, 0.398, 0.554, 20), (42639683505, 36.7, 110.2, 26.8, 62.3, 0.331, 0.464, 20),
+        (42640427015, 17.3, 25.5, 19.0, 37.0, 0.167, 0.299, 20), (42640550059, 25.3, 47.3, 47.5, 191.3, 0.273, 0.495, 20),
+        (42641259981, 19.4, 30.1, 30.0, 56.1, 0.196, 0.418, 20), (42676708285, 16.9, 32.7, 23.5, 51.6, 0.163, 0.374, 20),
+        (42685195078, 28.0, 50.8, 74.0, 276.9, 0.280, 0.465, 20), (42685396930, 22.6, 45.5, 20.8, 66.9, 0.261, 0.354, 20),
+        (42686171082, 87.3, 367.2, 92.7, 222.5, 0.323, 0.550, 18), (42687384757, 19.9, 39.4, 49.2, 178.3, 0.266, 0.514, 20),
+        (42688805911, 20.9, 36.9, 32.2, 120.8, 0.218, 0.429, 20), (42689032957, 23.4, 50.6, 52.4, 157.4, 0.261, 0.530, 20),
+        (42697622454, 75.1, 177.1, 150.4, 404.4, 0.483, 0.304, 4), (42729417935, 30.0, 49.3, 83.6, 219.0, 0.334, 0.561, 17),
+        (42731520153, 32.9, 40.8, 103.4, 246.8, 0.317, 0.452, 15), (42734504987, 24.5, 38.9, 47.7, 140.3, 0.263, 0.495, 20),
+        (42739252236, 17.4, 26.4, 34.6, 170.0, 0.176, 0.391, 20), (42740742971, 17.3, 29.9, 37.5, 219.3, 0.170, 0.369, 20),
+        (42740813798, 27.0, 41.7, 68.0, 214.1, 0.312, 0.461, 20), (42753653675, 21.0, 52.3, 128.6, 335.3, 0.254, 0.337, 10),
+        (42910974948, 19.7, 29.5, 45.8, 149.3, 0.217, 0.362, 20), (42912571683, 24.2, 54.1, 36.8, 134.4, 0.281, 0.484, 20),
+    ]
+
+    static let recordedHostedRuns: [(run: Int, m: Measured)] = recordedRows.map { r in
+        (run: r.0, m: Measured(floorP50: r.1, floorP95: r.2, p50: r.3, p95: r.4, busyFloor: r.5, busy: r.6, compilesDone: r.7, compiles: 20))
+    }
+}
+
 /// APP-EDITOR-INSTANT (docs/evidence/editor-instant-2026-10-06): typing in the
 /// editor is never held up by the preview. The owner typed into a 1,000-page
 /// document while its first compile streamed pages in, and the editor lagged
@@ -486,7 +603,9 @@ final class EditorInstantTests: XCTestCase {
     /// busy typing alone, 24 % with the compiles, a ratio of 1.85); the
     /// ratio is the compiles' share whatever the runner's speed.
     /// `FLASHTEX_EDITOR_FREE_MIN` adds an absolute bound when set. Key →
-    /// glyph p95 is bounded by `keyBound` of typing alone's.
+    /// glyph p95 is bounded by `keyBound` of typing alone's. These limits,
+    /// and the ones CI's hosted VM gets (`FLASHTEX_EDITOR_HOSTED_VM`), are
+    /// `EditorCompileLoadLimits`.
     func testTheMainThreadStaysFreeWhileCompilesReportThousandsOfProblems() async throws {
         env.set("FLASHTEX_HOST", "none") // the feed is the host
         let n = 1142
@@ -548,20 +667,84 @@ final class EditorInstantTests: XCTestCase {
                                             "main_free_floor": floorFraction, "floor_measured_ms": floorMs])
         XCTAssertFalse(phase.timedOut, "the main thread did not take the keys")
         XCTAssertEqual(phase.keys, 2 * compiles)
-        XCTAssertGreaterThan(s.doneCount - doneBefore, compiles / 2, "the compiles were answered while typing")
         // Every group is listed (no cap), from the last compile.
         XCTAssertEqual(model.engineV3Problems.groups.count, problems)
         let e = ProcessInfo.processInfo.environment
-        let ratio = e["FLASHTEX_EDITOR_BUSY_RATIO"].flatMap(Double.init) ?? 2.5
-        XCTAssertLessThanOrEqual(1 - fraction, ratio * max(0.02, 1 - floorFraction),
-                                 "main thread busy \(1 - fraction) of \(ms) ms while typing during compiles, "
-                                 + "against \(1 - floorFraction) of \(floorMs) ms typing alone (at most \(ratio) times)")
         if let minFree = e["FLASHTEX_EDITOR_FREE_MIN"].flatMap(Double.init) {
             XCTAssertGreaterThanOrEqual(fraction, minFree, "main thread free \(fraction) of \(ms) ms while typing during compiles")
         }
+        // The compiles answered while typing, the busy fractions and key → glyph, against the floor.
         let glyph = phase.stats(phase.keyToGlyphMs), alone = floorPhase.stats(floorPhase.keyToGlyphMs)
-        XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, Self.keyBound(floor: alone["p95"] ?? 0),
-                                 "key → glyph p95 during compiles with \(problems) problems: \(glyph); typing alone: \(alone)")
+        let limits = EditorCompileLoadLimits.fromEnvironment(e)
+        let measured = EditorCompileLoadLimits.Measured(
+            floorP50: alone["p50"] ?? 0, floorP95: alone["p95"] ?? 0, p50: glyph["p50"] ?? .infinity, p95: glyph["p95"] ?? .infinity,
+            busyFloor: 1 - floorFraction, busy: 1 - fraction, compilesDone: s.doneCount - doneBefore, compiles: compiles)
+        let detail = "measured over \(ms) ms (typing alone: \(floorMs) ms) with \(problems) problems; key → glyph during compiles: \(glyph); "
+            + "typing alone: \(alone); hosted VM limits: \(limits.hosted)"
+        switch limits.verdict(measured) {
+        case .passed: break
+        case .failed(let misses): XCTFail(misses.joined(separator: "; ") + ". " + detail)
+        case .notMeasured(let why): throw XCTSkip(why + ". " + detail)
+        }
+    }
+
+    /// `EditorCompileLoadLimits` on what main's hosted runs measured, and on the freezes the test
+    /// above is for. No window and no clock: the limits are a pure value.
+    func testCompileLoadLimitsPassTheRecordedHostedRunsAndFailTheFreezes() {
+        typealias L = EditorCompileLoadLimits
+        let strict = L(), hosted = L(hosted: true)
+        XCTAssertEqual([hosted.hardMs, hosted.budgetMs, hosted.ratio], [500, 100, 2.5])
+        let runs = L.recordedHostedRuns
+        XCTAssertEqual(runs.count, 30)
+        func failed(_ v: L.Verdict) -> Bool { if case .failed = v { return true } else { return false } }
+        // The limits as they were (a Mac's) fail 16 of the 30 on the hosted VM's noise, as main did.
+        let strictFailures = runs.filter { failed(strict.verdict($0.m)) }.map { $0.run }
+        XCTAssertEqual(strictFailures.count, 16, "\(strictFailures)")
+        XCTAssertTrue(strictFailures.contains(42910974948) && !strictFailures.contains(42912571683), "\(strictFailures)")
+        // The hosted limits: none fails; the two runs with half the compiles or fewer are not measurements.
+        for r in runs {
+            let v = hosted.verdict(r.m)
+            if r.m.compilesDone > 10 {
+                XCTAssertEqual(v, .passed, "run \(r.run)")
+            } else if case .notMeasured = v {
+                continue
+            } else {
+                XCTFail("run \(r.run): \(v)")
+            }
+        }
+        XCTAssertEqual(runs.filter { $0.m.compilesDone <= 10 }.map { $0.run }, [42697622454, 42753653675])
+        // The freezes fail under both, from a hosted run's own floor (42912571683).
+        let base = runs[29].m
+        func with(_ change: (inout L.Measured) -> Void) -> L.Measured { var m = base; change(&m); return m }
+        let freezes: [(String, L.Measured)] = [
+            // every key re-diffs the Problems list (the owner's Infinite Descent x2: seconds a key)
+            ("seconds a key", with { $0.p50 = 1900; $0.p95 = 2400 }),
+            // the same, so slow that hardly a compile is answered: still a failure, not a skip
+            ("seconds a key, few compiles answered", with { $0.p50 = 1900; $0.p95 = 2400; $0.compilesDone = 3 }),
+            // every reply costs a long turn (after #1890: the reply's rows made on main): the median key waits
+            ("a long turn per reply", with { $0.p50 = base.floorP50 + 150; $0.p95 = base.floorP95 + 300 }),
+            // a long stall now and then: the tail past the hard limit
+            ("stalls of over half a second", with { $0.p95 = base.floorP95 + 600 }),
+            // the rows made on main at every reply, in turns too short to make a key late: CPU time
+            ("main thread busy with the replies", with { $0.busy = 0.95 }),
+        ]
+        for (name, m) in freezes {
+            XCTAssertTrue(failed(strict.verdict(m)), "\(name), a Mac's limits: \(strict.verdict(m))")
+            XCTAssertTrue(failed(hosted.verdict(m)), "\(name), the hosted VM's limits: \(hosted.verdict(m))")
+        }
+        // A Mac's measurement (floor p95 8-29 ms on an M5 Pro) passes both; the allowances are the VM's only.
+        let mac = L.Measured(floorP50: 6, floorP95: 12, p50: 8, p95: 30, busyFloor: 0.13, busy: 0.24, compilesDone: 20, compiles: 20)
+        XCTAssertEqual([strict.verdict(mac), hosted.verdict(mac)], [.passed, .passed])
+        var late = mac
+        late.p95 = 130 // over 100 ms more than typing alone's: a Mac fails; the VM's noise did this in half its runs
+        XCTAssertTrue(failed(strict.verdict(late)), "\(strict.verdict(late))")
+        XCTAssertEqual(hosted.verdict(late), .passed)
+        var busy = mac
+        busy.busy = 0.4 // 3 x typing alone's: over the ratio on a Mac, within typing alone's + 0.4 on the VM
+        XCTAssertTrue(failed(strict.verdict(busy)), "\(strict.verdict(busy))")
+        XCTAssertEqual(hosted.verdict(busy), .passed)
+        XCTAssertTrue(L.fromEnvironment(["FLASHTEX_EDITOR_HOSTED_VM": "1"]).hosted)
+        XCTAssertFalse(L.fromEnvironment([:]).hosted || L.fromEnvironment(["FLASHTEX_EDITOR_HOSTED_VM": "0"]).hosted)
     }
 
     // MARK: a real cold compile (evidence; FLASHTEX_EDITOR_INSTANT_DOC)
