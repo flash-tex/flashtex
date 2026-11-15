@@ -100,6 +100,9 @@ struct Config {
     stats_out: Option<String>,
     debug: bool,
     verify_fail: bool,
+    /// `FLASHTEX_BOXMEMO_FULL_VERIFY_HOST`: measurement only (§17.12), the
+    /// whole-state verifier in the host too.
+    full_in_host: bool,
 }
 
 /// The macros offered by default (BOX-MEMO.md §2, §11): framed.sty's frame
@@ -910,6 +913,7 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                 stats_out: std::env::var("FLASHTEX_BOXMEMO_STATS").ok(),
                 debug: std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some(),
                 verify_fail: std::env::var_os("FLASHTEX_BOXMEMO_VERIFY_FAIL").is_some(),
+                full_in_host: std::env::var_os("FLASHTEX_BOXMEMO_FULL_VERIFY_HOST").is_some(),
             });
         }
         f(c.as_ref().unwrap())
@@ -1086,9 +1090,14 @@ thread_local! {
     static WINDOW: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-/// The host: an edit's window opens (`true`) or closes.
+/// The host: an edit's window opens (`true`) or closes. At a close the
+/// statistics are written (`FLASHTEX_BOXMEMO_STATS`): the host does not
+/// end the process where the command line writes them.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+    if !open {
+        write_stats(true);
+    }
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -1658,8 +1667,18 @@ fn pop_used_up(g: &mut Globals) {
 /// line-shift journal's entries, after which the span cannot tell its own
 /// (`journal_since`) and is abandoned (`LineShift`), and, verified, its
 /// normal path then disagrees with the guard that let a replay through.
+///
+/// A replay's fast-forward over the span's lines counts them as the normal
+/// path's reads did, with the checkpoint held back as there
+/// (`SPAN_FORWARD`): else the replay alone asks for one, a difference of
+/// the whole-state verifier's (`ckpt_request`, §17.12).
 pub fn span_recording(g: &Globals) -> bool {
-    g.bm_rec_on && FAST.with(|f| f.borrow().span_f >= 0)
+    (g.bm_rec_on && FAST.with(|f| f.borrow().span_f >= 0)) || SPAN_FORWARD.with(|c| c.get())
+}
+
+thread_local! {
+    /// A span's replay is moving the file past its lines (`bm_span_forward`).
+    static SPAN_FORWARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub fn after_restore(g: &mut Globals) {
@@ -1880,6 +1899,21 @@ impl Globals {
         )
     }
 
+    /// Is a shape in K2 (`\\parshape`, e-TeX's penalty arrays) longer than
+    /// `MAX_LIST` (`-2` in K2, #2194)?
+    fn bm_long_shape(&self) -> bool {
+        std::iter::once(PAR_SHAPE_LOC)
+            .chain(ETEX_PEN_BASE..ETEX_PENS)
+            .any(|p| {
+                // (`bm_shape_words`'s test, without the copy)
+                let e = self.bm_eq(p).hh().rh();
+                e != 0 && {
+                    let n = self.bm_info(e);
+                    n < 0 || (2 * n + 1) as usize > MAX_LIST
+                }
+            })
+    }
+
     /// K2: every `eqtb` entry from `glue_base` to `eqtb_size` but the box
     /// registers, pointers by what they point to.
     fn bm_k2(&self) -> Vec<i32> {
@@ -1930,7 +1964,10 @@ impl Globals {
                                 take(1) == Some(&[v.len() as i32][..])
                                     && take(v.len()) == Some(&v[..])
                             }
-                            None => take(1) == Some(&[-2][..]),
+                            // a shape longer than `MAX_LIST` is `-2` in a
+                            // kept K2, which every other such shape would
+                            // match: it never matches (#2194)
+                            None => false,
                         };
                         if !ok {
                             return false;
@@ -2260,6 +2297,15 @@ impl Globals {
             return;
         }
         let v = self.bm_reg_value(r);
+        // a token list longer than `MAX_LIST` is `-2`, which every other
+        // such list would match: never part of a key (#2194)
+        let toks = match r {
+            RegId::Eqtb(p) => (TOKS_BASE..TOKS_BASE + 256).contains(&p),
+            RegId::Sa(t, _) => t == TOK_VAL,
+        };
+        if toks && v == [-2] {
+            return self.bm_abort("Long");
+        }
         self.bm_with_rec(|rec| rec.kr.push((r, v)));
     }
 
@@ -2938,6 +2984,12 @@ impl Globals {
             return self.bm_miss("Preconditions");
         }
         let mut k1 = self.bm_k1(call, n);
+        // the body or an argument longer than `MAX_LIST` is `-2` (no token,
+        // length or other marker is), which every other such list would
+        // match: such a call is never a key, and is not recorded (#2194)
+        if k1.contains(&-2) || self.bm_long_shape() {
+            return self.bm_miss("Long");
+        }
         if let Some(sk) = &span_key {
             k1.extend_from_slice(sk);
         }
@@ -3062,7 +3114,9 @@ impl Globals {
                 // interrupted by the next edit), and its restore replaced
                 // the edit's pending branch. The host verifies each
                 // admitted call's operation log and output (`bm_verified`).
-                if WINDOW.with(|w| w.get()).is_none() {
+                // `FLASHTEX_BOXMEMO_FULL_VERIFY_HOST` (measurement only,
+                // §17.12) runs it in the host anyway, restart points at risk.
+                if WINDOW.with(|w| w.get()).is_none() || with_config(|c| c.full_in_host) {
                     if let Ok(ck) = self.checkpoint() {
                         FULL.with(|f| *f.borrow_mut() = Some(FullVerify { ck, warn }));
                     }
@@ -4381,6 +4435,10 @@ impl Globals {
             && self.nest[start.nest_ptr as usize].aux_field.0 == start_aux;
         let why = if span_lost {
             Some("SpanFile")
+        } else if span_f.is_some() && self.force_eof {
+            // (an `\endinput` inside the span: the file ends after the
+            // line it is on, which the replay would not make so)
+            Some("ForceEof")
         } else if end.cur_level != start.cur_level
             || end.save_ptr < start.save_ptr
             || !self.bm_saves_only(start.save_ptr, end.save_ptr)
@@ -5205,6 +5263,14 @@ impl Globals {
         if self.input_ptr < 1 {
             return Err(Some("SpanLevel"));
         }
+        // An `\endinput` already done on the file's current line
+        // (`force_eof`, a figure's `\ifdefined\figsoff\endinput\fi`): the
+        // normal path reads no line of it after this one, which a span's
+        // key does not hold (its lines are the file's), and a replay would
+        // move the file past lines it never reads. Refused (§17.1).
+        if self.force_eof {
+            return Err(Some("ForceEof"));
+        }
         let fl = self.input_stack[(self.input_ptr - 1) as usize];
         if fl.state_field == TOKEN_LIST {
             // (or a token list: a macro's argument, `\scalebox{..}{\begin..}`,
@@ -5749,9 +5815,11 @@ impl Globals {
         self.line = end.line;
         // (each line `input_ln` read counts towards the next checkpoint)
         if self.arena.extra.is_some() {
+            SPAN_FORWARD.with(|c| c.set(true));
             for _ in 0..n {
                 self.maybe_request_timed_checkpoint();
             }
+            SPAN_FORWARD.with(|c| c.set(false));
         }
     }
 
@@ -5922,6 +5990,16 @@ impl Globals {
                         1 => self.eq_word_define(*p, e),
                         2 => self.geq_define(*p, t, e),
                         _ => self.geq_word_define(*p, e),
+                    }
+                    // a macro the call defined (`\def`, `\xdef`): its
+                    // definition site, as the normal path's `\def` noted it
+                    if matches!(v, Val::FreshList(_))
+                        && *kind != 1
+                        && *kind != 3
+                        && Self::bm_is_cs(*p)
+                        && (k::call..=k::long_outer_call).contains(&t)
+                    {
+                        self.dg_def_replayed(e);
                     }
                 }
                 Op::Sa { t, n, v, kind } => {
