@@ -94,6 +94,16 @@ pub trait Fonts: Send {
     fn is_watched(&self, _path: &Path) -> bool {
         false
     }
+    /// The catalog is stale (a file it answered with changed since it read
+    /// its names, #2504): the next [`Fonts::catalog`] and [`Fonts::dirs`]
+    /// are of a new walk.
+    fn stale(&mut self) {}
+    /// [`FontCatalog::stamps_hash`] of the catalog a lookup made now would
+    /// search, made again first if one of its files changed: what a lookup
+    /// that found nothing depends on (#2504). `None`: not known.
+    fn catalog_state(&mut self) -> Option<[u64; 2]> {
+        None
+    }
     /// [`Fonts::dirs`] with only `files` of the watched files: the state
     /// S0's lookups by name depend on (the files watched when it was
     /// taken, [`S0::font_files`]), which a file found later in the body
@@ -157,6 +167,12 @@ pub struct Resident {
     /// The state of the font directories ([`Fonts::dirs`]) the catalog this
     /// run made for a lookup by name was made from, if it made one.
     pub(crate) catalog_dirs: Option<[u64; 2]>,
+    /// This run checked its catalog's files after a lookup that found
+    /// nothing (once a run, `crate::native`).
+    pub(crate) catalog_checked: bool,
+    /// The [`FontCatalog::stamps_hash`] of the catalog of this run's last
+    /// lookup by name that found nothing, if one did (#2504).
+    pub(crate) miss_catalog: Option<[u64; 2]>,
     /// The native fonts' faces and mappings the engine's runs share
     /// (`crate::native::cache`); none for a run that is not the engine's.
     pub(crate) loads: Option<Arc<std::sync::Mutex<crate::native::cache::LoadCache>>>,
@@ -192,6 +208,13 @@ impl Resident {
         c
     }
 
+    /// [`Resident::font_catalog`] after the kept catalog was found stale
+    /// (#2504): made anew.
+    pub(crate) fn font_catalog_again(&mut self) -> Arc<FontCatalog> {
+        self.fonts.stale();
+        self.font_catalog()
+    }
+
     /// A lookup by name found the font file at `path` ([`Fonts::watch`]).
     /// When nothing changed since this run's catalog was made, the state
     /// recorded for it ([`Resident::catalog_dirs`]) becomes the one with
@@ -214,7 +237,7 @@ impl Resident {
     /// the directories and of those files; but the state this run's
     /// catalog was made from when something changed since (the catalog's
     /// lookups were made from that).
-    pub(crate) fn s0_fonts(&mut self) -> ([u64; 2], Vec<String>) {
+    pub(crate) fn s0_fonts(&mut self) -> ([u64; 2], Vec<String>, Option<[u64; 2]>) {
         let files = self.fonts.watched();
         let now = self.fonts.dirs();
         let d = match self.catalog_dirs {
@@ -225,7 +248,7 @@ impl Resident {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
-        (d, files)
+        (d, files, self.miss_catalog)
     }
 }
 
@@ -542,6 +565,10 @@ pub struct Engine {
     /// or removed since changes what those lookups find, so no page
     /// checkpoint is restored then, and a run from S₀ looks them up again.
     named_dirs: Option<[u64; 2]>,
+    /// The catalog a page checkpoint's lookup by name that found nothing
+    /// was made from (`Resident::miss_catalog`), when one was made after
+    /// S0: a font file changed since changes what it would find (#2504).
+    named_catalog: Option<[u64; 2]>,
 }
 
 /// A save of S₀ asked for after a compile's DONE: what it writes, taken
@@ -663,6 +690,7 @@ impl Engine {
             lean_save: false,
             pending_save: None,
             named_dirs: None,
+            named_catalog: None,
         }
     }
 
@@ -686,6 +714,7 @@ impl Engine {
         self.opens.clear();
         self.g = None;
         self.named_dirs = None;
+        self.named_catalog = None;
     }
 
     /// Open the document's persisted S₀ at `path` (`crate::s0file`) for a
@@ -740,7 +769,14 @@ impl Engine {
                 if let Some(d) = m.font_dirs {
                     let now = fonts.borrow_mut().as_mut().map(|f| f.dirs_of(&files));
                     match now {
-                        Some(now) if now == d => {}
+                        Some(now) if now == d => {
+                            if let Some(h) = m.font_catalog {
+                                let c = fonts.borrow_mut().as_mut().and_then(|f| f.catalog_state());
+                                if c != Some(h) {
+                                    return Err("a font file changed".into());
+                                }
+                            }
+                        }
                         Some(_) => return Err("the font directories changed".into()),
                         None => return Err("the font directories are not watched".into()),
                     }
@@ -773,6 +809,7 @@ impl Engine {
             key: m.key,
             font_dirs: m.font_dirs,
             font_files: m.font_files,
+            font_catalog: m.font_catalog,
             reads: (0, 0, 0),
             opens: self.opens.len(),
             dl_on: m.dl_on,
@@ -852,6 +889,7 @@ impl Engine {
             key: s0.key.clone(),
             font_dirs: s0.font_dirs,
             font_files: s0.font_files.clone(),
+            font_catalog: s0.font_catalog,
             dl_on: s0.dl_on,
             rec: s0.rec.clone(),
             opens: self.opens[..s0.opens.min(self.opens.len())].to_vec(),
@@ -1065,7 +1103,14 @@ impl Engine {
             Ok(()) => match s0.font_dirs {
                 None => None,
                 Some(d) => match self.fonts.as_mut().map(|f| f.dirs_of(&s0.font_paths())) {
-                    Some(now) if now == d => None,
+                    Some(now) if now == d => match s0.font_catalog {
+                        Some(h)
+                            if self.fonts.as_mut().and_then(|f| f.catalog_state()) != Some(h) =>
+                        {
+                            Some("a font file changed".to_string())
+                        }
+                        _ => None,
+                    },
                     Some(_) => Some("the font directories changed".to_string()),
                     None => Some("the font directories are not watched".to_string()),
                 },
@@ -1083,6 +1128,12 @@ impl Engine {
             if self.fonts.as_mut().map(|f| f.dirs()) != Some(d) {
                 self.pages.clear();
                 self.named_dirs = None;
+            }
+        }
+        if let Some(h) = self.named_catalog {
+            if self.fonts.as_mut().and_then(|f| f.catalog_state()) != Some(h) {
+                self.pages.clear();
+                self.named_catalog = None;
             }
         }
         match now.and_then(|now| self.restart_page(now)) {
@@ -1328,6 +1379,8 @@ impl Engine {
             thinning: None,
             fonts: Box::new(Unkept),
             catalog_dirs: None,
+            catalog_checked: false,
+            miss_catalog: None,
             loads: None,
         };
         if start.in_body() {
@@ -1581,6 +1634,8 @@ impl Engine {
             thinning,
             fonts: self.fonts.take().unwrap_or_else(|| Box::new(Unkept)),
             catalog_dirs: None,
+            catalog_checked: false,
+            miss_catalog: None,
             loads: Some(self.loads.clone()),
         });
         let mut out = (!c.no_pdf).then(|| {
@@ -1707,9 +1762,11 @@ impl Engine {
         let mut opens = vec![];
         let mut restored_files = vec![];
         let mut catalog_dirs = None;
+        let mut miss_catalog = None;
         if let Some(r) = g.host.resident.take() {
             self.fonts = Some(r.fonts);
             catalog_dirs = r.catalog_dirs;
+            miss_catalog = r.miss_catalog;
             self.loads
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1756,6 +1813,11 @@ impl Engine {
             // were made from: this run's catalog's, else (a run that went
             // on from a checkpoint holding a catalog) those checked at its
             // start
+            self.named_catalog = match (miss_catalog, catalog_dirs) {
+                (Some(h), _) => Some(h),
+                (None, None) if g.host.font_mgr.is_some() => self.named_catalog,
+                _ => None,
+            };
             self.named_dirs = match catalog_dirs {
                 Some(d) => Some(d),
                 None if g.host.font_mgr.is_some() => self.named_dirs,
@@ -1818,6 +1880,7 @@ impl Engine {
                         key: k,
                         font_dirs: t.font_dirs,
                         font_files: t.font_files,
+                        font_catalog: t.font_catalog,
                         reads,
                         opens: t.opens,
                         dl_on,

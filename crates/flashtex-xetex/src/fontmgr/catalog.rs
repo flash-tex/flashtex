@@ -323,6 +323,10 @@ pub fn os_extra_dirs() -> Vec<PathBuf> {
 #[derive(Debug, Default)]
 pub struct FontCatalog {
     faces: Vec<CatalogFace>,
+    /// Each font file's [`Stamp`] when its faces' names were read (or the
+    /// identity the kept catalog was checked against): a file rewritten in
+    /// place since no longer holds what the catalog says it does (#2504).
+    stamps: std::collections::HashMap<PathBuf, Stamp>,
 }
 
 impl FontCatalog {
@@ -338,6 +342,7 @@ impl FontCatalog {
     pub fn from_files<I: IntoIterator<Item = (PathBuf, u32)>>(files: I) -> FontCatalog {
         let mut seen = std::collections::HashSet::new();
         let mut faces = Vec::new();
+        let mut stamps = std::collections::HashMap::new();
         for (path, index) in files {
             let is_link =
                 std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
@@ -349,9 +354,15 @@ impl FontCatalog {
             if !seen.insert((real, index)) {
                 continue;
             }
-            faces.extend(CatalogFace::read(&path, index));
+            let stamp = file_stamp(&path);
+            if let Some(face) = CatalogFace::read(&path, index) {
+                if let Some(st) = stamp {
+                    stamps.insert(path.clone(), st);
+                }
+                faces.push(face);
+            }
         }
-        FontCatalog { faces }
+        FontCatalog { faces, stamps }
     }
 
     /// [`FontCatalog::from_files`] with the names of each face taken from
@@ -364,6 +375,7 @@ impl FontCatalog {
     ) -> FontCatalog {
         let mut seen = std::collections::HashSet::new();
         let mut faces = Vec::new();
+        let mut stamps = std::collections::HashMap::new();
         for (path, index) in files {
             let is_link =
                 std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
@@ -373,6 +385,9 @@ impl FontCatalog {
                 continue;
             }
             let stamp = file_stamp(&path);
+            if let Some(st) = stamp {
+                stamps.insert(path.clone(), st);
+            }
             if let Some((pattern, names)) = stamp.and_then(|st| cache.get(&path, index, st)) {
                 faces.push(CatalogFace::from_cache(path, index, pattern, names));
                 continue;
@@ -384,7 +399,7 @@ impl FontCatalog {
                 faces.push(face);
             }
         }
-        FontCatalog { faces }
+        FontCatalog { faces, stamps }
     }
 
     /// [`FontCatalog::system`] through the name cache at
@@ -470,7 +485,42 @@ impl FontCatalog {
 
     /// A catalog of faces built by the caller.
     pub fn from_faces(faces: Vec<CatalogFace>) -> FontCatalog {
-        FontCatalog { faces }
+        FontCatalog {
+            faces,
+            stamps: Default::default(),
+        }
+    }
+
+    /// Whether the font file at `path` is as it was when this catalog read
+    /// its names: its size, modification time and status-change time are
+    /// the same (a file the catalog has no stamp for, a bundle face, is
+    /// taken as it is). One status call (#2504).
+    pub fn still_reads(&self, path: &Path) -> bool {
+        match self.stamps.get(path) {
+            None => true,
+            Some(st) => file_stamp(path).as_ref() == Some(st),
+        }
+    }
+
+    /// Whether every font file this catalog has a stamp for is as it was
+    /// when the catalog read its names (a status call a file): what a
+    /// lookup that found nothing depends on (#2504).
+    pub fn all_still_read(&self) -> bool {
+        self.stamps
+            .iter()
+            .all(|(p, st)| file_stamp(p).as_ref() == Some(st))
+    }
+
+    /// A hash of the faces' files and their stamps: the same for two
+    /// catalogs made from the same files as they were, in this process or
+    /// another (#2504).
+    pub fn stamps_hash(&self) -> [u64; 2] {
+        let mut seen = std::collections::BTreeMap::new();
+        for f in &self.faces {
+            seen.entry(&f.path)
+                .or_insert_with(|| self.stamps.get(&f.path));
+        }
+        flashtex_engine::persist::hash128(format!("{seen:?}").as_bytes())
     }
 
     pub fn faces(&self) -> &[CatalogFace] {

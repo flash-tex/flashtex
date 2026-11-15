@@ -160,6 +160,8 @@ pub struct Taken {
     pub font_dirs: Option<[u64; 2]>,
     /// The font files whose state `font_dirs` holds (`S0::font_files`).
     pub font_files: Vec<String>,
+    /// `S0::font_catalog`.
+    pub font_catalog: Option<[u64; 2]>,
     /// How many output opens the run had made (`Resident::opens`).
     pub opens: usize,
 }
@@ -179,6 +181,10 @@ pub struct S0 {
     /// taken (`resident::Fonts::watch`): one rewritten in place changes
     /// what a name finds (#2296), the one a lookup no longer finds too.
     pub font_files: Vec<String>,
+    /// The catalog a lookup by name that found nothing before S0 was made
+    /// from (`resident::Resident::miss_catalog`): a font file changed since
+    /// changes what it would find (#2504).
+    pub font_catalog: Option<[u64; 2]>,
     /// The read journal's lengths at S₀ (files, lookups, outputs).
     pub reads: (usize, usize, usize),
     /// How many output opens the run had made by then.
@@ -536,12 +542,12 @@ impl Globals {
         let named = self.host.font_mgr.is_some();
         // (the directories the catalog was made from: a change since is a
         // change to what its lookups found)
-        let (font_dirs, font_files) = match (named, self.host.resident.as_mut()) {
+        let (font_dirs, font_files, font_catalog) = match (named, self.host.resident.as_mut()) {
             (true, Some(r)) => {
-                let (d, f) = r.s0_fonts();
-                (Some(d), f)
+                let (d, f, c) = r.s0_fonts();
+                (Some(d), f, c)
             }
-            _ => (None, vec![]),
+            _ => (None, vec![], None),
         };
         let opens = self.host.resident.as_ref().map_or(0, |r| r.opens.len());
         let id = self.checkpoint();
@@ -553,6 +559,7 @@ impl Globals {
             job_name,
             font_dirs,
             font_files,
+            font_catalog,
             opens,
         })
     }

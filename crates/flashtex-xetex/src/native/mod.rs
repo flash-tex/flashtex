@@ -370,7 +370,54 @@ impl Globals {
             self.host.font_mgr = Some(Arc::new(crate::fontmgr::FontMgr::new(catalog)));
         }
         let mgr = self.host.font_mgr.as_mut().expect("made above");
-        let located = Arc::make_mut(mgr).locate(&String::from_utf8_lossy(&full), scaled_size);
+        let mut located = Arc::make_mut(mgr).locate(&String::from_utf8_lossy(&full), scaled_size);
+        // A resident engine's kept catalog answered with a file rewritten in
+        // place since it read the file's names (#2504): the catalog is made
+        // again from the files as they are, and the name looked up again,
+        // as a fresh run would find it.
+        let stale = located.as_ref().filter(|l| {
+            !l.by_file
+                && self.host.resident.is_some()
+                && !self
+                    .host
+                    .font_mgr
+                    .as_ref()
+                    .expect("made above")
+                    .catalog()
+                    .still_reads(std::path::Path::new(&l.path))
+        });
+        if let (Some(path), Some(r)) = (stale.map(|l| l.path.clone()), self.host.resident.as_mut())
+        {
+            let catalog = r.font_catalog_again();
+            // (watched, whatever the new lookup finds: written back, the
+            // file changes what it finds again)
+            r.font_found(std::path::Path::new(&path));
+            let mut mgr = crate::fontmgr::FontMgr::new(catalog);
+            located = mgr.locate(&String::from_utf8_lossy(&full), scaled_size);
+            self.host.font_mgr = Some(Arc::new(mgr));
+        }
+        // A lookup that found nothing depends on every font file the
+        // catalog read (#2504): once a run, the kept catalog's files are
+        // checked, and the catalog made again if one changed; the catalog
+        // it was made from is recorded for S0 and the page checkpoints.
+        if located.is_none() {
+            if let Some(r) = self.host.resident.as_mut() {
+                let mgr = self.host.font_mgr.as_ref().expect("made above");
+                if !r.catalog_checked {
+                    r.catalog_checked = true;
+                    if !mgr.catalog().all_still_read() {
+                        let catalog = r.font_catalog_again();
+                        let mut mgr = crate::fontmgr::FontMgr::new(catalog);
+                        located = mgr.locate(&String::from_utf8_lossy(&full), scaled_size);
+                        self.host.font_mgr = Some(Arc::new(mgr));
+                    }
+                }
+                if located.is_none() {
+                    let mgr = self.host.font_mgr.as_ref().expect("made above");
+                    r.miss_catalog = Some(mgr.catalog().stamps_hash());
+                }
+            }
+        }
         let Some(located) = located else {
             return 0;
         };

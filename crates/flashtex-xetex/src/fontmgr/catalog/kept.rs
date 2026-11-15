@@ -169,6 +169,7 @@ pub(super) fn load(path: &Path, dirs: &[PathBuf]) -> Option<FontCatalog> {
     }
     let mut roots = Vec::new();
     let mut faces = Vec::new();
+    let mut stamps = std::collections::HashMap::new();
     for l in lines {
         let f: Vec<&str> = l.split('\t').collect();
         match f.as_slice() {
@@ -179,8 +180,17 @@ pub(super) fn load(path: &Path, dirs: &[PathBuf]) -> Option<FontCatalog> {
                 }
             }
             ["file", p, st] => {
-                if file_stamp(Path::new(&unesc(p)?)).0 != *st {
+                let p = PathBuf::from(unesc(p)?);
+                if file_stamp(&p).0 != *st {
                     return None;
+                }
+                // (`f:dev:ino:size:mtime:ctime`, as checked now: the
+                // catalog's stamp of the file, `FontCatalog::still_reads`)
+                let f: Vec<&str> = st.split(':').collect();
+                if let ["f", _, _, size, mt, ct] = f.as_slice() {
+                    if let (Ok(size), Ok(mt), Ok(ct)) = (size.parse(), mt.parse(), ct.parse()) {
+                        stamps.insert(p, (size, mt, ct));
+                    }
                 }
             }
             ["face", p, i, pf, pa, ps, fa, st, fu, psn] => {
@@ -203,7 +213,7 @@ pub(super) fn load(path: &Path, dirs: &[PathBuf]) -> Option<FontCatalog> {
                 ));
             }
             ["end"] => {
-                return (roots == dirs).then(|| FontCatalog::from_faces(faces));
+                return (roots == dirs).then(|| FontCatalog { faces, stamps });
             }
             _ => return None,
         }
