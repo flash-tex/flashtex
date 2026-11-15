@@ -400,8 +400,8 @@ impl Vf {
                     }
                     def(&mut vf, &mut r, len, ch)?;
                 }
-                // POST ends the file; so does any other code ("Quitting
-                // on code=")
+                op::POST => break,
+                // so does any other code ("Quitting on code=")
                 _ => break,
             }
         }

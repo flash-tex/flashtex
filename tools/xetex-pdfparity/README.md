@@ -457,6 +457,30 @@ cases do.
   are rotated, slanted and scaled (`cm` in `pdf:code` within
   `pdf:bcontent`). It is there for the XDV check.
 
+## Virtual fonts (`vf-cases/`)
+
+Documents in the PSNFSS fonts, whose TFM fonts are virtual (a VF file over
+the `8r` fonts and, for math, over Symbol, CM and RSFS): `times`,
+`mathptmx`, `helvet` (also scaled), `palatino` and `mathpazo`, each with
+OT1 and T1 where both exist, and a math-heavy `mathptmx` page (`v01` to
+`v10`; the first line of each says what it covers). They are not in the
+default corpus or the baseline, because they need TeX Live's URW Type 1
+fonts:
+
+```sh
+python3 tools/xetex-pdfparity/run.py --engine <bin> --no-visual --cases-dir tools/xetex-pdfparity/vf-cases
+```
+
+xdvipdfmx draws a virtual font's character by running its packet
+(dvipdfm-x `vf.c`), and FlashTeX's writer ports that
+(`crates/flashtex-xetex/src/out/vf.rs`, #2438). The XDV has only the
+virtual font's character, so the XDV check runs the packets too
+(`precision.VirtualFonts`): each PDF glyph is paired with the character
+its packet sets, at the position `vf.c`'s arithmetic (`sqxfw`) gives.
+`test_vf.py` holds that reading to the fixture of
+`crates/flashtex-xetex/tests/vf`, whose XDV and expected glyphs are both
+TeX Live's.
+
 Images come only from TeX Live's mwe package (l010).
 `tools/xetex-lockstep/pictures` holds header-only files and cannot be
 rendered.
