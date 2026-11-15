@@ -1,0 +1,19 @@
+% d09-hyperref-pdfm: hyperref's other dvipdfmx specials: page labels, open bookmarks, page mode, colour links across a page break, \hyperdef, file and run links, \Acrobatmenu, a form
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage[bookmarksopen,bookmarksnumbered,pdfpagemode=UseOutlines,pdfstartview=FitH,pdfpagelabels,colorlinks,linkcolor=blue,urlcolor=red,pdfnewwindow]{hyperref}
+\begin{document}
+\pagenumbering{roman}
+\section{Front}\label{f}
+Front matter \ref{m}.
+\newpage
+\pagenumbering{arabic}
+\section{Main}\label{m}
+\hyperdef{cat}{nm}{Defined}. \hyperref{}{cat}{nm}{to def}, \href{other.pdf#page.2}{a file}, \href{run:./x.sh}{run},
+\Acrobatmenu{NextPage}{next page}, \nolinkurl{https://no.link}.
+\vspace*{36\baselineskip}
+\href{https://example.com/across}{a link that may cross the page break, with several words of text that go on and on and on and on and on and on and on and on and on and on and on and on and on and on and on}.
+\begin{Form}
+\TextField[name=t,width=3cm]{Name}\quad \CheckBox[name=c]{Box}\quad \PushButton[name=p,onclick={app.alert('x')}]{Push}
+\end{Form}
+\end{document}
