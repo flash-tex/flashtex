@@ -50,6 +50,8 @@ fn a_nul_ends_the_file_name_the_system_sees() {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
         )
         .env("FLASHTEX_RESOLVER", "cwd")
+        // TeX Live's texmf.cnf: `log_openout = t` (the `\openout` line)
+        .env("log_openout", "t")
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .stdin(Stdio::null())
@@ -57,9 +59,11 @@ fn a_nul_ends_the_file_name_the_system_sees() {
         .expect("run flashtex-initex");
     let log = std::fs::read_to_string(d.join("t.log")).unwrap();
     let from = log.find("**t.tex").unwrap_or(0);
+    // kpathsea names a file it finds in the current directory `./t.tex`;
+    // the `cwd` resolver says `t.tex`.
     assert_eq!(
-        &log[from..],
-        PDFTEX_LOG,
+        log[from..].to_string(),
+        PDFTEX_LOG.replace("(./", "("),
         "exit {:?}; terminal:\n{}",
         out.status.code(),
         String::from_utf8_lossy(&out.stdout)
