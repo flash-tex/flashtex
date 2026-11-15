@@ -551,6 +551,10 @@ struct Entry {
     /// packs none leaves it as it was, which a replay must then do too (it
     /// is the state's, not the call's).
     last_badness: Option<i32>,
+    /// The call ended a paragraph (`end_graf`), which sets `error_count` to
+    /// 0 (tex.web §1096) where a replay leaves it: replayed only while the
+    /// count is 0 (BOX-MEMO.md §17, errors).
+    ends_graf: bool,
     last_used: u64,
     hits: u64,
     bytes: usize,
@@ -636,6 +640,8 @@ struct Rec {
     created: Vec<i32>,
     /// The call packed a box (`hpack`, `vpackage`), so it set `last_badness`.
     packed: bool,
+    /// The call ended a paragraph (`flashtex_bm_end_graf`).
+    ends_graf: bool,
     /// Verifying the entry of this index (of `store[cs]`).
     verify: Option<usize>,
 }
@@ -2481,6 +2487,14 @@ impl Globals {
         self.bm_with_rec(|r| r.packed = true);
     }
 
+    /// A recording ended a paragraph (`end_graf` set `error_count` to 0;
+    /// changes/boxmemo.ch): its entry is replayed only while the count is 0.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_end_graf(&mut self) {
+        self.bm_with_rec(|r| r.ends_graf = true);
+    }
+
     /// A recording made object `n` (a `\pdfstartlink`'s `pdf_new_objnum`;
     /// changes/boxmemo.ch): a replay makes its own.
     #[cold]
@@ -2530,18 +2544,20 @@ impl Globals {
         }
         let m = mode();
         ST.with(|s| s.borrow_mut().stats.offers += 1);
-        // preconditions (K6). `error_count` must be 0 (BOX-MEMO.md §17,
-        // errors): a call that ends a paragraph (a `\parbox`, a `\vbox` of
-        // text) sets it to 0 (`end_graf`, tex.web §1096), which a replay
-        // does not. A recording at a nonzero count abandons such a call
-        // ("Error": the count changed), but an entry recorded at 0 says
-        // nothing of it: replayed after a scrolled error, the count stayed
-        // where the normal path makes it 0, and the hundredth error came
-        // early. At 0 the reset changes nothing.
+        // preconditions (K6). `error_count` (BOX-MEMO.md §17, errors): a
+        // call that ends a paragraph (a `\parbox`, a `\vbox` of text) sets
+        // it to 0 (`end_graf`, tex.web §1096), which a replay does not.
+        // Replayed after a scrolled error, the count stayed where the normal
+        // path makes it 0, and the hundredth error came early. Such an
+        // entry (`ends_graf`, which the recording learns from `end_graf`
+        // itself) is replayed only at 0, where the reset changes nothing;
+        // any other is replayed at any count. No call is recorded while the
+        // count is not 0 (below).
         let globaldefs = self.bm_eq(INT_BASE + k::global_defs_code).int();
-        if globaldefs != 0 || self.after_token != 0 || self.error_count != 0 {
+        if globaldefs != 0 || self.after_token != 0 {
             return self.bm_miss("Preconditions");
         }
+        let errors = self.error_count != 0;
         let k1 = self.bm_k1(cs, n);
         // the body or an argument longer than `MAX_LIST` is `-2` (no token,
         // length or other marker is), which every other such list would
@@ -2583,6 +2599,7 @@ impl Globals {
                     continue;
                 }
                 if e.hash != hash
+                    || (errors && e.ends_graf)
                     || e.k1 != k1
                     || e.ctx != ctx
                     || e.k4 != k4_now
@@ -2659,6 +2676,12 @@ impl Globals {
                 self.back_input();
             }
             return;
+        }
+        // (a recording at a nonzero count would be abandoned if the call
+        // ended a paragraph, and keyed as doomed without the count: the
+        // same call at 0 would then never be recorded)
+        if errors {
+            return self.bm_miss("Errors");
         }
         if let Some(i) = partial {
             why = "Meanings";
@@ -2773,6 +2796,7 @@ impl Globals {
             ops: vec![],
             created: vec![],
             packed: false,
+            ends_graf: false,
             verify,
         };
         // the macro's own meaning is part of K1; mark it seen
@@ -2890,6 +2914,7 @@ impl Globals {
                     rs_locs: vec![],
                     ops: vec![],
                     last_badness: None,
+                    ends_graf: rec.ends_graf,
                     last_used: now,
                     hits: 0,
                     bytes,
@@ -4088,6 +4113,7 @@ impl Globals {
                 rs_locs,
                 ops: rec.ops,
                 last_badness,
+                ends_graf: rec.ends_graf,
                 last_used: now,
                 hits: 0,
                 bytes,

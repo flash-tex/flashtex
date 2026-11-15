@@ -324,6 +324,12 @@ box_code: begin scan_register_num; fetch_box(cur_box);
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
 @z
 
+@x pdftex.web l.29995 - a recording notes that it ended a paragraph (|end_graf| sets |error_count| to 0)
+  error_count:=0;
+@y
+  error_count:=0; if bm_rec_on then flashtex_bm_end_graf;
+@z
+
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
 if intr_rec_on then flashtex_intr_command;
 case cur_cmd of
@@ -535,6 +541,7 @@ procedure flashtex_bm_font_changed; external;
 procedure flashtex_bm_font_set(@!n:integer;@!a:integer;@!b:integer;@!v:integer); external;
 procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
+procedure flashtex_bm_end_graf; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
 
