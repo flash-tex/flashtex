@@ -217,8 +217,10 @@ pub(crate) enum Req {
         reply: bool,
     },
     /// `VIEWPORT` (capability `viewport-v1`, spec §6.3.1): the client shows
-    /// page `page` (0-based) now. Recorded, and the checkpoints around it
-    /// made dense while nothing waits (`Engine::viewport`); never a compile.
+    /// page `page` (0-based) now: the checkpoints around it are made dense
+    /// while nothing waits (`Engine::viewport`); never a compile, and not
+    /// the page S₁ is saved at, which is the last `COMPILE`'s `viewport`
+    /// (REVIEW-E's #7 on #2248).
     Viewport {
         conn: Arc<Conn>,
         page: usize,
