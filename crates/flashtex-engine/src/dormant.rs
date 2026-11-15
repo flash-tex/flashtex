@@ -282,7 +282,13 @@ impl Globals {
 
     /// The record's part (`checkpoint::Globals::capture_ext`).
     pub(crate) fn dorm_record(&mut self) -> Dorm {
-        let (level, max_buf, fired) = (self.dorm_level - 1, self.max_buf_stack, self.dorm_fired);
+        // (during a D9 recording `max_buf_stack` is the call's own peak:
+        // `intr_max_buf_stack` is the run's)
+        let (level, max_buf, fired) = (
+            self.dorm_level - 1,
+            self.intr_max_buf_stack(),
+            self.dorm_fired,
+        );
         self.layer().dorm.record(level.max(-1), max_buf, fired)
     }
 

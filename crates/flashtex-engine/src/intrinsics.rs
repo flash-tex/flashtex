@@ -217,7 +217,12 @@ const S_CALLS: usize = 33; // calls of candidates (for choosing a variant to rep
 
 // The statistics' high-water marks as they stood when a recording started
 // (#2451): a recording lowers them to 0, so that at its end they hold the
-// exact peak of its own normal path, and then raises them back.
+// exact peak of its own normal path, and then raises them back. They are 0
+// while no recording is in progress (`rec_marks_raise`): the convergence
+// test compares `intr_state` outside `REC_SCRATCH` word for word, and the
+// marks themselves are not compared (`incr::dead_word`: an edit that
+// lengthens the longest line changes `max_buf_stack` for the rest of the
+// run), so a copy of them left here would stop every later jump.
 const S_REC_MAX_IN: usize = 34;
 const S_REC_MAX_PARAM: usize = 35;
 const S_REC_MAX_BUF: usize = 36;
@@ -1686,18 +1691,37 @@ impl Globals {
         self.max_buf_stack = self.max_buf_stack.max(self.st(S_REC_MAX_BUF));
         self.max_save_stack = self.max_save_stack.max(self.st(S_REC_MAX_SAVE));
         self.max_nest_stack = self.max_nest_stack.max(self.st(S_REC_MAX_NEST));
+        // (no copy of the marks stays behind: see `S_REC_MAX_IN`)
+        for i in S_REC_MAX_IN..=S_REC_MAX_NEST {
+            self.set_st(i, 0);
+        }
+    }
+
+    /// `max_buf_stack` as the statistics will have it: during a recording
+    /// the larger of the call's own peak so far and the mark kept at its
+    /// start (`rec_marks_lower`). For a reader other than TeX's own tests
+    /// (READ-TRACK's `Dorm::max_buf`, a bound on `\csname`'s scratch).
+    pub(crate) fn intr_max_buf_stack(&self) -> i32 {
+        if self.intr_rec_on {
+            self.max_buf_stack.max(self.st(S_REC_MAX_BUF))
+        } else {
+            self.max_buf_stack
+        }
     }
 
     /// Keep in `slot` how far its normal path raised each mark above the
     /// call's start (`F_PEAK_IN`..), while the marks are the call's own.
     fn rec_keep_peaks(&mut self, slot: usize) {
         let rel = |m: i32, from: i32| if m > 0 { (m - from).max(0) } else { -1 };
-        // (the body's push is at `input_ptr` one below its level)
-        let pushed_at = match self.st(S_REC_BASE) {
-            0 => self.st(S_REC_INPUT),
-            b => b - 1,
+        // (the body's push is at `input_ptr` one below its level. It raises
+        // the mark to there on every path, which a mark still 0 does not
+        // show when the push was at level 0: `push_input` tests
+        // `input_ptr>max_in_stack`)
+        let peak_in = match self.st(S_REC_BASE) {
+            0 => rel(self.max_in_stack, self.st(S_REC_INPUT)),
+            b => (self.max_in_stack - (b - 1)).max(0),
         };
-        self.set_sf(slot, F_PEAK_IN, rel(self.max_in_stack, pushed_at));
+        self.set_sf(slot, F_PEAK_IN, peak_in);
         self.set_sf(
             slot,
             F_PEAK_PARAM,
@@ -1708,6 +1732,10 @@ impl Globals {
             F_PEAK_BUF,
             rel(self.max_buf_stack, self.st(S_REC_FIRST)),
         );
+        // (kept for the record only: a replay makes the call's groups and
+        // assignments through `new_save_level` and `eq_define` themselves,
+        // whose `check_full_save_stack` raises the mark as the normal
+        // path's does, `replay_raise_marks`)
         self.set_sf(
             slot,
             F_PEAK_SAVE,
@@ -1745,19 +1773,23 @@ impl Globals {
                 *m = from + peak;
             }
         };
-        let (pi, pp_, pb, ps, pn) = (
+        let (pi, pp_, pb, pn) = (
             self.sf(slot, F_PEAK_IN),
             self.sf(slot, F_PEAK_PARAM),
             self.sf(slot, F_PEAK_BUF),
-            self.sf(slot, F_PEAK_SAVE),
             self.sf(slot, F_PEAK_NEST),
         );
-        let (first, save, nest) = (self.first, self.save_ptr, self.nest_ptr);
+        let (first, nest) = (self.first, self.nest_ptr);
         raise(&mut self.max_in_stack, ip, pi);
         raise(&mut self.max_param_stack, pp, pp_);
         raise(&mut self.max_buf_stack, first, pb);
-        raise(&mut self.max_save_stack, save, ps);
         raise(&mut self.max_nest_stack, nest, pn);
+        // Not `max_save_stack`: the replay's own `new_save_level` and
+        // `eq_define` run `check_full_save_stack` where the normal path's
+        // do, with the save-stack words this state calls for. The recorded
+        // peak is another state's: a local assignment saves two words, one
+        // or none as its location's level is (tex.web §276-§277, §283), so
+        // raising the mark by it could put it above the normal path's.
     }
 
     /// Whether `slot`'s call, made now, passes every overflow test its
