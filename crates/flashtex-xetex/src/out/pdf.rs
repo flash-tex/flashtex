@@ -3147,6 +3147,7 @@ mod tests {
         );
         // 8 names or fewer: the root holds them, without `/Limits`
         let mut doc = Doc::new();
+        doc.check_gotos = false;
         doc.dests
             .push((b"a".to_vec(), O::Array(vec![O::Name(b"Fit".to_vec())])));
         let bytes = write(&doc, &opts).unwrap().0;
