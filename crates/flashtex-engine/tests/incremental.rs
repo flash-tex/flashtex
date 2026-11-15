@@ -1048,8 +1048,8 @@ fn l5_an_active_math_character_is_a_read() {
         }
     }
     let cases = [
-        ("the .aux gives the active character a wider meaning", "xyzw"),
-        ("and a narrower one", "xy"),
+        ("the .aux gives the active character more letters", "xyzw"),
+        ("and fewer", "xy"),
         ("and the first one again", "x"),
     ];
     for (what, def) in cases {
