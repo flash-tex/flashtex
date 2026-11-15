@@ -2478,6 +2478,12 @@ impl Globals {
     /// A font parameter was set (changes/boxmemo.ch): `n` -1 for
     /// `\fontdimen` (`a` its place in `font_info`), else `assign_font_int`'s
     /// code (`a` the font, `b` the character), and `v` the value.
+    /// `n` -4 (lane F-FONTKEY): `get_expand_font` linked expanded font `b`
+    /// of ratio `v` into font `a`'s list, after `load_expand_font` made it
+    /// or found it made for another font of the same name and size and
+    /// `copy_expand_params` handed it over (its back link, step and code
+    /// tables are then `a`'s). What that leaves is a function of the state
+    /// before and the three numbers, so the change is named by them.
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_font_set(&mut self, n: i32, a: i32, b: i32, v: i32) {
@@ -3014,6 +3020,16 @@ impl Globals {
     pub fn flashtex_bm_abort(&mut self, r: i32) {
         match r {
             1 => self.bm_abort("Mag"),
+            // `get_expand_font` found no font of this ratio in the font's
+            // list (lane F-FONTKEY): `load_expand_font` makes one, which the
+            // end's frame refuses anyway (`Fonts`), or finds the one another
+            // font of the same name and size made (a font and its
+            // `\pdfcopyfont` copy) and `copy_expand_params` hands it over to
+            // this font: its back link, ratio and code tables, and both
+            // fonts' lists. Those writes are in no operation log, so a replay
+            // would skip them, and a later shipout writes the expanded font
+            // with the PDF font of the font it is linked to.
+            2 => self.bm_abort("FontLinks"),
             _ => self.bm_abort("Other"),
         }
     }

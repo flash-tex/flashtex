@@ -1906,9 +1906,15 @@ impl Globals {
                 k = self.pdf_font_elink[crate::ix::U((k) as usize)];
             }
         }
+        if self.bm_rec_on {
+            self.flashtex_bm_abort(2i32);
+        }
         k = self.load_expand_font(f, e);
         { let __v658 = self.pdf_font_elink[crate::ix::U((f) as usize)]; self.pdf_font_elink[crate::ix::U((k) as usize)] = __v658; }
         self.pdf_font_elink[crate::ix::U((f) as usize)] = k;
+        if self.bm_on {
+            self.flashtex_bm_font_set((4i32).wrapping_neg(), f, k, e);
+        }
         get_expand_font = k;
         get_expand_font
     }

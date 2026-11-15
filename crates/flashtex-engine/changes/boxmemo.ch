@@ -294,6 +294,18 @@ read_font_info:=g;
     auto_expand_font := k;
 @z
 
+@x pdftex.web l.17591 - an expanded font linked into a font's list changes the fonts' version, and a recording that does it is abandoned (the links are no operation a replay makes)
+    k := load_expand_font(f, e);
+    pdf_font_elink[k] := pdf_font_elink[f];
+    pdf_font_elink[f] := k;
+@y
+    if bm_rec_on then flashtex_bm_abort(2);
+    k := load_expand_font(f, e);
+    pdf_font_elink[k] := pdf_font_elink[f];
+    pdf_font_elink[f] := k;
+    if bm_on then flashtex_bm_font_set(-4, f, k, e);
+@z
+
 @x pdftex.web l.17816 - ... a letter-spaced one
     letter_space_font := k;
 @y
