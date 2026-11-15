@@ -92,9 +92,8 @@ impl Images {
     /// of the same size) is not this run's (#2444).
     pub fn fresh(&self) -> bool {
         self.by.iter().all(|((path, page, pagebox), &id)| {
-            let len = std::fs::metadata(path).map(|m| m.len());
-            matches!((self.get(id), len),
-                (Some(i), Ok(len)) if i.key == image_key(path, len, *page, *pagebox))
+            self.get(id)
+                .is_some_and(|i| i.key == image_key(path, *page, *pagebox))
         })
     }
 
@@ -109,12 +108,13 @@ impl Images {
         // id, so that its key and data are the file's as a fresh run's are
         // (#2444)
         let mut again = None;
+        // (the key from the file's identity before its bytes are read: a
+        // file written in between is then seen as changed at the next
+        // check, not kept under the new identity with the old bytes)
+        let key = image_key(path, page, pagebox);
         if let Some(&id) = self.by.get(&k) {
-            let len = std::fs::metadata(path).map(|m| m.len());
-            match (self.get(id), len) {
-                (Some(i), Ok(len)) if i.key == image_key(path, len, page, pagebox) => {
-                    return Ok(id)
-                }
+            match self.get(id) {
+                Some(i) if i.key == key => return Ok(id),
                 _ => again = Some(id),
             }
         }
@@ -134,7 +134,6 @@ impl Images {
             return Err(format!("{path}: not a PNG, JPEG, BMP or PDF file"));
         };
         let id = again.unwrap_or(self.res.len() as u32 + 1);
-        let key = image_key(path, data.len() as u64, page, pagebox);
         let image = if kind == Kind::Pdf {
             // xdvipdfmx's page, box and /Rotate (pdf_doc_get_page), not
             // XeTeX's own (pic::pdf_page sizes the box TeX sees)
@@ -225,22 +224,113 @@ impl Images {
     }
 }
 
-/// The display list's key of an image (spec §5.2: it changes when the file's
-/// path, size or modification time, or the selection, changes).
-fn image_key(path: &str, len: u64, page: i32, pagebox: i32) -> [u8; 32] {
+/// The display list's key of an image (spec §5.2): it changes when the
+/// file's path or identity, or the selection, changes. The identity is the
+/// file's size, modification and status-change times, inode and device: a
+/// file rewritten in place with bytes of the same size and its old
+/// modification time put back (`cp -p`, an archive unpacked over it) has a
+/// new status-change time, which no user call can set (#2444, the #2296
+/// ruling); one renamed over it (an editor's atomic save) has a new inode.
+fn image_key(path: &str, page: i32, pagebox: i32) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(b"display-list-v3 image\0");
     h.update(path.as_bytes());
     h.update(&[0]);
-    h.update(&len.to_le_bytes());
-    if let Some(t) = std::fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-    {
-        h.update(&t.as_nanos().to_le_bytes());
+    match std::fs::metadata(path) {
+        Ok(m) => {
+            let s = flashtex_engine::os::file_stat(&m);
+            h.update(&[1]);
+            h.update(&s.size.to_le_bytes());
+            h.update(&s.mtime_ns.to_le_bytes());
+            h.update(&s.ctime_ns.to_le_bytes());
+            h.update(&s.ino.to_le_bytes());
+            h.update(&s.dev.to_le_bytes());
+        }
+        Err(_) => h.update(&[0]),
     }
     h.update(&page.to_le_bytes());
     h.update(&pagebox.to_le_bytes());
     h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    /// A PNG's signature, its `IHDR` (`w` × 1, grey) and an empty `IDAT`:
+    /// enough for its size; the same length for every `w`.
+    fn png(w: u32) -> Vec<u8> {
+        let mut d = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        d.extend_from_slice(&13u32.to_be_bytes());
+        d.extend_from_slice(b"IHDR");
+        d.extend_from_slice(&w.to_be_bytes());
+        d.extend_from_slice(&1u32.to_be_bytes());
+        d.extend_from_slice(&[8, 0, 0, 0, 0]);
+        d.extend_from_slice(&[0; 4]);
+        d.extend_from_slice(&0u32.to_be_bytes());
+        d.extend_from_slice(b"IDAT");
+        d.extend_from_slice(&[0; 4]);
+        d
+    }
+
+    fn width(i: &Images, id: u32) -> Option<i64> {
+        match &i.get(id)?.info {
+            Json::Obj(kv) => kv.iter().find(|(k, _)| k == "width").and_then(|(_, v)| match v {
+                Json::Int(n) => Some(*n),
+                _ => None,
+            }),
+            _ => None,
+        }
+    }
+
+    /// A picture rewritten in place with bytes of the same size and its old
+    /// modification time put back (`cp -p`, an archive unpacked over it):
+    /// its path, size, modification time and inode are all the same, and
+    /// only the status-change time says it changed. The images loaded
+    /// before (a carried-over document's) are no longer fresh, and the
+    /// picture is loaded again under its id with a new key (#2444, the
+    /// #2296 ruling).
+    #[test]
+    fn a_picture_rewritten_with_its_size_and_modification_time_is_seen() {
+        let dir = std::env::temp_dir().join(format!("flashtex-images-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("p.png");
+        let path = f.to_str().unwrap();
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let write = |w: u32| {
+            std::fs::write(&f, png(w)).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&f)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        };
+        write(1);
+        let mut imgs = Images::default();
+        let id = imgs.load(path, 0, 0).unwrap();
+        assert_eq!(width(&imgs, id), Some(1));
+        let key = imgs.get(id).unwrap().key;
+        let before = flashtex_engine::os::file_stat(&std::fs::metadata(&f).unwrap());
+        assert!(imgs.fresh());
+        // (past the file system's timestamp granularity: Linux takes the
+        // status-change time from a coarse clock)
+        std::thread::sleep(Duration::from_millis(50));
+        write(2);
+        let after = flashtex_engine::os::file_stat(&std::fs::metadata(&f).unwrap());
+        // the case: nothing but the status-change time differs
+        assert_eq!(
+            (before.size, before.mtime_ns, before.ino, before.dev),
+            (after.size, after.mtime_ns, after.ino, after.dev)
+        );
+        assert_ne!(before.ctime_ns, after.ctime_ns);
+        assert!(!imgs.fresh(), "the rewritten picture's entry is not fresh");
+        assert_eq!(imgs.load(path, 0, 0).unwrap(), id, "loaded again under its id");
+        assert_eq!(width(&imgs, id), Some(2), "the new picture's data");
+        assert_ne!(imgs.get(id).unwrap().key, key, "a new key");
+        assert!(imgs.fresh());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
