@@ -38,6 +38,11 @@
  */
 
 #include <math.h>
+/* ppapi.h takes FILE, size_t and the fixed-width integers from its includer
+ * (pdfimage.cpp has them from w2c/config.h) */
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
 
 #include "ppapi.h"
 
