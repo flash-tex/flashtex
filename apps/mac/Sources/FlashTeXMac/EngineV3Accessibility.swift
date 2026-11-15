@@ -263,9 +263,9 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     /// The page's lines (cached by the page's content hash).
     var axLines: [PreviewPageText.Line] {
         guard let session = owner?.session, let prepared = session.pages[index], let ix = session.sourceIndex(page: index) else { return [] }
-        if let c = axCache, c.hash == prepared.page.hash { return c.lines }
+        if let c = axCache, c.hash == prepared.page.shownHash { return c.lines }
         let lines = EngineV3PageText.lines(prepared, index: ix)
-        axCache = (prepared.page.hash, lines, nil)
+        axCache = (prepared.page.shownHash, lines, nil)
         return lines
     }
 
@@ -312,9 +312,11 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     }
 
     private func axFrame(_ line: PreviewPageText.Line) -> CGRect {
-        let w = owner?.session?.pages[index]?.widthPt ?? 0
+        let page = owner?.session?.pages[index]
+        let w = page?.widthPt ?? 0
         let s = w > 0 ? bounds.width / CGFloat(w) : 1
-        return CGRect(x: line.rect.minX * s, y: line.rect.minY * s, width: max(1, line.rect.width * s), height: max(1, line.rect.height * s))
+        let r = page?.shownRect(line.rect) ?? line.rect // through its `/Rotate`, as its image is drawn
+        return CGRect(x: r.minX * s, y: line.rect.minY * s, width: max(1, line.rect.width * s), height: max(1, line.rect.height * s))
     }
 
     private func configure(_ ax: PreviewAXElement, line: PreviewPageText.Line) {
@@ -338,7 +340,7 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     /// The page's content changed (a compile sent it): a client that read
     /// the old lines is told to read again.
     func axContentChanged() {
-        if let c = axCache, c.hash != owner?.session?.pages[index]?.page.hash {
+        if let c = axCache, c.hash != owner?.session?.pages[index]?.page.shownHash {
             let hadElements = c.elements != nil
             axCache = nil
             if hadElements { NSAccessibility.post(element: self, notification: .layoutChanged) }
@@ -351,13 +353,13 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     /// client that asks first still gets them at once, on main).
     func prepareAXLinesOffMain() {
         guard NSWorkspace.shared.isVoiceOverEnabled, axCache == nil, let prepared = owner?.session?.pages[index] else { return }
-        let hash = prepared.page.hash
+        let hash = prepared.page.shownHash
         let box = EngineV3AXBox(prepared)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let lines = EngineV3AXBox(EngineV3PageText.lines(box.value, index: DL3SourceIndex(box.value)))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.axCache == nil, self.owner?.session?.pages[self.index]?.page.hash == hash else { return }
+                    guard let self, self.axCache == nil, self.owner?.session?.pages[self.index]?.page.shownHash == hash else { return }
                     self.axCache = (hash, lines.value, nil)
                 }
             }

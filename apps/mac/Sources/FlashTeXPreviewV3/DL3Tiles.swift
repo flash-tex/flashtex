@@ -331,7 +331,8 @@ extension DL3Renderer {
     /// page is drawn whole, cut from one `DL3PageRaster`.
     public static func clipExact(_ prepared: DL3PreparedPage) -> Bool {
         let p = prepared.page
-        guard p.box[0] == 0, p.box[1] == 0, !prepared.needsPDFFallback, finiteRules(prepared) else { return false }
+        // (a turned page, `/Rotate`, is drawn whole: its tiles were never measured)
+        guard p.quarterTurns == 0, p.box[0] == 0, p.box[1] == 0, !prepared.needsPDFFallback, finiteRules(prepared) else { return false }
         return !p.items.contains { switch $0 { case .path, .clip, .image, .form: true; case .textRender(let m): m == 1 || m == 2; default: false } }
     }
 
@@ -385,7 +386,7 @@ extension DL3Renderer {
     /// Graphics' stroker there. Their pages are cut from one raster: exact.
     public static func tilesByTranslation(_ prepared: DL3PreparedPage) -> Bool {
         let p = prepared.page
-        guard p.box[0] == 0, p.box[1] == 0, !prepared.needsPDFFallback, finiteRules(prepared) else { return false }
+        guard p.quarterTurns == 0, p.box[0] == 0, p.box[1] == 0, !prepared.needsPDFFallback, finiteRules(prepared) else { return false }
         // Type 3 glyphs (image masks, merged from main after the tile sweeps)
         // were never measured by translation: their pages are cut from one raster.
         if prepared.fonts.values.contains(where: { $0.type3 != nil }) { return false }
@@ -819,17 +820,16 @@ public final class DL3PageRaster: @unchecked Sendable {
     /// its media box's (`gridSize(pdfPage:scale:)`); a dark pane passes its
     /// tiles through `DL3Renderer.pdfTiles`.
     public convenience init?(pdfPage: CGPDFPage, scale: Double, smoothFonts: Bool = false) {
-        let box = pdfPage.getBoxRect(.mediaBox)
+        let box = DL3Renderer.shownSize(pdfPage)
         self.init(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
             if smoothFonts { DL3Renderer.setFontSmoothing(true, in: ctx) }
-            ctx.translateBy(x: -box.minX, y: -box.minY)
-            DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+            DL3Renderer.drawShown(pdfPage, in: ctx)
         }
     }
 
     /// The pixel grid a PDF page's raster (and so its tiles) has at `scale`.
     public static func gridSize(pdfPage: CGPDFPage, scale: Double) -> (width: Int, height: Int) {
-        let box = pdfPage.getBoxRect(.mediaBox)
+        let box = DL3Renderer.shownSize(pdfPage)
         return DL3Renderer.pixelSize(widthPt: box.width, heightPt: box.height, scale: scale)
     }
 

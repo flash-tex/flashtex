@@ -27,7 +27,7 @@ python3 tools/displaylist/check_positions.py --pt2 --root fixtures/preview-probe
 ```
 
 Measured on mac-m5pro-kabir with TeX Live 2026 (pdfTeX 1.40.29), 2026-11-01:
-positions 10/10 exact, P-T2 10/10.
+positions 10/10 exact, P-T2 10/10 (`pv-rotate`, added later: 1/1).
 
 | probe | what it draws | what the display list does |
 |---|---|---|
@@ -40,7 +40,8 @@ positions 10/10 exact, P-T2 10/10.
 | `pv-pdf-inclusion` | included PDF pages with `/Rotate` 0/90/180/270, a CropBox off the MediaBox origin (crop and media), `/UserUnit 2`, and a page without colour operators drawn in black, red, blue and under a 4 bp pen | drawn |
 | `pv-annots` | `\pdfstartlink` without and with `/Border`, hyperref's default link boxes, a `/Square` annotation with an `/AP` stream | drawn (annotations are not content; a Core Graphics reference draws none) |
 | `pv-fonts` | Times through its T1 VF (ligatures, kerns), italic, SlantFont and ExtendFont from the map, small caps, microtype expansion and letter spacing, Latin Modern T1 accents | drawn |
-| `pv-page-attrs` | a page with a `\pdfpageattr` transparency `/Group`, and a pdflscape `/Rotate 90` page | drawn (`/Rotate` from `\pdfpageattr` is not in the display list, and the sweep's reference ignores it too) |
+| `pv-page-attrs` | a page with a `\pdfpageattr` transparency `/Group`, and a pdflscape `/Rotate 90` page | drawn; the landscape page turned (PAGE flags ROTATE, spec §4.7), and so is the sweep's reference |
+| `pv-rotate` | `/Rotate` 90, 180, −90 from `\pdfpageattr`, after another key, inherited 270 from `\pdfpagesattr`, a pdflscape page, an own 0 over the inherited 270 | drawn turned; the reference renders the PDF page turned by the same transform (`DL3Renderer.turn`) |
 
 Inputs: `make_inputs.py` writes the PNGs and `pv-pdf-inclusion/pages.pdf`
 (plain zlib and hand-written PDF, deterministic). The JPEGs were made once on

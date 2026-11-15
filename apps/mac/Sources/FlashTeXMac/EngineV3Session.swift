@@ -2019,7 +2019,8 @@ final class EngineV3Session {
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
             guard index < Self.maxPages else { log("PAGE \(index) ignored: beyond \(Self.maxPages) pages"); return }
-            let changed = pages[index]?.page.hash != p.page.hash
+            // (`shownHash`: a page turned by a new `/Rotate` alone has changed too)
+            let changed = pages[index]?.page.shownHash != p.page.shownHash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
             heldForms[index] = nil
@@ -3039,7 +3040,7 @@ final class EngineV3Reader: @unchecked Sendable {
                     // On screen now, from this thread: the main thread only records it.
                     let committed = target.install(img, ticket: ticket)
                     image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
-                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth),
+                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.shownHash, look, smoothFonts: smooth),
                                            smoothFonts: smooth)
                 } else {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds

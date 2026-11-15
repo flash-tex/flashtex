@@ -1,0 +1,32 @@
+% Preview probe: page /Rotate, as a viewer turns the page to show it. From
+% \pdfpageattr (90, 180, -90), from pdflscape's landscape environment, and
+% inherited from \pdfpagesattr (the /Pages node) by a page without its own.
+% One case per page; each page carries an asymmetric mark (a rule in the
+% top-left corner) so which way it turned shows.
+\documentclass{article}
+\usepackage{pdflscape}
+\pagestyle{empty}
+\pdfpagesattr{/Rotate 270}
+\newcommand\cornermark{\noindent\rule{2cm}{4pt}\par\medskip}
+\begin{document}
+\pdfpageattr{/Rotate 90}
+\cornermark A page with /Rotate 90 in \verb|\pdfpageattr|.
+\newpage
+\pdfpageattr{/Rotate 180}
+\cornermark /Rotate 180.
+\newpage
+\pdfpageattr{/Rotate -90}
+\cornermark /Rotate -90.
+\newpage
+\pdfpageattr{/Group << /S /Transparency /CS /DeviceRGB >> /Rotate 90}
+\cornermark /Rotate 90 after another key.
+\newpage
+\pdfpageattr{}
+\cornermark No /Rotate of its own: it inherits /Rotate 270 from \verb|\pdfpagesattr|.
+\newpage
+\begin{landscape}
+\cornermark A pdflscape landscape page (it adds /Rotate 90 to \verb|\pdfpageattr|).
+\end{landscape}
+\pdfpageattr{/Rotate 0}
+\cornermark /Rotate 0 of its own, over the inherited 270.
+\end{document}

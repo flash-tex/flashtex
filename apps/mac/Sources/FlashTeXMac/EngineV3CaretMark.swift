@@ -369,11 +369,13 @@ extension EngineV3PagesView {
         defer { CATransaction.commit() }
         let layer = caretMarkLayer
         if layer.superlayer == nil { self.layer?.addSublayer(layer) }
-        guard let m = caretMark, let origin = viewPoint(page: m.page, .zero), let s = viewPoint(page: m.page, CGPoint(x: 1, y: 0)).map({ $0.x - origin.x }) else {
+        guard let m = caretMark, viewPoint(page: m.page, .zero) != nil else {
             layer.isHidden = true
             return
         }
-        func view(_ r: CGRect) -> CGRect { CGRect(x: origin.x + r.minX * s, y: origin.y + r.minY * s, width: r.width * s, height: r.height * s) }
+        // Through the page's `/Rotate`, as its image is drawn.
+        func view(_ r: CGRect) -> CGRect { viewRect(page: m.page, r) }
+        let s = view(CGRect(x: 0, y: 0, width: 1, height: 1)).width
         let dark = pageAppearance == .dark
         let accent = NSColor.controlAccentColor
         let band = CGMutablePath()
@@ -383,7 +385,7 @@ extension EngineV3PagesView {
         layer.band.fillColor = accent.withAlphaComponent(dark ? DS.Preview.paragraphBandOpacityDark : DS.Preview.paragraphBandOpacity).cgColor
         layer.glyph.path = m.glyph.map { CGPath(rect: view($0), transform: nil) }
         layer.glyph.fillColor = accent.withAlphaComponent(DS.Preview.hoverHighlightOpacity).cgColor
-        layer.bar.path = m.bar.map { b in CGPath(rect: view(b).insetBy(dx: -0.75, dy: 0), transform: nil) }
+        layer.bar.path = m.bar.map { b in CGPath(rect: view(b.insetBy(dx: -0.75 / s, dy: 0)), transform: nil) }
         layer.bar.fillColor = accent.cgColor
         layer.frame = bounds
         for l in [layer.band, layer.glyph, layer.bar] { l.frame = layer.bounds }
