@@ -2196,16 +2196,24 @@ fn a_converged_run_writes_what_a_run_of_its_own_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The line-break iterator across a restart from a page (`crate::conv`'s
-/// branch restore): the old run left XeTeX_ext.c's iterator open for the
-/// locale string `"zh"`; an edit to `"ja"` makes the same string number
-/// in the restarted run, so `linebreak_start` keeps whatever iterator the
-/// restore left open. The restarted run must break the Japanese text as a
-/// run of its own does (ICU's `line_normal`, not `line_cj`).
+/// The line-break iterator across a convergence restart from S0 (the run
+/// restarts at `s0`, and the convergence tests restore branches with
+/// `Globals::restore_branch`): the old run left XeTeX_ext.c's iterator
+/// open for the locale string `"zh"`; an edit to `"ja"` makes the same
+/// string number in the restarted run, so `linebreak_start` keeps whatever
+/// iterator the restore left open. The restarted run must break the
+/// Japanese text as a run of its own does (ICU's `line_normal`, not
+/// `line_cj`). #2238's test covers a restart from a page (ja-JP to zh-CN).
 #[test]
-fn a_restart_from_a_page_reopens_the_line_break_iterator_it_had() {
-    if !texlive() {
-        eprintln!("skipped: no TeX Live");
+fn a_restart_from_s0_reopens_the_line_break_iterator_it_had() {
+    let ipaex = texlive()
+        && flashtex_engine::system::find_file(
+            "ipaexm.ttf",
+            flashtex_engine::resolver::Format::TrueType,
+        )
+        .is_some();
+    if !ipaex {
+        eprintln!("skipped: no TeX Live or no ipaexm.ttf (TeX Live's ipaex)");
         return;
     }
     let dir = std::env::temp_dir().join(format!("flashtex-host-brk-{}", std::process::id()));
