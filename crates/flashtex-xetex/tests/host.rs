@@ -2547,6 +2547,16 @@ fn the_font_lists_name_the_families_a_lookup_finds() {
 /// vouched for by the kernel's events at the next compile's check of S₀
 /// (no `stat`), and a change to it is still seen: the compile after it
 /// runs the preamble again.
+///
+/// The host runs with no racy window (`FLASHTEX_RACY_MS=0`, as
+/// `flashtex_runtime::fswatch`'s own test): a signature is racy, and never
+/// kept, within 2 s of the file's modification time *or its change time*
+/// (`StatSig`), and the change time of a file just written cannot be put
+/// back. With the window, the second compile's check kept the signature
+/// only where the first two compiles took over 2 s: a cold format build,
+/// or a slow runner. A warm M5 Pro takes 0.6 s, and the test failed there
+/// every time (main's `rust flashtex-xetex (macos-15)`, run 42912571683).
+/// Without the window the change is seen by the watcher's event alone.
 #[test]
 fn files_outside_the_document_are_watched_and_their_changes_seen() {
     if !texlive() {
@@ -2555,17 +2565,12 @@ fn files_outside_the_document_are_watched_and_their_changes_seen() {
     }
     let dir = std::env::temp_dir().join(format!("flashtex-host-fswatch-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    // the file outside the document, its time in the past (a signature taken
-    // within its file's time tick is racy: compared by content, not kept)
+    // the file outside the document
     let ext = dir.join("ext").join("ext.tex");
     std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
-    let write_ext = |word: &str, ago: u64| {
-        std::fs::write(&ext, format!("\\def\\extword{{{word}}}\n")).unwrap();
-        let f = std::fs::File::options().write(true).open(&ext).unwrap();
-        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(ago))
-            .unwrap();
-    };
-    write_ext("Alpha", 7200);
+    let write_ext =
+        |word: &str| std::fs::write(&ext, format!("\\def\\extword{{{word}}}\n")).unwrap();
+    write_ext("Alpha");
     let ext = std::fs::canonicalize(&ext).unwrap();
     let doc = |body: &str| {
         format!(
@@ -2576,7 +2581,11 @@ fn files_outside_the_document_are_watched_and_their_changes_seen() {
     };
     let (proj, out) = project(&dir, &doc("One"));
     let err = dir.join("host.err");
-    let h = start_with(&dir, &[("FLASHTEX_FSWATCH_DEBUG", "1")], &err);
+    let h = start_with(
+        &dir,
+        &[("FLASHTEX_FSWATCH_DEBUG", "1"), ("FLASHTEX_RACY_MS", "0")],
+        &err,
+    );
     let mut c = Client::connect(&h.sock).unwrap();
     let log = || std::fs::read_to_string(Path::new(&out).join("main.log")).unwrap();
     let compile = |c: &mut Client, id: i64, text: String| {
@@ -2592,9 +2601,10 @@ fn files_outside_the_document_are_watched_and_their_changes_seen() {
     // signature from the watcher's first `stat` of it
     compile(&mut c, 2, doc("Two"));
     assert!(log().contains("EXT:Alpha"), "{}", log());
-    // the file changes (another time in the past): the next compile's check
-    // sees its event, `stat`s it again, and the preamble runs again
-    write_ext("Beta", 3600);
+    // the file changes (to another length: its signature differs on any
+    // file system's time stamps): the next compile's check sees its event,
+    // `stat`s it again, and the preamble runs again
+    write_ext("Beta");
     compile(&mut c, 3, doc("Two"));
     assert!(log().contains("EXT:Beta"), "{}", log());
     c.bye().unwrap();
