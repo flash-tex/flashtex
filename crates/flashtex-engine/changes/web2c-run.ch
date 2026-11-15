@@ -332,15 +332,6 @@ if error_line > ssup_error_line then error_line := ssup_error_line;
 history:=fatal_error_stop; {in case we quit during initialization}
 @z
 
-@x pdftex.web l.33397 - tex.ch [51.1332]: only INITEX fixes the date here (|Init|)
-init_str_ptr:=str_ptr; init_pool_ptr:=pool_ptr; fix_date_and_time;
-@y
-init_str_ptr:=str_ptr; init_pool_ptr:=pool_ptr;
-if ini_version then fix_date_and_time;
-  {tex.ch's |Init|: a production run fixes the date once, in \S1337, so
-   texmfmp.c's warning for a bad \.{FORCE\_SOURCE\_DATE} is printed once}
-@z
-
 @x pdftex.web l.33583 - tex.ch [51.1337]: a `%&format' line names the format
 if (format_ident=0)or(buffer[loc]="&") then
 @y
