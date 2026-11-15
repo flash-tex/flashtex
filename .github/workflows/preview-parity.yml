@@ -63,6 +63,10 @@ on:
         description: scales in px/pt, comma-separated (the 31-scale sweep is 1,1.14,1.25,...,8)
         type: string
         default: '1,2,4'
+      inputs_run:
+        description: reuse this run's preview-parity-inputs (skips the Linux job)
+        type: string
+        default: ''
 
 concurrency:
   group: preview-parity-${{ github.ref }}
@@ -70,6 +74,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -85,6 +90,7 @@ env:
 jobs:
   inputs:
     name: sweep inputs (display lists, PDFs; positions, P-T2)
+    if: inputs.inputs_run == ''
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -169,7 +175,7 @@ jobs:
   sweep:
     name: zero-tolerance sweep (macOS)
     needs: [inputs]
-    if: always() && needs.inputs.outputs.uploaded == 'true'
+    if: always() && (needs.inputs.outputs.uploaded == 'true' || inputs.inputs_run != '')
     # macos-26 only, as ci.yml's mac app. macos-15's newest Xcode (26.3, Swift
     # 6.2.4) cannot type-check the app (Fonts.swift:61 and a test, "unable to
     # type-check this expression in reasonable time"; run 37372777558); the
@@ -193,6 +199,8 @@ jobs:
         with:
           name: preview-parity-inputs
           path: ${{ env.DL3 }}
+          run-id: ${{ inputs.inputs_run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: swift test --filter PreviewParityTests (tolerance 0)
         working-directory: apps/mac
         env:
