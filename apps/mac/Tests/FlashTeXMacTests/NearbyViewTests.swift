@@ -102,7 +102,7 @@ final class NearbyViewControllerTests: XCTestCase {
         XCTAssertEqual(a.generation, 1)
         XCTAssertEqual(c.journal.pending, a, "the attempt is durable as soon as it is shown")
         XCTAssertEqual(c.journal.generation, 1)
-        XCTAssertEqual(announced.last, "Pairing code \(Pairing.spokenCode(a.code)), valid for 120 seconds.")
+        XCTAssertEqual(announced.last, "Pairing code shown, valid for 120 seconds.")
         try await waitUntil("advertising with the bootstrap key") { state.isAdvertising && state.port != nil }
         XCTAssertTrue(c.machine.isAdvertising)
         XCTAssertFalse(c.phase.canShowCode(), "one code at a time")
@@ -253,7 +253,7 @@ final class NearbyViewControllerTests: XCTestCase {
     /// lifetime without touching `Pairing.codeLifetime`.
     func testExpiredCodeRollsInPlaceAndOnlyTheNewCodePairs() async throws {
         let journal = PairingJournal(url: dir.appendingPathComponent("pairing-session.json"))
-        let short = PairingFlow.Attempt(generation: journal.nextGeneration(), code: "222222", pairId: "short",
+        let short = PairingFlow.Attempt(generation: journal.nextGeneration(), code: Pairing.generateCode(), pairId: "short",
                                         startedAt: Date(), expiresAt: Date().addingTimeInterval(1.2))
         journal.setPending(short)
         let (state, _) = makeState()
@@ -270,7 +270,7 @@ final class NearbyViewControllerTests: XCTestCase {
         XCTAssertGreaterThan(rolled.expiresAt, short.expiresAt)
         XCTAssertEqual(c.journal.pending, rolled, "the rolled code is journaled")
         XCTAssertEqual(c.journal.generation, 2)
-        XCTAssertTrue(announced.last?.hasPrefix("The pairing code expired unused. New pairing code \(Pairing.spokenCode(rolled.code)), valid for") == true,
+        XCTAssertTrue(announced.last?.hasPrefix("The pairing code expired unused. New pairing code shown, valid for") == true,
                       "\(announced)")
         try await waitUntil("transport serves the new code") { state.pairingCode == rolled.code && state.coordinator.current?.code == rolled.code }
         XCTAssertEqual(state.coordinator.current?.generation, 2)
@@ -304,7 +304,8 @@ final class NearbyViewControllerTests: XCTestCase {
     func testResumedCodeExpiresIntoAnErrorStateAndDropsTheKey() async throws {
         // At the roll cap, expiry is the pre-rolling failure path.
         let journal = PairingJournal(url: dir.appendingPathComponent("pairing-session.json"))
-        var short = PairingFlow.Attempt(generation: journal.nextGeneration(), code: "222222", pairId: "short",
+        let code = Pairing.generateCode()
+        var short = PairingFlow.Attempt(generation: journal.nextGeneration(), code: code, pairId: "short",
                                         startedAt: Date(), expiresAt: Date().addingTimeInterval(1.2))
         short.rolls = Pairing.maxCodeRolls
         journal.setPending(short)
@@ -313,8 +314,8 @@ final class NearbyViewControllerTests: XCTestCase {
         XCTAssertTrue(c.phase.canResume())
         c.resume()
         guard case .codeShown(let shown) = c.phase, shown.code == short.code else { return XCTFail("\(c.phase)") }
-        XCTAssertEqual(state.coordinator.current?.code, "222222")
-        XCTAssertEqual(state.pairingCode, "222222")
+        XCTAssertEqual(state.coordinator.current?.code, code)
+        XCTAssertEqual(state.pairingCode, code)
         try await waitUntil("expired", timeout: 5) { if case .failed = c.phase { return true }; return false }
         XCTAssertEqual(c.phase, .failed(reason: "The pairing code expired before a companion paired.", generation: 1))
         XCTAssertNil(c.journal.pending)
@@ -326,7 +327,24 @@ final class NearbyViewControllerTests: XCTestCase {
         state.stopAdvertising()
     }
 
-    // MARK: stale reconnects and replacement
+        func testAWeakResumedCodeFailsAndClearsThePendingAttempt() throws {
+        let journal = PairingJournal(url: dir.appendingPathComponent("pairing-session.json"))
+        let weak = PairingFlow.Attempt(generation: journal.nextGeneration(), code: "222222", pairId: "weak",
+                                       startedAt: Date(), expiresAt: Date().addingTimeInterval(60))
+        journal.setPending(weak)
+        let (state, _) = makeState()
+        let c = makeController(state)
+        XCTAssertTrue(c.phase.canResume())
+        c.resume()
+        guard case .failed(let reason, _) = c.phase else { return XCTFail("\(c.phase)") }
+        XCTAssertTrue(reason.contains("no longer accepted"), reason)
+        XCTAssertNil(c.journal.pending)
+        XCTAssertNil(state.coordinator.current)
+        XCTAssertNil(state.pairingCode)
+        state.stopAdvertising()
+    }
+
+// MARK: stale reconnects and replacement
 
     func testReplacedCodeMakesTheOldSessionStaleEndToEnd() async throws {
         let (state, _) = makeState()

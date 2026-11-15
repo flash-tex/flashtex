@@ -7,17 +7,19 @@ import Foundation
 /// `NearbyBootstrapPayload`), so scanning is equivalent to typing the code and
 /// picking the Mac by fingerprint:
 ///
-///     flashtex-nearby://pair?v=1&code=123456&salt=<32 hex>&fp=<16 hex>&name=<Mac name>
+///     flashtex-nearby://pair?v=2&code=<52 base32>&salt=<32 hex>&fp=<16 hex>&name=<Mac name>
 ///
 /// `salt` is the Mac's TXT salt (the companion derives the bootstrap key from
 /// code + salt); `fp` is derived from it and lets the companion match the
 /// Bonjour result without connecting; `name` is display only. Nothing here is
 /// secret beyond the code itself, which is already shown next to the image.
-/// The nearby `protocol_version` stays 1: no wire message changes.
+/// The nearby `protocol_version` stays 1: no wire message changes. Payload
+/// `v=2` carries the 256-bit code (`Pairing.generateCode`); `v=1` carried six
+/// digits and is refused, as is any code that is not full strength.
 struct PairingBootstrapPayload: Equatable {
     static let scheme = "flashtex-nearby"
     static let host = "pair"
-    static let version = "1"
+    static let version = "2"
 
     var code: String
     var salt: Data
@@ -54,8 +56,8 @@ struct PairingBootstrapPayload: Equatable {
         var q: [String: String] = [:]
         for item in c.queryItems ?? [] { q[item.name] = item.value ?? "" }
         guard q["v"] == version else { return .failure(.init(reason: "payload version \(q["v"] ?? "missing") is not \(version)")) }
-        guard let code = q["code"], code.count == Pairing.codeLength, code.allSatisfy(\.isNumber) else {
-            return .failure(.init(reason: "code must be \(Pairing.codeLength) digits"))
+        guard let code = q["code"].flatMap(Pairing.canonicalCode) else {
+            return .failure(.init(reason: "code must be the \(Pairing.codeLength)-character code"))
         }
         guard let saltHex = q["salt"], let salt = Pairing.data(hex: saltHex), salt.count == Pairing.saltLength else {
             return .failure(.init(reason: "salt must be \(Pairing.saltLength) hex bytes"))
@@ -69,7 +71,7 @@ struct PairingBootstrapPayload: Equatable {
 /// QR rendering with CoreImage's built-in generator (no third-party code).
 enum PairingQR {
     /// Error-correction level: M (15 %) keeps the module count low for a
-    /// ~110-character payload while surviving a smudged screen.
+    /// ~170-character payload while surviving a smudged screen.
     static let correctionLevel = "M"
 
     /// The payload as a crisp, `side`-pixel square (nearest-neighbour scaled

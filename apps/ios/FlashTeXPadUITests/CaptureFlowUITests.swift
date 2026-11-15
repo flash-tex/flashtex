@@ -11,7 +11,7 @@ import XCTest
 /// bundled-sample-image path (the camera does not exist in the simulator).
 final class CaptureFlowUITests: XCTestCase {
     let salt = Data((0..<16).map { UInt8($0 * 3 + 5) })
-    let code = "731904"
+    let code = "7319040123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
     var mac: FakeMac!
 
     override func setUpWithError() throws {

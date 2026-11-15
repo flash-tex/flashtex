@@ -293,6 +293,10 @@ final class NearbyState: ObservableObject {
             if let id { receivingBytes.removeValue(forKey: id) }
             if let id, let i = connectedPairIds.firstIndex(of: id) { connectedPairIds.remove(at: i) }
             note("closed \(id ?? "unauthenticated"): \(reason)")
+        case .handshakeRefused(let address, let failures, let wait):
+            note("refused \(address) before TLS: \(failures) failed handshakes, retry in \(wait) s")
+        case .handshakePending(let address, let pending):
+            note("refused \(address) before TLS: \(pending) handshakes from it already in progress")
         }
     }
 
@@ -314,10 +318,16 @@ final class NearbyState: ObservableObject {
 
     /// Resumes an attempt that was interrupted (relaunch, advertising off):
     /// serves `code` until `expiresAt` with the same published code/expiry and
-    /// timer as `beginPairing()`. An already expired attempt is not resumed.
+    /// timer as `beginPairing()`. An already expired attempt is not resumed,
+    /// nor one journaled by an older build with a weak (six-digit) code: its
+    /// handshake could be cracked offline (proposal §5).
     func beginPairing(resuming code: String, expiresAt: Date, generation: Int? = nil) {
         guard expiresAt > Date() else {
             note("not resuming pairing code: already expired")
+            return
+        }
+        guard Pairing.canonicalCode(code) == code else {
+            note("not resuming pairing code: not a full-strength code")
             return
         }
         if !wantAdvertising { wantAdvertising = true }

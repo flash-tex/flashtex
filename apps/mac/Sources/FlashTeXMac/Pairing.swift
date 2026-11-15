@@ -3,12 +3,24 @@ import Foundation
 
 /// Pairing-code derivation for the nearby transport (proposal nearby-v1).
 ///
-/// The Mac shows a short code; both sides derive the same bootstrap PSK and
-/// `pair_id` from (code, Mac salt) with HKDF-SHA256. The bootstrap PSK only
-/// authenticates the first connection: the Mac then mints a random 32-byte
-/// long-term PSK and hands it over inside that TLS session (`hello_ack.pair_psk`).
+/// The Mac shows a code (a QR image, and the same code as text); both sides
+/// derive the same bootstrap PSK and `pair_id` from (code, Mac salt) with
+/// HKDF-SHA256. The bootstrap PSK only authenticates the first connection:
+/// the Mac then mints a random 32-byte long-term PSK and hands it over inside
+/// that TLS session (`hello_ack.pair_psk`).
+///
+/// A code is 32 bytes from the system CSPRNG written as 52 Crockford base32
+/// characters. PSK-only TLS has no forward secrecy, so whoever records the
+/// bootstrap handshake can test codes offline at leisure: the former 6-digit
+/// code (~20 bits) fell to that in about a second; 256 bits do not
+/// (proposal §5).
 enum Pairing {
-    static let codeLength = 6
+    /// Random bytes behind one code.
+    static let codeSecretBytes = 32
+    /// Base32 characters of one code (⌈256 / 5⌉).
+    static let codeLength = 52
+    /// Crockford's alphabet: no I, L, O or U.
+    static let codeAlphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
     static let codeLifetime: TimeInterval = 120
     /// How many times a shown code that expired unused is replaced in place
     /// (fresh code, next generation, same window) before the attempt fails:
@@ -27,11 +39,44 @@ enum Pairing {
         let psk: Data
     }
 
-    /// Six decimal digits from the system CSPRNG (~20 bits; see the proposal's
-    /// threat model for why this is only a bootstrap secret).
-    static func generateCode() -> String {
-        var g = SystemRandomNumberGenerator()
-        return (0..<codeLength).map { _ in String(Int.random(in: 0...9, using: &g)) }.joined()
+    /// 32 random bytes as 52 base32 characters (256 bits).
+    static func generateCode() -> String { base32(randomBytes(codeSecretBytes)) }
+
+    /// Crockford base32, most significant bit first; the last character
+    /// carries the final bits padded with zeros.
+    static func base32(_ data: Data) -> String {
+        var out = ""
+        var acc = 0, bits = 0
+        for b in data {
+            acc = (acc << 8) | Int(b)
+            bits += 8
+            while bits >= 5 {
+                bits -= 5
+                out.append(codeAlphabet[(acc >> bits) & 31])
+            }
+            acc &= (1 << bits) - 1
+        }
+        if bits > 0 { out.append(codeAlphabet[(acc << (5 - bits)) & 31]) }
+        return out
+    }
+
+    /// The canonical form of a typed, pasted or scanned code, or nil when it
+    /// is not a full-strength code: spaces and hyphens dropped, letters
+    /// upper-cased, `O` read as 0 and `I`/`L` as 1 (Crockford), exactly
+    /// `codeLength` characters of the alphabet.
+    static func canonicalCode(_ typed: String) -> String? {
+        var out = ""
+        for c in typed.uppercased() {
+            switch c {
+            case " ", "-", "\t", "\n": continue
+            case "O": out.append("0")
+            case "I", "L": out.append("1")
+            default:
+                guard codeAlphabet.contains(c) else { return nil }
+                out.append(c)
+            }
+        }
+        return out.count == codeLength ? out : nil
     }
 
     static func generateSalt() -> Data { randomBytes(saltLength) }
@@ -42,9 +87,11 @@ enum Pairing {
     }
 
     /// Deterministic: the companion runs the same derivation from the code it
-    /// typed and the `salt=` TXT value.
+    /// typed and the `salt=` TXT value. A full-strength code is derived from
+    /// its canonical form (spacing and case do not matter); any other string,
+    /// such as the proposal's "123456" vector, is derived as given.
     static func derive(code: String, salt: Data) -> Derived {
-        let ikm = SymmetricKey(data: Data(code.utf8))
+        let ikm = SymmetricKey(data: Data((canonicalCode(code) ?? code).utf8))
         let psk = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt, info: pskInfo, outputByteCount: pskLength)
         let id = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt, info: pairIDInfo, outputByteCount: 8)
         return Derived(pairId: hex(id.withUnsafeBytes { Data($0) }), psk: psk.withUnsafeBytes { Data($0) })
@@ -368,28 +415,29 @@ extension Pairing {
     /// ISO-8601 UTC seconds, for logs and journal evidence.
     static func stamp(_ date: Date) -> String { iso.string(from: date) }
 
-    /// Digits separated by spaces ("123 456"), what the window displays.
-    static func displayCode(_ code: String) -> String {
-        stride(from: 0, to: code.count, by: 3).map { i -> String in
-            let s = code.index(code.startIndex, offsetBy: i)
-            let e = code.index(s, offsetBy: 3, limitedBy: code.endIndex) ?? code.endIndex
-            return String(code[s..<e])
-        }.joined(separator: " ")
-    }
+    /// Groups of four separated by spaces ("ABCD EFGH …"), what the window
+    /// displays; a typed copy may keep or drop the spaces.
+    static func displayCode(_ code: String) -> String { codeGroups(code).joined(separator: " ") }
 
-    /// One digit per word, grouped in pairs with a pause between the groups
-    /// ("1 2, 3 4, 5 6") so VoiceOver spells the code the way it is typed.
+    /// One character per word, groups of four with a pause between them
+    /// ("1 2 3 4, 5 6") so VoiceOver spells the code the way it is shown.
     static func spokenCode(_ code: String) -> String {
-        stride(from: 0, to: code.count, by: 2).map { i -> String in
-            let s = code.index(code.startIndex, offsetBy: i)
-            let e = code.index(s, offsetBy: 2, limitedBy: code.endIndex) ?? code.endIndex
-            return code[s..<e].map(String.init).joined(separator: " ")
-        }.joined(separator: ", ")
+        codeGroups(code).map { $0.map(String.init).joined(separator: " ") }.joined(separator: ", ")
     }
 
-    /// What "Copy code" and ⌘C on the code put on the pasteboard: the digits
+    private static func codeGroups(_ code: String) -> [String] {
+        stride(from: 0, to: code.count, by: 4).map { i -> String in
+            let s = code.index(code.startIndex, offsetBy: i)
+            let e = code.index(s, offsetBy: 4, limitedBy: code.endIndex) ?? code.endIndex
+            return String(code[s..<e])
+        }
+    }
+
+    /// What "Copy code" and ⌘C on the code put on the pasteboard: the code
     /// without the display spacing, ready to paste into the companion.
-    static func clipboardCode(_ code: String) -> String { code.filter(\.isNumber) }
+    static func clipboardCode(_ code: String) -> String {
+        canonicalCode(code) ?? code.filter { $0.isLetter || $0.isNumber }
+    }
 }
 
 // MARK: - pairing flow state machine
@@ -581,7 +629,7 @@ enum PairingFlow {
                 generation = a.generation
                 isAdvertising = true
                 phase = .codeShown(a)
-                return Outcome(effects: [.persist(a), .announce("Pairing code \(Pairing.spokenCode(a.code)), valid for \(Int(a.remaining(at: now).rounded(.up))) seconds.")])
+                return Outcome(effects: [.persist(a), .announce("Pairing code shown, valid for \(Int(a.remaining(at: now).rounded(.up))) seconds.")])
 
             case .restored(let a):
                 guard a.generation >= generation else { return .staleInput }
@@ -631,7 +679,7 @@ enum PairingFlow {
                     generation = next.generation
                     phase = .codeShown(next)
                     return Outcome(effects: [.persist(next), .resumeTransport(next),
-                                             .announce("The pairing code expired unused. New pairing code \(Pairing.spokenCode(next.code)), valid for \(Int(next.remaining(at: now).rounded(.up))) seconds.")])
+                                             .announce("The pairing code expired unused. New pairing code shown, valid for \(Int(next.remaining(at: now).rounded(.up))) seconds.")])
                 case .codeShown(let a), .verifying(let a):
                     guard a.generation == g else { return .staleInput }
                     phase = .failed(reason: "The pairing code expired before a companion paired.", generation: g)
@@ -781,12 +829,18 @@ enum PairingFlow {
                     phase = .failed(reason: "The pairing code expired before it could be resumed.", generation: a.generation)
                     return Outcome(effects: [.clearJournal, .announce("The pairing code expired; show a new code.")])
                 }
+                // The transport refuses a journaled code that is not full strength
+                // (written by an older build); showing it would display a code nobody serves.
+                if Pairing.canonicalCode(a.code) != a.code {
+                    phase = .failed(reason: "The saved pairing code is no longer accepted; start pairing again.", generation: a.generation)
+                    return Outcome(effects: [.clearJournal, .announce("The saved pairing code is no longer accepted; show a new code.")])
+                }
                 phase = .codeShown(a)
                 isAdvertising = true
                 // The transport still holds the key after a peer dropped; it must
                 // be told again after a relaunch or a listener failure.
                 let effects: [Effect] = why == .peerGone ? [] : [.resumeTransport(a)]
-                return Outcome(effects: effects + [.announce("Resumed pairing code \(Pairing.spokenCode(a.code)), \(Int(a.remaining(at: now).rounded(.up))) seconds left.")])
+                return Outcome(effects: effects + [.announce("Resumed pairing code, \(Int(a.remaining(at: now).rounded(.up))) seconds left.")])
 
             case .dismiss:
                 switch phase {
@@ -886,7 +940,7 @@ extension PairingFlow.Phase {
             case .transportStopped: base = "The listener stopped serving the code"
             }
             if a.isExpired(at: now) { return "\(base) (\(detail)); the code has expired. Dismiss it or show a new code." }
-            return "\(base) (\(detail)). Code \(Pairing.displayCode(a.code)) is still valid for \(Int(a.remaining(at: now).rounded(.up))) s: resume or cancel."
+            return "\(base) (\(detail)). The code is still valid for \(Int(a.remaining(at: now).rounded(.up))) s: resume or cancel."
         case .failed(let reason, _): return reason
         }
     }
@@ -895,10 +949,10 @@ extension PairingFlow.Phase {
     /// countdown churn, so VoiceOver does not re-announce every second.
     func accessibilityValue(now: Date = Date()) -> String {
         switch self {
-        case .codeShown(let a): return "Code \(Pairing.spokenCode(a.code)). Enter it on the companion, or scan the QR code."
+        case .codeShown: return "Pairing code shown. Scan the QR code with the companion, or type the code."
         case .verifying: return "A companion connected; waiting for its hello."
         case .interrupted(let a, _, let detail):
-            return a.isExpired(at: now) ? "\(detail). The code has expired." : "\(detail). Code \(Pairing.spokenCode(a.code)) is still valid."
+            return a.isExpired(at: now) ? "\(detail). The code has expired." : "\(detail). The code is still valid."
         default: return detail(now: now)
         }
     }

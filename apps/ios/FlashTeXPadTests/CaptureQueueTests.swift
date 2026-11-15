@@ -14,7 +14,7 @@ final class CaptureQueueTests: XCTestCase {
     var mac: FakeMac!
     var model: PadModel!
     let salt = Data((0..<16).map { UInt8($0 + 11) })
-    let code = "205577"
+    let code = "2055770123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
 
     override func setUp() async throws {
         let d = NearbyCrypto.derive(code: code, salt: salt)

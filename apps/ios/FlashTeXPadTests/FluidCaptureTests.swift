@@ -14,7 +14,7 @@ final class FluidCaptureTests: XCTestCase {
     var mac: FakeMac!
     var model: PadModel!
     let salt = Data((0..<16).map { UInt8($0 + 41) })
-    let code = "482913"
+    let code = "4829130123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
     var store: PairFile!
 
     override func setUp() async throws {
@@ -124,7 +124,7 @@ final class FluidCaptureTests: XCTestCase {
 @MainActor
 final class DestinationCaretContextTests: XCTestCase {
     let salt = Data((0..<16).map { UInt8($0 + 7) })
-    let code = "731559"
+    let code = "7315590123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
     var mac: FakeMac!
     var model: PadModel!
 

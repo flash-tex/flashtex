@@ -371,7 +371,8 @@ FT-004's. What is implemented here (Mac side only):
 - Discovery: Bonjour `_flashtex._tcp`, instance name = the Mac's name, TXT
   `v=1`, `name=<Mac name>`, `fp=<16 hex, SHA-256 of "flashtex-nearby-v1 mac-id"‖salt>`,
   `salt=<32 hex>`. Discovery only; nothing in TXT is trusted.
-- Pairing: "Show Pairing Code" displays a 6-digit CSPRNG code for 120 s. Both
+- Pairing: "Show Pairing Code" displays, for 120 s, a QR image and the same
+  code as text: 32 CSPRNG bytes as 52 Crockford base32 characters. Both
   sides derive a bootstrap PSK and `pair_id` with HKDF-SHA256 from
   (code, salt) (`Pairing.derive`; pinned vector in `PairingTests`). The first
   `hello` over that key returns a random 32-byte long-term `pair_psk`; the
@@ -407,9 +408,10 @@ FT-004's. What is implemented here (Mac side only):
   when attached, else the local pinned anchor. A plaintext (non-TLS) peer —
   the companion's current `NWParameters.tcp` client — fails the handshake,
   is logged once, and nothing it sent is parsed.
-- Threat model and gaps (see the proposal): the 6-digit code is ~20 bits and
-  the PSK suite has no forward secrecy, so a passive capture of the pairing
-  window can be brute-forced offline — the window is short and one code pairs
+- Threat model and gaps (see the proposal): the code is 256 bits, so a passive
+  capture of the pairing handshake cannot be brute-forced offline although
+  the PSK suite has no forward secrecy; failed handshakes back off per address
+  and 10 of them end the pairing attempt; one code pairs
   one device; no certificate PKI, no cloud relay, no Keychain, no peer-to-peer
   (AWDL), no companion notification beyond `capture_received`. A bundled
   `.app` will need `NSLocalNetworkUsageDescription`/`NSBonjourServices`; the

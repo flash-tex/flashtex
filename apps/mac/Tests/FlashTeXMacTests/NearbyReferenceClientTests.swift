@@ -113,7 +113,8 @@ final class NearbyReferenceClientTests: XCTestCase {
         // a bootstrap key, then a wrong-proof hello and a pre-hello message.
         let store = PairStore(url: tmp.appendingPathComponent("mac-pairs.json"))
         let coordinator = PairingCoordinator(store: store)
-        _ = coordinator.begin(code: "123456")
+        let pairingCode = Pairing.generateCode()
+        _ = coordinator.begin(code: pairingCode)
         let bootstrap = try XCTUnwrap(coordinator.bootstrapEntry)
         let sink = RecordingSink()
         let dest = FixedDestinations(.init(destinationId: "direct-anchor", projectId: "demo", path: "main.tex", baseRevision: 2))
@@ -122,7 +123,7 @@ final class NearbyReferenceClientTests: XCTestCase {
         defer { h.stop() }
         let clientStore = tmp.appendingPathComponent("client-pairs.json").path
 
-        let pair = await cli(["pair", "--code", "123456", "--name", "Direct iPad", "--host", "127.0.0.1", "--port", "\(h.port)",
+        let pair = await cli(["pair", "--code", pairingCode, "--name", "Direct iPad", "--host", "127.0.0.1", "--port", "\(h.port)",
                               "--salt", Pairing.hex(store.salt), "--store", clientStore, "-v"])
         XCTAssertEqual(pair.code, 0, pair.out.joined(separator: "\n"))
         XCTAssertTrue(pair.out.contains { $0.contains("pair_id \(bootstrap.identity)") })
