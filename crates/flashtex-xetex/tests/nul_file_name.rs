@@ -6,7 +6,7 @@
 //! `\openout3={w^^@x.tex}` writes a file `w` and logs the whole name (with
 //! XeTeX's own `I` after each `^^@` and at the end; in INITEX `\newlinechar`
 //! is 0, so `^^@` prints as a line end). Found by lane PARITY-HUNT in TeX
-//! Live's ftc-notebook example under xelatex. No TeX installation needed:
+//! Live's ftc-notebook example under xelatex (#2520). No TeX installation needed:
 //! the expected log is XeTeX's for the same input.
 
 use std::process::Command;

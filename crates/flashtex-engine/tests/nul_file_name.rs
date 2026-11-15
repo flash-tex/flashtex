@@ -6,7 +6,7 @@
 //! `\openout3={w^^@x.tex}` writes a file `w` and logs the whole name (in
 //! INITEX `\newlinechar` is 0, so `^^@` prints as a line end). Found by lane
 //! PARITY-HUNT in TeX Live's ftc-notebook example (xelatex, a broken tabu
-//! hands `\includegraphics` a name with NULs), issue #2518. No TeX
+//! hands `\includegraphics` a name with NULs), issue #2520. No TeX
 //! installation needed: the expected log is pdfTeX's for the same input.
 
 mod common;
