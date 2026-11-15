@@ -138,16 +138,26 @@ fn dict(d: &[u8]) -> R<Dict> {
                 i += 5;
             }
             30 => {
-                // a real: nibbles to 0xf
+                // a real: nibbles to 0xf, read as cff_dict.c's get_real
+                // (the text, then strtod)
                 i += 1;
-                loop {
+                let mut text = String::new();
+                'nibbles: loop {
                     let n = u8_at(d, i)?;
                     i += 1;
-                    if n & 0x0F == 0x0F || n >> 4 == 0x0F {
-                        break;
+                    for nib in [n >> 4, n & 0x0F] {
+                        match nib {
+                            0..=9 => text.push((b'0' + nib) as char),
+                            0x0a => text.push('.'),
+                            0x0b => text.push('e'),
+                            0x0c => text.push_str("e-"),
+                            0x0e => text.push('-'),
+                            0x0f => break 'nibbles,
+                            _ => {}
+                        }
                     }
                 }
-                vals.push(0.0);
+                vals.push(text.parse().unwrap_or(0.0));
             }
             32..=246 => {
                 vals.push(b as f64 - 139.0);
@@ -460,6 +470,23 @@ pub fn ros(cff: &[u8]) -> Option<(Vec<u8>, Vec<u8>, i64)> {
         Some(cff[a..b].to_vec())
     };
     Some((s(*r.first()?)?, s(*r.get(1)?)?, *r.get(2)? as i64))
+}
+
+/// The value of operator `op` (its first operand) in the Private DICT of a
+/// name-keyed CFF's Top DICT, e.g. `StdVW` (11), which xdvipdfmx's
+/// `CIDFont_type0_t1cdofont` writes as the descriptor's `/StemV`.
+pub fn private_value(cff: &[u8], op: u16) -> Option<f64> {
+    let hdr = u8_at(cff, 2).ok()? as usize;
+    let names = index(cff, hdr).ok()?;
+    let tops = index(cff, names.end).ok()?;
+    let &(ts, te) = tops.items.first()?;
+    let top = dict(cff.get(ts..te)?).ok()?;
+    let (size, at) = match get(&top, 18)? {
+        [size, at] => (*size as usize, *at as usize),
+        _ => return None,
+    };
+    let private = dict(cff.get(at..at + size)?).ok()?;
+    get(&private, op)?.first().copied()
 }
 
 /// The global and local subroutines glyph `g` reaches.
