@@ -1,0 +1,16 @@
+1053c1053
+< pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-main/pdftex (file ./_2,ne_-decompositions-planarView.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+---
+> pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-proto/pdftex (file ./_2,ne_-decompositions-planarView.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+1056c1056
+< pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-main/pdftex (file ./DeltaTau3_2-1_0_2-decomps.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+---
+> pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-proto/pdftex (file ./DeltaTau3_2-1_0_2-decomps.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+1252c1252
+< pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-main/pdftex (file ./DeltaTau-intermediateCase.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+---
+> pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-proto/pdftex (file ./DeltaTau-intermediateCase.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+1255c1255
+< pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-main/pdftex (file ./phi-of-theta_directCalc-inclDistance.pdf): PDF inclusion: multiple pdfs with page group included in a single page
+---
+> pdfTeX warning: /home/kubar/.cache/flashtex-agents/contig/run-41338025620/bin-proto/pdftex (file ./phi-of-theta_directCalc-inclDistance.pdf): PDF inclusion: multiple pdfs with page group included in a single page
