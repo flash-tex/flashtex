@@ -48,7 +48,10 @@ final class EngineV3Session {
         case failed(String)
     }
 
-    private(set) var phase: Phase = .idle
+    private(set) var phase: Phase = .idle {
+        // A host that failed to start sends no DONE: what waited for one goes on (`afterNextDone`).
+        didSet { if case .failed = phase, let after = afterNextDone { afterNextDone = nil; DispatchQueue.main.async(execute: after) } }
+    }
     /// What the host prepared: which TeX Live, the format's status.
     private(set) var environmentNote = ""
     /// A bundle fetch in progress (no TeX Live), for the status bar:
@@ -70,7 +73,12 @@ final class EngineV3Session {
     /// Pages on screen left from an earlier compile (the status bar's "N stale").
     private(set) var staleCount = 0
     /// A COMPILE is out and its DONE has not come back.
-    private(set) var compiling = false
+    private(set) var compiling = false {
+        didSet { if compiling != oldValue { compilingChanged?(compiling) } }
+    }
+    /// Told when `compiling` changes (ProjectWindows: the windows behind
+    /// run in the background only while the front one compiles).
+    @ObservationIgnored var compilingChanged: ((Bool) -> Void)?
     /// Edits typed while auto-compile is off, not yet sent (⌘B sends them).
     private(set) var editsWaiting = false
     /// An Export PDF… or Print… is producing its PDF (`export`).
@@ -209,6 +217,16 @@ final class EngineV3Session {
     @ObservationIgnored private var pageSizes: [Int: CGSize] = [:]
     @ObservationIgnored private(set) var stale: Set<Int> = []
     @ObservationIgnored private(set) var forms: [UInt32: DL3PreparedPage] = [:]
+    /// The forms of a page kept from before a `STARTED` with `keep: false`
+    /// (another job, a restarted host): form ids restart with the resource
+    /// ids, and a FORM may follow its page (spec §5), so a page cannot
+    /// resolve its forms when it arrives as it does its fonts and images. A
+    /// kept page draws the forms of its own run until its run's page arrives.
+    @ObservationIgnored private var heldForms: [Int: [UInt32: DL3PreparedPage]] = [:]
+    /// The forms page `i` draws with.
+    func forms(forPage i: Int) -> [UInt32: DL3PreparedPage] { heldForms[i] ?? forms }
+    /// Whether page `i` draws forms kept from an older run (a new FORM does not change it).
+    func holdsForms(page i: Int) -> Bool { heldForms[i] != nil }
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
@@ -228,7 +246,7 @@ final class EngineV3Session {
     @ObservationIgnored private(set) var lastEventNs: UInt64 = 0
     /// Pages drawn from the compile's PDF because the host flagged them
     /// INCOMPLETE or they draw an INCOMPLETE form (0-based).
-    var incompletePages: [Int] { pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key).sorted() }
+    var incompletePages: [Int] { pages.filter { $0.value.needsPDFFallback(forms: forms(forPage: $0.key)) }.map(\.key).sorted() }
     /// The project's last rendered pages from disk, shown until the compile
     /// replaces them (EngineV3Snapshot.swift).
     @ObservationIgnored var snapshot: (EngineV3Snapshot, URL)?
@@ -449,9 +467,40 @@ final class EngineV3Session {
 
     // MARK: lifecycle
 
+    /// This window is not the frontmost project window: its host runs at
+    /// background priority (`EngineV3HostProcess.background`; ProjectWindows.swift).
+    var inBackground = false {
+        didSet { if inBackground != oldValue { host?.background = inBackground } }
+    }
+
+    /// Restoring several windows: this one's host waits until the front
+    /// window's first compile is done (`releaseStart`); its stored pages
+    /// are on screen meanwhile.
+    @ObservationIgnored private(set) var startHeld = false
+    @ObservationIgnored private var heldStart = false
+
+    func holdStart() { startHeld = true }
+
+    /// Ends `holdStart`: starts what `start` was asked for meanwhile.
+    func releaseStart() {
+        guard startHeld else { return }
+        startHeld = false
+        if heldStart, let model { heldStart = false; start(model: model) }
+    }
+
+    /// Called once, on the main thread, after the next DONE, or when the
+    /// host fails (`phase` `.failed`, no DONE comes) (ProjectWindows' restore order).
+    @ObservationIgnored var afterNextDone: (() -> Void)?
+
     /// Starts the host (once) and compiles the model's documents.
     func start(model: ShellModel) {
         self.model = model
+        if startHeld {
+            // Held (restore order): the stored pages now, the host later.
+            heldStart = true
+            if pages.isEmpty, snapshot == nil { showSnapshot(model: model) }
+            return
+        }
         stopping = false
         EngineV3MemoryPressure.shared.register(self)
         PerformanceAdvisor.shared.start() // suggests Low Memory under memory pressure (PerformanceMode.swift)
@@ -603,6 +652,7 @@ final class EngineV3Session {
                 EngineV3Session.onMain { ref.value?.hostEvent(event, generation: generation) }
             }
             host = h
+            h.background = inBackground // a background window's new host starts in the background
             hostStarts += 1
         } catch {
             phase = .failed("could not start \(exe.lastPathComponent): \(error.localizedDescription)")
@@ -1263,7 +1313,9 @@ final class EngineV3Session {
         }
         trustPrompt = prompt
         let rootPath = root.map { EngineV3Trust.canonical($0).path }, mainPath = main.map { EngineV3Trust.canonical($0).path }
-        let extra = prompt?.need.filter { $0.path != rootPath && $0.path != mainPath }.count ?? 0
+        let extra = prompt?.need.filter {
+            $0.path != rootPath && $0.path != mainPath && !$0.path.hasSuffix(EngineV3Trust.incompleteSuffix)
+        }.count ?? 0
         if trustOtherCount != extra { trustOtherCount = extra }
         if projectTrusted != trusted { projectTrusted = trusted }
     }
@@ -1301,7 +1353,9 @@ final class EngineV3Session {
             let shared = root.map(EngineV3Trust.isShared) ?? false
             let walk = project.sync(except: editorPaths, quarantine: !shared)
             let t1 = MonotonicClock.nowNs()
-            let decision = root.map { EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined) }
+            let decision = root.map {
+                EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined, walkTruncated: walk.truncated)
+            }
             let t2 = MonotonicClock.nowNs()
             let ms = String(format: "%.1f (walk %.1f, trust %.1f)", Double(t2 &- t0) / 1e6, Double(t1 &- t0) / 1e6, Double(t2 &- t1) / 1e6)
             EngineV3Session.onMain {
@@ -1956,6 +2010,11 @@ final class EngineV3Session {
                 // resources when it arrived), stale until they are sent again,
                 // and so do the stored pages of an instant reopen.
                 markStale(Set(pages.keys))
+                // Form ids restart too: each kept page keeps the forms it was
+                // made with, even none (a run superseded between a page and
+                // its FORM: the page draws no form, never a later run's).
+                for (i, p) in pages where !p.formIDs.isEmpty && heldForms[i] == nil { heldForms[i] = forms }
+                forms = [:]
             }
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
@@ -1963,6 +2022,7 @@ final class EngineV3Session {
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
+            heldForms[index] = nil
             if p.needsPDFFallback || !p.formIDs.isEmpty { fallbackCandidates.insert(index) } else { fallbackCandidates.remove(index) }
             pageSizes[index] = CGSize(width: p.widthPt, height: p.heightPt)
             glyphIndexes.invalidate(index)
@@ -2031,6 +2091,7 @@ final class EngineV3Session {
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             doneCount &+= 1
+            if let after = afterNextDone { afterNextDone = nil; DispatchQueue.main.async(execute: after) }
             lastDone = j
             if status == "failed", let project, !project.exists, let model {
                 compile(model: model, reason: "recover") // the copy vanished under the host
@@ -2247,7 +2308,8 @@ final class EngineV3Session {
         let visible = visiblePage
         var chosen: [Int: DL3PreparedPage] = [:]
         for i in Array(0 ..< min(3, pageCount)) + Array(max(0, visible - 2) ... min(pageCount - 1, visible + 5)) where chosen.count < EngineV3Snapshot.maxPages {
-            chosen[i] = pages[i]
+            // (a page holding an older run's forms is not saved: the save draws with the live table)
+            if heldForms[i] == nil { chosen[i] = pages[i] }
         }
         let sizes = (0 ..< pageCount).map { pageSizes[$0]! }
         // The texts' SHA-256 on the snapshot queue, not here: a 4 MB document
@@ -2595,7 +2657,7 @@ final class EngineV3Session {
     /// No pages (a stop, another project): none of them, nor their glyph
     /// indexes, may answer a lookup.
     private func dropPages() {
-        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
+        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; heldForms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
         glyphIndexes.removeAll()
     }
 
@@ -2639,7 +2701,7 @@ final class EngineV3Session {
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
-            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil; fallbackCandidates.remove(i) }
+            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; heldForms[i] = nil; stale.remove(i); pdfFallback[i] = nil; fallbackCandidates.remove(i) }
             glyphIndexes.removePages(from: n)
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
@@ -2649,7 +2711,7 @@ final class EngineV3Session {
     private func loadFallbacks(pdf: String?) {
         let start = DispatchTime.now().uptimeNanoseconds
         defer { lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
-        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms) == true }.sorted()
+        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms(forPage: $0)) == true }.sorted()
         guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
         pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
         for i in need { if let p = DL3Renderer.page(of: doc, at: i + 1) { pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
@@ -2924,7 +2986,10 @@ final class EngineV3Reader: @unchecked Sendable {
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
-    private var forms: [UInt32: DL3PreparedPage] = [:]
+    /// The forms a page rasterised here draws with: the connection's, until
+    /// a `STARTED` with `keep: false` restarts the ids (as the bindings).
+    /// Reader thread only: readable for tests, never from main.
+    private(set) var forms: [UInt32: DL3PreparedPage] = [:]
     private let cache: DL3ResourceCache
     private let plan: EngineV3RasterPlan
     private var compileID = 0
@@ -2952,7 +3017,11 @@ final class EngineV3Reader: @unchecked Sendable {
             return nil
         case .started(let j):
             compileID = Int(j["id"]?.int ?? 0)
-            if j["keep"]?.bool == false { bindings.reset() }
+            // Form ids restart with the resource ids: a new run's page that
+            // arrives before its FORM must not be rasterised with the old
+            // run's form under the reused id (the session holds the old forms
+            // for the pages kept on screen; nothing here draws those).
+            if j["keep"]?.bool == false { bindings.reset(); forms = [:] }
             return .started(j)
         case .font(let f): bindings.bind(font: f, cache: cache); return nil
         case .image(let j): bindings.bind(image: j, cache: cache); return nil
@@ -3360,7 +3429,8 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// into the copy. Bounded: 20,000 entries, hidden directories skipped.
     /// Returns what it saw: the input files (EngineV3Snapshot.inputs(root:),
     /// nil when it could not list them all) and the quarantined files (trust).
-    struct Walk { var inputs: [String: String]?; var quarantined: [URL] }
+    /// `truncated`: the walk stopped before seeing every entry (`sync`).
+    struct Walk { var inputs: [String: String]?; var quarantined: [URL]; var truncated = false }
 
     /// `fingerprints`/`quarantine`: whether to collect the input files and
     /// the quarantined files (each costs a syscall per file).
@@ -3478,17 +3548,39 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         return out
     }
 
-    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
+    /// `bound`: most entries linked and fingerprinted (tests use a small
+    /// one). Past it, when `quarantine` is set, the walk goes on looking
+    /// only for quarantined files, up to `quarantineBound` entries (ten
+    /// times `bound` by default): trust must see a file downloaded or
+    /// unpacked there later, even into a project it already trusted (#2060).
+    /// `truncated` only when that look stopped short too.
+    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true,
+              bound: Int = EngineV3Snapshot.maxEntries, quarantineBound: Int? = nil) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
         guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return Walk(inputs: nil, quarantined: []) }
         var n = 0
         var inputs: [String: String]? = fingerprints ? [:] : nil
         var quarantined: [URL] = []
+        var truncated = false
+        var linking = true
+        let lookBound = quarantineBound ?? bound * 10
         let prefix = source.standardizedFileURL.path + "/"
         for case let url as URL in e {
             n += 1
-            if n > EngineV3Snapshot.maxEntries { inputs = nil; break }
+            if linking, n > bound {
+                inputs = nil
+                linking = false
+                if !quarantine { truncated = true; break }
+            }
+            if !linking {
+                // A getxattr per file, nothing written: the copy stays bounded.
+                if n > lookBound { truncated = true; break }
+                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true, EngineV3Trust.isQuarantined(url) {
+                    quarantined.append(url)
+                }
+                continue
+            }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(prefix) else { continue }
             let rel = String(path.dropFirst(prefix.count))
@@ -3513,7 +3605,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
                 try? fm.createSymbolicLink(at: dst, withDestinationURL: url)
             }
         }
-        return Walk(inputs: inputs, quarantined: quarantined)
+        return Walk(inputs: inputs, quarantined: quarantined, truncated: truncated)
     }
 }
 

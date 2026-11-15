@@ -6933,7 +6933,7 @@ impl Globals {
             }
         }
         // §475
-        if (self.arith_error || ((self.cur_val).wrapping_abs() >= 1073741824i32)) {
+        if (self.arith_error || ((((self.cur_val) as i64).abs()) >= ((1073741824i32) as i64))) {
             // §487
             {
                 {

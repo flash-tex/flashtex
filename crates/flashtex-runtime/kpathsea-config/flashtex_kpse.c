@@ -329,6 +329,23 @@ int flashtex_kpse_name_ok(void *k, const char *fname, int write)
   return write ? kpathsea_out_name_ok(kpse, fname) : kpathsea_in_name_ok(kpse, fname);
 }
 
+/* flashtex_kpse_name_ok with the refusal naming INVOCATION, the engine's
+   argv[0] as given: a web2c program's kpathsea is set up from its own
+   argv[0] (kpse_set_program_name), so its refusal reads `/path/pdftex: Not
+   writing to ...', but this instance may have been set up from kpsewhich's
+   path (KpathseaResolver::for_texlive, for SELFAUTOLOC). */
+int flashtex_kpse_name_ok_as(void *k, const char *fname, int write,
+                             const char *invocation)
+{
+  kpathsea kpse = (kpathsea) k;
+  string saved = kpse->invocation_name;
+  int ok;
+  kpse->invocation_name = (string) invocation;
+  ok = flashtex_kpse_name_ok(k, fname, write);
+  kpse->invocation_name = saved;
+  return ok;
+}
+
 /* The same checks without the message, for a caller that reports a refusal
    under another program's name (makeindex in-process: crates/makeindex). */
 int flashtex_kpse_name_ok_silent(void *k, const char *fname, int write)

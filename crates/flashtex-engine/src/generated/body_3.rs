@@ -294,7 +294,7 @@ impl Globals {
                     } else {
                         if (l == dimen_val) {
                             {
-                                if ((f).wrapping_abs() > max_dimen) {
+                                if ((((f) as i64).abs()) > ((max_dimen) as i64)) {
                                     {
                                         self.arith_error = true;
                                         f = 0i32;
@@ -303,7 +303,7 @@ impl Globals {
                             }
                         } else {
                             {
-                                if ((((__av_mem[crate::ix::U(((f).wrapping_add(1i32)) as usize)].int()).wrapping_abs() > max_dimen) || ((__av_mem[crate::ix::U(((f).wrapping_add(2i32)) as usize)].int()).wrapping_abs() > max_dimen)) || ((__av_mem[crate::ix::U(((f).wrapping_add(3i32)) as usize)].int()).wrapping_abs() > max_dimen)) {
+                                if ((((((__av_mem[crate::ix::U(((f).wrapping_add(1i32)) as usize)].int()) as i64).abs()) > ((max_dimen) as i64)) || ((((__av_mem[crate::ix::U(((f).wrapping_add(2i32)) as usize)].int()) as i64).abs()) > ((max_dimen) as i64))) || ((((__av_mem[crate::ix::U(((f).wrapping_add(3i32)) as usize)].int()) as i64).abs()) > ((max_dimen) as i64))) {
                                     {
                                         self.arith_error = true;
                                         self.delete_glue_ref(f);
@@ -5387,7 +5387,7 @@ impl Globals {
                         }
                         // §638
                         __av_mem[crate::ix::U((q) as usize)].set_hh_lh(yz_OK);
-                        if ((w).wrapping_abs() >= 8388608i32) {
+                        if ((((w) as i64).abs()) >= ((8388608i32) as i64)) {
                             {
                                 {
                                     self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = (o).wrapping_add(3i32);
@@ -5400,7 +5400,7 @@ impl Globals {
                                 break 'l_exit_f;
                             }
                         }
-                        if ((w).wrapping_abs() >= 32768i32) {
+                        if ((((w) as i64).abs()) >= ((32768i32) as i64)) {
                             {
                                 {
                                     self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = (o).wrapping_add(2i32);
@@ -5423,7 +5423,7 @@ impl Globals {
                                 break 'l_L2_f;
                             }
                         }
-                        if ((w).wrapping_abs() >= 128i32) {
+                        if ((((w) as i64).abs()) >= ((128i32) as i64)) {
                             {
                                 {
                                     self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = (o).wrapping_add(1i32);
