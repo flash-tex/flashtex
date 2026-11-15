@@ -552,31 +552,6 @@ pub fn find_texlive_bin() -> Option<PathBuf> {
 #[cfg(feature = "kpathsea")]
 pub use kpse::KpathseaResolver;
 
-/// The variables a [`KpathseaResolver`] put in this process's environment
-/// to configure kpathsea (`kpathsea_xputenv` is `putenv`), each with the
-/// value it put last. They are the resolver's search paths, not a user's
-/// override of them (`formats::env_overrides_path`, #2316).
-static RESOLVER_ENV: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
-    std::sync::Mutex::new(None);
-
-#[cfg_attr(not(feature = "kpathsea"), allow(dead_code))]
-fn record_resolver_env(env: &[(String, String)]) {
-    let mut m = RESOLVER_ENV.lock().unwrap_or_else(|p| p.into_inner());
-    let m = m.get_or_insert_with(std::collections::HashMap::new);
-    for (k, v) in env {
-        m.insert(k.clone(), v.clone());
-    }
-}
-
-/// Is the environment's `var` the value a resolver of this process put
-/// there itself, rather than one it inherited?
-pub fn env_set_by_resolver(var: &str) -> bool {
-    let m = RESOLVER_ENV.lock().unwrap_or_else(|p| p.into_inner());
-    m.as_ref()
-        .and_then(|m| m.get(var))
-        .is_some_and(|v| std::env::var_os(var).is_some_and(|e| e == v.as_str()))
-}
-
 /// The `kpse_make_tex_discard_errors` (tex.ch [49.1265]) that every
 /// kpathsea instance started from now on begins with, whether or not a
 /// resolver exists yet; [`FileResolver::set_make_tex_discard_errors`] also
@@ -1198,7 +1173,6 @@ mod kpse {
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
             set_lsr_cache();
-            super::record_resolver_env(env);
             let k = unsafe {
                 flashtex_kpse_new(
                     a.as_ptr(),

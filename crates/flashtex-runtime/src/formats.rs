@@ -272,14 +272,9 @@ fn is_path_env(var: &str) -> bool {
 }
 
 /// Does the environment override `format`'s search path for program
-/// `progname`, as kpathsea reads it (an empty value counts as unset)? A
-/// value a resolver of this process put there itself (a bundle's search
-/// paths) is not an override: the build's resolver puts the same one.
+/// `progname`, as kpathsea reads it (an empty value counts as unset)?
 fn env_overrides_path(format: Format, progname: &str) -> bool {
-    let set = |k: &str| {
-        std::env::var_os(k).is_some_and(|v| !v.is_empty())
-            && !crate::resolver::env_set_by_resolver(k)
-    };
+    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
     PATH_ENVS
         .iter()
         .filter(|(f, _)| *f == format)
@@ -359,11 +354,7 @@ fn user_cnf_paths(r: &mut dyn FileResolver, prog: &str) -> Vec<(Format, String, 
                     .find(|(v, p, _)| v == var && p.as_deref() == want)
                     .map(|(_, _, x)| x.clone())
             };
-            out.push((
-                *format,
-                var.to_string(),
-                pick(Some(prog)).or_else(|| pick(None)),
-            ));
+            out.push((*format, var.to_string(), pick(Some(prog)).or_else(|| pick(None))));
         }
     }
     out
