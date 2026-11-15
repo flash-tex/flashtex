@@ -8081,3 +8081,76 @@ fn a_call_that_takes_over_another_fonts_expanded_fonts() {
         }
     }
 }
+
+/// (lane F-FONTKEY) The other direction of
+/// `a_call_that_takes_over_another_fonts_expanded_fonts`: a paragraph Y in
+/// `\fb`, outside the call, takes X's expanded fonts over first, so the
+/// call finds them in `\fb`'s list and is recorded with nothing to hand
+/// over. Y is then deleted. Making the links changed neither a font
+/// version nor `font_ptr`, so the call was replayed where it must now take
+/// the fonts over itself, and X's lines were written with `\fa`'s PDF font
+/// where pdfTeX writes them with `\fb`'s. Run with BOX-MEMO off, on and
+/// verify.
+#[test]
+fn a_call_recorded_after_a_paragraph_that_took_the_expanded_fonts_over() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let text = "The quick brown fox jumps over the lazy dog while seventeen wizards \
+                quietly box jumping frogs, and lexicographic analysis of typesetting \
+                with expansion and protrusion makes justified paragraphs differently \
+                whenever stretch and shrink meet the tolerance and the badness.";
+    let before: String = (0..14).map(|i| para(i, "alpha")).collect();
+    let after: String = (14..34).map(|i| para(i, "beta")).collect();
+    let doc = |word: &str, y: bool| {
+        // (Y is not shipped either: only X's lines use cmss10 on the page)
+        let y = if y {
+            format!("\\setbox0\\vbox{{\\hsize=20em \\pdfadjustspacing=2 \\fb {text}\\par}}\n")
+        } else {
+            String::new()
+        };
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\vbox{{#1\\par}}\\global\\dimen1=\\ht0 \\endgroup}}\n\
+             \\font\\fa=cmss10 at 10.5pt \\pdfcopyfont\\fb=\\fa\n\
+             \\pdffontexpand\\fa 50 50 5 autoexpand \\pdffontexpand\\fb 50 50 5 autoexpand\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             \\setbox0\\hbox{{\\fb a b}}\n\
+             {{\\hsize=20em \\pdfadjustspacing=2 \\fa {text}\\par}}\n\n\
+             {y}A\\relax\\measure{{\\hsize=20em \\pdfadjustspacing=2 \\fb {text}}}\\the\\dimen1\\par\n\n\
+             {after}\\end{{document}}\n"
+        )
+    };
+    for mode in ["off", "on", "verify"] {
+        let dir = e.dir.join(format!("expanded-font-links-outside-{mode}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(
+            &e,
+            &dir,
+            &[
+                ("FLASHTEX_BOXMEMO", mode),
+                ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+                ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
+            ],
+        );
+        let first = doc("plain", true);
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &first)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        // edits before X, with Y there: the call is recorded, then replayed
+        for word in ["plainx", "plain", "plainx", "plain"] {
+            let t = doc(word, true);
+            let what = format!("{mode} {word}");
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", &t)], &what);
+        }
+        // Y is gone: the call takes the fonts over itself
+        let t = doc("plain", false);
+        let what = format!("{mode} without Y");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &t)], &what);
+    }
+}
