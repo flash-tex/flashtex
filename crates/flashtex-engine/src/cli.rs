@@ -100,16 +100,42 @@ const NOT_IMPLEMENTED: &[&str] = &[
     "no-mktex",
 ];
 
+/// Whose command line is read: texmfmp.c's `long_options[]` differ between
+/// its programs (pdfTeX's are `OPTIONS`), and so do `-help`
+/// (texmfmp-help.h) and `-version`.
+pub struct Program {
+    /// Options of `OPTIONS` this program does not have (getopt reports
+    /// them as unrecognized).
+    pub without: &'static [&'static str],
+    /// Options of its own, taken and ignored here (the caller reads them).
+    pub with: &'static [(&'static str, u8)],
+    /// `-help`'s text.
+    pub help: &'static str,
+    /// `-version`'s text.
+    pub version: fn() -> String,
+}
+
+/// pdfTeX's command line.
+pub const PDFTEX: Program = Program {
+    without: &[],
+    with: &[],
+    help: system::HELP,
+    version: system::version_text,
+};
+
 /// `getopt_long_only`'s lookup: an exact name, else the one option the
 /// argument is a prefix of.
-fn lookup(name: &str) -> Result<(&'static str, u8), String> {
-    if let Some(&(n, a)) = OPTIONS.iter().find(|(n, _)| *n == name) {
+fn lookup(name: &str, p: &Program) -> Result<(&'static str, u8), String> {
+    let table: Vec<(&'static str, u8)> = OPTIONS
+        .iter()
+        .filter(|(n, _)| !p.without.contains(n))
+        .chain(p.with.iter())
+        .copied()
+        .collect();
+    if let Some(&(n, a)) = table.iter().find(|(n, _)| *n == name) {
         return Ok((n, a));
     }
-    let hits: Vec<_> = OPTIONS
-        .iter()
-        .filter(|(n, _)| n.starts_with(name))
-        .collect();
+    let hits: Vec<_> = table.iter().filter(|(n, _)| n.starts_with(name)).collect();
     match hits.as_slice() {
         [(n, a)] => Ok((n, *a)),
         [] => Err(format!("unrecognized option '-{name}'")),
@@ -121,6 +147,11 @@ fn lookup(name: &str) -> Result<(&'static str, u8), String> {
 /// `system::configure` takes. `-help` and `-version` print and exit, as
 /// pdfTeX does.
 pub fn parse(argv: &[String]) -> RunOptions {
+    parse_as(argv, &PDFTEX)
+}
+
+/// [`parse`] for program `p` (the XeTeX port reads XeTeX's command line).
+pub fn parse_as(argv: &[String], p: &Program) -> RunOptions {
     let mut o = RunOptions::new(argv.first().map(String::as_str).unwrap_or("pdftex"));
     let mut i = 1;
     while i < argv.len() {
@@ -142,10 +173,16 @@ pub fn parse(argv: &[String]) -> RunOptions {
             Some((n, v)) => (n, Some(v.to_string())),
             None => (body, None),
         };
-        let (name, arity) = match lookup(name) {
+        let (name, arity) = match lookup(name, p) {
             Ok(x) => x,
             Err(e) => {
-                // getopt reports and carries on.
+                // getopt reports and carries on; an unrecognized option is
+                // named as it was given (`-output-format=pdf`, `--foo`).
+                let e = if e.starts_with("unrecognized") {
+                    format!("unrecognized option '{a}'")
+                } else {
+                    e
+                };
                 eprintln!("{}: {e}", o.invocation_name);
                 continue;
             }
@@ -185,7 +222,7 @@ pub fn parse(argv: &[String]) -> RunOptions {
             "fmt" | "efmt" => o.dump_name = Some(v),
             "cnf-line" => o.cnf_lines.push(v),
             "help" => {
-                print!("{}", system::HELP);
+                print!("{}", p.help);
                 std::process::exit(0);
             }
             "ini" => o.ini = true,
@@ -194,16 +231,14 @@ pub fn parse(argv: &[String]) -> RunOptions {
                 "nonstopmode" => o.interaction = Interaction::Nonstop,
                 "scrollmode" => o.interaction = Interaction::Scroll,
                 "errorstopmode" => o.interaction = Interaction::ErrorStop,
-                _ => eprintln!(
-                    "{}: Ignoring unknown argument `{v}' to --interaction",
-                    o.invocation_name
-                ),
+                // kpathsea's WARNING1: `warning: `, the message, `.`
+                _ => eprintln!("warning: Ignoring unknown argument `{v}' to --interaction."),
             },
             "halt-on-error" => o.halt_on_error = true,
             "progname" => o.user_progname = Some(v),
             "recorder" => o.recorder = true,
             "version" => {
-                print!("{}", system::version_text());
+                print!("{}", (p.version)());
                 std::process::exit(0);
             }
             "etex" => o.etex = true,
@@ -225,10 +260,7 @@ pub fn parse(argv: &[String]) -> RunOptions {
             "output-format" => match v.as_str() {
                 "dvi" => o.output_format = Some(0),
                 "pdf" => o.output_format = Some(2),
-                _ => eprintln!(
-                    "{}: Ignoring unknown value `{v}' for --output-format",
-                    o.invocation_name
-                ),
+                _ => eprintln!("warning: Ignoring unknown value `{v}' for --output-format."),
             },
             "shell-escape" | "enable-write18" => o.shell = Shell::On,
             "no-shell-escape" | "disable-write18" => o.shell = Shell::Off,
@@ -248,6 +280,7 @@ pub fn parse(argv: &[String]) -> RunOptions {
             "translate-file" => o.translate_filename = Some(v),
             "default-translate-file" => o.default_translate_filename = Some(v),
             "8bit" => o.eight_bit = true,
+            n if p.with.iter().any(|(w, _)| *w == n) => {}
             _ => unreachable!("option table and match disagree on -{name}"),
         }
     }

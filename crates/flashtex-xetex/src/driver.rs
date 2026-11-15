@@ -44,7 +44,7 @@ pub fn command(argv: &[String]) -> Command {
         }
         keep.push(a.clone());
     }
-    let mut o = flashtex_engine::cli::parse(&keep);
+    let mut o = flashtex_engine::cli::parse_as(&keep, &system::CLI);
     // Invoked under its own name (which kpathsea's rule reads as `pdftex`),
     // the program is xetex: kpathsea's program name selects the search
     // paths. As `xelatex` it is xelatex.
