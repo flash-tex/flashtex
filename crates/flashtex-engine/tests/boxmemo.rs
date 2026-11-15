@@ -265,6 +265,8 @@ fn a_space_adjusted_by_the_tail_before_the_call_never_replays() {
     //    `save_tail` null; the space after it then leaves the auto kern
     //    from before the call alone. On main a replay left `save_tail` at
     //    the `x`, and the glue was widened.
+    // (The first `\hbox{y y}` makes the font's glue, `font_glue`: a call
+    // that makes it is abandoned for that, `Fonts`.)
     let Some(tfm) = cmr10() else {
         common::no_texlive();
         return;
@@ -274,6 +276,7 @@ fn a_space_adjusted_by_the_tail_before_the_call_never_replays() {
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
          \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
          \\font\\f=cmr10 \\f \\pdfadjustinterwordglue=1 \\knbscode\\f`x=500\n\
+         \\setbox1\\hbox{y y}\n\
          \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure{1pt} y}\\showbox1 }\n\
          \\def\\measure#1{ \\kern#1\\relax}\n\
          \\one{y}\\one{y}\\one{x}\n\
