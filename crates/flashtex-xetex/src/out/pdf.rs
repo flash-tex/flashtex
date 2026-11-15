@@ -1313,9 +1313,9 @@ impl<'a> Writer<'a> {
             bbox[2],
             bbox[3],
             t1.italic_angle().unwrap_or("0"),
-            n(ascent, 8),
-            n(descent, 8),
-            n(cap_height, 8),
+            super::num::p_dtoa(ascent, 8),
+            super::num::p_dtoa(descent, 8),
+            super::num::p_dtoa(cap_height, 8),
             t1.std_vw().unwrap_or(80)
         );
         self.object(fd, d.as_bytes());
@@ -2144,6 +2144,13 @@ fn type1_vertical_metrics(t1: &flashtex_pdf::type1::Type1Font) -> Result<(f64, f
             super::t1char::metrics(&cs, &subr, t1.subr_count(), &mut warn)?.bbox,
         ))
     };
+    // t1_load.c `parse_charstrings`: a font without `.notdef` does not
+    // load ("No .notdef glyph???"); `get_font_attr` interprets "space"
+    // (for `defaultWidthX`) first, so an error there is fatal too
+    if t1.decrypted_charstring(".notdef").is_none() {
+        return Err("No .notdef glyph???".into());
+    }
+    bbox("space")?;
     if let Some(b) = bbox("H")? {
         cap = b[3];
     }
