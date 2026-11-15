@@ -43,6 +43,7 @@ pub const LINKED: bool = cfg!(flashtex_images);
 
 linked_or_unlinked! {
     fn ftx_init();
+    fn ftx_set_terminal_flush(flush: extern "C" fn());
     fn ftx_set_err_quiet(q: c_int);
     fn ftx_doc_open(file_name: *const c_char) -> *mut c_void;
     fn ftx_doc_ok(d: *mut c_void) -> c_int;
@@ -123,10 +124,21 @@ fn bytes_of(p: *const c_char) -> Vec<u8> {
 }
 
 /// `globalParams = new GlobalParams(); globalParams->setErrQuiet(gFalse)`,
-/// once.
+/// once; and xpdf's messages flush the engine's terminal first, as pdfTeX's
+/// do (its terminal is C's stdout, which xpdf's `error()` flushes).
 pub fn init() {
-    // SAFETY: no arguments; idempotent.
-    unsafe { ftx_init() }
+    // SAFETY: a function pointer that lives for the whole program; the
+    // second call has no arguments and is idempotent.
+    unsafe {
+        ftx_set_terminal_flush(flush_terminal);
+        ftx_init()
+    }
+}
+
+/// Called by the shim before each of xpdf's `libxpdf:` messages. It must not
+/// unwind into C++: flushing returns an error, it does not panic.
+extern "C" fn flush_terminal() {
+    crate::system::flush_terminal();
 }
 
 /// xpdf's messages off (`true`) or on again, as `init` leaves them (not
