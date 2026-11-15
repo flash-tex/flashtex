@@ -1,0 +1,12 @@
+% p009-picfile-bmp-exit: \XeTeXpicfile of a BMP file whose header bmpimage.c does not know: XeTeX exits with 1, and what it wrote to the log before is in the log
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\message{before the picture}
+\setbox0=\hbox{\XeTeXpicfile p-plain.png }
+\lsshipbox0
+\setbox0=\hbox{\XeTeXpicfile p-v3.bmp }
+\message{never reached}
+\lsshipbox0
+\end

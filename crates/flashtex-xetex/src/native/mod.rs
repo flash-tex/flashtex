@@ -813,7 +813,7 @@ impl Globals {
         let f = self.native_font_of(p);
         let Some(engine) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `measure_native_node'");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let text = self.node_text(p);
         // The display list's source map: a native word's column is its
@@ -989,7 +989,7 @@ impl Globals {
         let f = self.native_font_of(p);
         let Some(engine) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `measure_native_glyph'");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         self.mem[(p + 1) as usize].set_int(d2fix(engine.font.glyph_width(gid) as f64));
         if use_glyph_metrics {
@@ -1031,7 +1031,7 @@ impl Globals {
     pub fn get_native_char_height_depth(&mut self, f: i32, c: i32, h: &mut i32, d: &mut i32) {
         let Some(e) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `get_native_char_height_depth`");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let gid = e.font.map_char_to_glyph(c as u32);
         let (ht, dp) = e.font.glyph_height_depth(gid);
@@ -1072,7 +1072,7 @@ impl Globals {
             eprintln!(
                 "\n! Internal error: bad native font flag in `get_native_char_side_bearings'"
             );
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let gid = e.font.map_char_to_glyph(c as u32);
         let (l, r) = e.glyph_sidebearings(gid);
@@ -1084,7 +1084,7 @@ impl Globals {
     pub fn get_glyph_bounds(&mut self, f: i32, edge: i32, gid: i32) -> i32 {
         let Some(e) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `get_glyph_bounds'");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let (a, b) = if edge & 1 != 0 {
             e.glyph_sidebearings(gid as u32)
@@ -1109,7 +1109,7 @@ impl Globals {
     pub fn getnativecharwd(&mut self, f: i32, c: i32) -> i32 {
         let Some(e) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `get_native_char_wd'");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let gid = e.font.map_char_to_glyph(c as u32);
         d2fix(e.glyph_width(gid) as f64)
@@ -1124,7 +1124,7 @@ impl Globals {
             Some(e) => e.font.map_char_to_glyph(c as u32) as i32,
             None => {
                 eprintln!("\n! Internal error: bad native font flag in `map_char_to_glyph'");
-                std::process::exit(3);
+                crate::system::exit_process(self, 3);
             }
         }
     }
@@ -1141,7 +1141,7 @@ impl Globals {
             Some(e) => e.font.map_glyph_to_index(&name) as i32,
             None => {
                 eprintln!("\n! Internal error: bad native font flag in `map_glyph_to_index'");
-                std::process::exit(3);
+                crate::system::exit_process(self, 3);
             }
         }
     }
@@ -1153,7 +1153,7 @@ impl Globals {
             Some(e) => e.font.last_char_code(),
             None => {
                 eprintln!("\n! Internal error: bad native font flag in `get_font_char_range'");
-                std::process::exit(3);
+                crate::system::exit_process(self, 3);
             }
         }
     }
@@ -1162,7 +1162,7 @@ impl Globals {
     pub fn print_glyph_name(&mut self, f: i32, gid: i32) {
         let Some(e) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `print_glyph_name'");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let name = e.font.glyph_name(gid as u16 as u32);
         for b in name {
@@ -1290,7 +1290,7 @@ impl Globals {
     pub fn make_font_def(&mut self, f: i32) -> i32 {
         let Some(e) = self.font_engine(f) else {
             eprintln!("\n! Internal error: bad native font flag in `make_font_def'");
-            std::process::exit(3);
+            crate::system::exit_process(self, 3);
         };
         let mut flags: u16 = 0;
         let font_flags = self.font_flags[f as usize];

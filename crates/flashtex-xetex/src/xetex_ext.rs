@@ -402,7 +402,7 @@ impl Globals {
                         "! Failed to create normalizer: error code = {}",
                         status as i32
                     );
-                    std::process::exit(1);
+                    crate::system::exit_process(self, 1);
                 }
             },
         };

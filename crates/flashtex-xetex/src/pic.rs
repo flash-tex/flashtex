@@ -832,6 +832,15 @@ pub fn pic_bounds(path: &str, pdf_box_type: i32, page: i32) -> Option<[f64; 4]> 
     Some([0.0, 0.0, wd, ht])
 }
 
+/// Is the file at `path` a BMP (and no JPEG, which `find_pic_file` tries
+/// first) whose info header is of a size bmpimage.c does not know?
+fn has_unknown_bmp_header(path: &str) -> bool {
+    let Ok(data) = std::fs::read(path) else {
+        return false;
+    };
+    !is_jpeg(&data) && is_bmp(&data) && bmp_size(&data) == Bmp::UnknownHeader
+}
+
 impl Globals {
     /// `find_pic_file`: `name_of_file` looked up as a picture
     /// (`kpse_pict_format`) and its bounds in TeX points; 0 and the path's
@@ -849,6 +858,15 @@ impl Globals {
         let Some(found) = flashtex_engine::system::find_file(&name, Format::Pict) else {
             return -1;
         };
+        // bmpimage.c's `ERROR("Unknown BMP header type.")` ends XeTeX with
+        // C's `exit(1)`, which first flushes the log and every other open
+        // output file. `pic_bounds` has no engine state to flush, so the
+        // exit is made here: `exit_process` flushes as C does, and a
+        // resident engine's run returns to its host instead of ending it.
+        if pdf_box_type == 0 && has_unknown_bmp_header(&found) {
+            eprintln!("Unknown BMP header type.");
+            crate::system::exit_process(self, 1);
+        }
         let Some([x, y, wd, ht]) = pic_bounds(&found, pdf_box_type, page) else {
             return -1;
         };
