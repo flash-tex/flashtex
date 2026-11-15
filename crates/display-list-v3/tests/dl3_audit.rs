@@ -118,7 +118,11 @@ fn connection(mut c: Stream, mode: Mode) {
                 send(&mut c, kind::SOURCES, src.to_json());
                 let mut p = Page::new(StreamKind::Page, 0);
                 p.matrices.push([10.0, 0.0, 0.0, 10.0, 0.0, 0.0]);
-                let code = if mode == Mode::ClientDiffers && incr { 73 } else { 72 };
+                let code = if mode == Mode::ClientDiffers && incr {
+                    73
+                } else {
+                    72
+                };
                 p.items = vec![
                     Item::Span(1),
                     Item::Matrix(1),
@@ -233,7 +237,10 @@ fn a_compile_that_ends_before_its_cancel_does_not_hang() {
     // S-REVIEW MINOR 2: an `unchanged` compile ships no page, so the CANCEL
     // finds nothing running; the audit must go on (with the timeout as the
     // backstop, a hang would end the test process)
-    assert_eq!(audit("unchanged", Mode::Unchanged, Mode::Ok, "open,cancel,cancel"), 0);
+    assert_eq!(
+        audit("unchanged", Mode::Unchanged, Mode::Ok, "open,cancel,cancel"),
+        0
+    );
 }
 
 #[test]
@@ -245,7 +252,10 @@ fn the_noimga_step_needs_two_images() {
 #[test]
 fn verdict_requires_ok_and_pages() {
     let done = |st: &str, pages: Option<i64>| {
-        let mut kv = vec![("id".to_string(), Json::Int(1)), ("status".to_string(), s(st))];
+        let mut kv = vec![
+            ("id".to_string(), Json::Int(1)),
+            ("status".to_string(), s(st)),
+        ];
         if let Some(p) = pages {
             kv.push(("pages".to_string(), Json::Int(p)));
         }
@@ -266,10 +276,26 @@ fn verdict_requires_ok_and_pages() {
         "/o2",
     );
     assert_eq!(n, 0);
-    assert!(bad.iter().any(|b| b.starts_with("client: DONE status")), "{bad:?}");
-    assert!(bad.iter().any(|b| b.starts_with("scratch: DONE status")), "{bad:?}");
-    assert!(bad.iter().any(|b| b.starts_with("nothing to compare")), "{bad:?}");
-    let (bad, _) = audit::verdict(&Model::default(), None, &Model::default(), None, "/o1", "/o2");
+    assert!(
+        bad.iter().any(|b| b.starts_with("client: DONE status")),
+        "{bad:?}"
+    );
+    assert!(
+        bad.iter().any(|b| b.starts_with("scratch: DONE status")),
+        "{bad:?}"
+    );
+    assert!(
+        bad.iter().any(|b| b.starts_with("nothing to compare")),
+        "{bad:?}"
+    );
+    let (bad, _) = audit::verdict(
+        &Model::default(),
+        None,
+        &Model::default(),
+        None,
+        "/o1",
+        "/o2",
+    );
     assert!(bad.iter().any(|b| b == "client: no DONE"), "{bad:?}");
     assert!(bad.iter().any(|b| b == "scratch: no DONE"), "{bad:?}");
 }

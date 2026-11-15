@@ -366,7 +366,8 @@ impl Audit {
         let mut c = match Client::connect(&sock) {
             Ok(c) => c,
             Err(e) => {
-                s.violations.push(format!("connect {}: {e}", sock.display()));
+                s.violations
+                    .push(format!("connect {}: {e}", sock.display()));
                 return (s, None, out2);
             }
         };
@@ -410,11 +411,19 @@ impl Audit {
             self.compared += n;
             println!(
                 "OK   {step}: {n} pages compared (scratch mode {smode:?}){}{note}",
-                if self.xetex { " (no forms under --xetex)" } else { "" }
+                if self.xetex {
+                    " (no forms under --xetex)"
+                } else {
+                    ""
+                }
             );
         } else {
             self.fail(step, &bad);
-            println!("  (client {:?}, scratch {:?} mode {smode:?})", status(md), status(sd.as_ref()));
+            println!(
+                "  (client {:?}, scratch {:?} mode {smode:?})",
+                status(md),
+                status(sd.as_ref())
+            );
             let dir = self.work.join(format!("fail-{step}"));
             let _ = std::fs::create_dir_all(&dir);
             for i in 0..m.count.max(s.count) as u32 {
@@ -443,7 +452,8 @@ pub fn parse(mut a: impl Iterator<Item = String>) -> Result<Opts, String> {
             "--image" => images.push(val()?),
             "--steps" => steps = Some(val()?),
             "--timeout" => {
-                timeout = Duration::from_secs(val()?.parse().map_err(|e| format!("--timeout: {e}"))?)
+                timeout =
+                    Duration::from_secs(val()?.parse().map_err(|e| format!("--timeout: {e}"))?)
             }
             "--xetex" => xetex = true,
             _ => return Err(format!("unknown argument {x}")),
@@ -477,7 +487,10 @@ pub fn run(o: Opts) -> usize {
     std::fs::create_dir_all(&out).unwrap();
     let mut names = vec![];
     for (k, f) in o.images.iter().enumerate() {
-        let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("png");
+        let ext = Path::new(f)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("png");
         let n = format!("fig{k}.{ext}");
         if let Err(e) = std::fs::copy(f, proj.join(&n)) {
             println!("FAIL run: --image {f}: {e}");
@@ -520,12 +533,9 @@ pub fn run(o: Opts) -> usize {
     let doc = |v: &str, au: &Audit| document(v, &au.images, au.xetex);
     std::fs::write(proj.join("main.tex"), doc("base", &au)).unwrap();
     let host = match &au.hosts {
-        Hosts::Spawn { exe, args } => start_host(
-            exe,
-            args,
-            &work.join("host.sock"),
-            &work.join("host.log"),
-        ),
+        Hosts::Spawn { exe, args } => {
+            start_host(exe, args, &work.join("host.sock"), &work.join("host.log"))
+        }
         Hosts::Connect { main, .. } => Ok(Host {
             child: None,
             sock: main.clone(),
@@ -573,7 +583,10 @@ pub fn run(o: Opts) -> usize {
         if step == "noimgA" && au.images.len() < 2 {
             // without the first image nothing differs from `regrow`, and no
             // image id shifts: the step would pass testing nothing
-            au.fail(step, &["needs two --image (the step removes the first)".into()]);
+            au.fail(
+                step,
+                &["needs two --image (the step removes the first)".into()],
+            );
             continue;
         }
         ran += 1;
