@@ -250,9 +250,7 @@ fn holes_changed_or_read_past_their_key_never_replay() {
     // (lane AUDIT-MATH) a replay splices in the register's box of the
     // moment as it is, so the call may neither change the hole (`\\raise`:
     // `box_end` shifts it) nor read its contents: `\\copy` of a box the call
-    // made around it, or of the hole itself taken back with `\\lastbox`;
-    // `\\copy` or `\\unhbox` of a register the call set to the hole itself
-    // (lane DRAFTS-BM2)
+    // made around it, or of the hole itself taken back with `\\lastbox`
     let s = check(
         "hole-changed",
         &[
@@ -263,8 +261,6 @@ fn holes_changed_or_read_past_their_key_never_replay() {
              \\def\\measure{\\raise2pt\\box9\\relax}\\one\\a\\one\\a\\one\\a\n\
              \\def\\measure{\\begingroup\\setbox2\\hbox{\\box9}\\copy2\\box2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
              \\def\\measure{\\begingroup\\box9\\setbox3\\lastbox\\copy3\\box3\\endgroup}\\one\\a\\one\\a\\one\\b\n\
-             \\def\\measure{\\begingroup\\setbox2\\box9\\copy2\\box2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
-             \\def\\measure{\\begingroup\\setbox2\\box9\\unhbox2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
              \\end\n",
         ]
         .concat(),
@@ -291,8 +287,7 @@ fn holes_changed_or_read_past_their_key_never_replay() {
 fn holes_in_a_formula_never_replay() {
     // (lane AUDIT-MATH) a box moved into a formula is a noad's `sub_box`:
     // `make_scripts` widens and shifts it (tex.web §756), and `clean_box`
-    // frees the kern of a box that is a character and a kern (§721); also
-    // when the box comes from a register the call set to the hole
+    // frees the kern of a box that is a character and a kern (§721)
     let Some((files, fonts)) = math_fonts() else {
         common::no_texlive();
         return;
@@ -305,13 +300,87 @@ fn holes_in_a_formula_never_replay() {
             HOLE_PRELUDE,
             "\\def\\a{\\setbox9\\hbox{\\r f\\kern1pt}}\\def\\b{\\setbox9\\hbox{\\kern1pt\\r f}}\n\
              \\def\\measure{$x^{\\box9}$}\\one\\a\\one\\a\\one\\a\n\
-             \\def\\measure{$\\mathop{\\box9}\\limits$}\\one\\b\\one\\b\\one\\a\n\
-             \\def\\measure{\\setbox2\\box9 $x^{\\box2}$}\\one\\a\\one\\a\\one\\a\\end\n",
+             \\def\\measure{$\\mathop{\\box9}\\limits$}\\one\\b\\one\\b\\one\\a\\end\n",
         ]
         .concat(),
         &files,
     );
     assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+/// (lane DRAFTS-BM2) `\setbox2\box9` makes the hole itself the box of a
+/// register the call wrote. `measure` uses it; each call is offered with
+/// the hole's contents `calls` names (`\a` and `\b` have the same key and
+/// other contents), and none may replay.
+fn hole_set_to_a_register(tag: &str, measure: &str, calls: &str, math: bool) {
+    let mut files = vec![];
+    let mut fonts = "";
+    if math {
+        let Some((f, m)) = math_fonts() else {
+            common::no_texlive();
+            return;
+        };
+        files = f;
+        fonts = m;
+    }
+    let s = check_with(
+        tag,
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
+            fonts,
+            HOLE_PRELUDE,
+            if math {
+                "\\def\\a{\\setbox9\\hbox{\\r f\\kern1pt}}\\def\\b{\\setbox9\\hbox{\\kern1pt\\r f}}\n"
+            } else {
+                "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+                 \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n"
+            },
+            "\\def\\measure{",
+            measure,
+            "}",
+            calls,
+            "\\end\n",
+        ]
+        .concat(),
+        &files,
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn a_copy_of_a_register_set_to_the_hole_never_replays() {
+    // `\\copy2` copies the hole's contents into the output by value
+    hole_set_to_a_register(
+        "hole-own-copy",
+        "\\begingroup\\setbox2\\box9\\copy2\\box2\\endgroup",
+        "\\one\\a\\one\\a\\one\\b",
+        false,
+    );
+}
+
+#[test]
+fn an_unhbox_of_a_register_set_to_the_hole_never_replays() {
+    // `\\unhbox2` moves the hole's list, its contents, into the output and
+    // frees the hole node (`unpackage`, tex.web §1110)
+    hole_set_to_a_register(
+        "hole-own-unhbox",
+        "\\begingroup\\setbox2\\box9\\unhbox2\\endgroup",
+        "\\one\\a\\one\\a\\one\\b",
+        false,
+    );
+}
+
+#[test]
+fn a_register_set_to_the_hole_moved_into_a_formula_never_replays() {
+    // `\\box2` in math mode makes the hole a noad's `sub_box`; `make_op`'s
+    // `clean_box` frees the kern of a box that is a character and a kern
+    // (tex.web §721), which the key does not see
+    hole_set_to_a_register(
+        "hole-own-math",
+        "\\setbox2\\box9 $\\mathop{\\box2}\\limits$",
+        "\\one\\b\\one\\b\\one\\a",
+        true,
+    );
 }
 
 #[test]
