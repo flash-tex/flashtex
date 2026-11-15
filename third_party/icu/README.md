@@ -1,16 +1,21 @@
 # `third_party/icu`
 
-Two parts of TeX Live 2026's ICU, **unmodified**, for the XeTeX port
-(`crates/flashtex-xetex`, `docs/design/xetex/PLAN.md` §3.1). Neither is
-compiled or linked:
+Parts of TeX Live 2026's ICU, **unmodified**, for the XeTeX port
+(`crates/flashtex-xetex`, `docs/design/xetex/PLAN.md` §3.1). None is
+compiled or linked (the converter tables are a fourth part, see "The
+converters" below):
 
 - **The line-break rules** (`brkitr/`): the compiled rule-based break
   iterator tables (`.brk`) that `ubrk_open(UBRK_LINE, locale)` loads, for
   `\XeTeXlinebreaklocale` (XeTeX_ext.c's `linebreakstart`,
   `crates/flashtex-xetex/src/native/linebreak.rs`, which runs them as ICU's
   `RuleBasedBreakIterator::handleNext` does). ICU's break-iterator code is
-  not vendored, and the Southeast Asian dictionaries are ICU4X's
-  (`icu_segmenter`, see linebreak.rs).
+  not vendored.
+- **The dictionary break engines' sources and dictionaries** (`icu-src/`,
+  `brkitr/*dict.dict`): the source of record for
+  `crates/flashtex-xetex/src/native/dictbe.rs`, which ports the Thai, Lao,
+  Burmese and Khmer engines (issue #2432; see "The dictionaries and break
+  engines" below).
 - **The bidirectional algorithm's sources** (`icu-src/`): the source of
   record for the Rust port in `crates/flashtex-xetex/src/native/ubidi/`.
   XeTeX's `measure_native_node` (`XeTeX_ext.c`) splits each native word
@@ -29,7 +34,7 @@ compiled or linked:
 | Upstream | TeX Live source tree, GitHub mirror <https://github.com/TeX-Live/texlive-source> |
 | Tag | `tags/texlive-2026.1` ("texlive-2026.1 tag based on r78399") |
 | Commit | `6a300188053b8f2ded89dbd52293732a706b9c0e` (the same pin as `third_party/xetex`, `third_party/harfbuzz`, `third_party/teckit`) |
-| Path | `libs/icu/icu-src/source/data/in/icudt78l.dat` (sha256 `d7da8e2e31312a3cb574d1a0ebd7b187daa988e15a9b70b78eb68b213a590608`), items `brkitr/line*.brk`; `libs/icu/icu-src/source/common/` (the bidi files below); `libs/icu/version.ac` |
+| Path | `libs/icu/icu-src/source/data/in/icudt78l.dat` (sha256 `d7da8e2e31312a3cb574d1a0ebd7b187daa988e15a9b70b78eb68b213a590608`), items `brkitr/line*.brk` and `brkitr/{thai,lao,burmese,khmer}dict.dict`; `libs/icu/icu-src/source/common/` (the bidi files below); `libs/icu/version.ac` |
 | Version | 78.2 (`libs/icu/version.ac`; `xetex --version`: "Compiled with ICU version 78.2"; `U_ICU_VERSION` in `icu-src/source/common/unicode/uvernum.h`), Unicode 17 bidi data (`ubidi_props_dataVersion` 0x11) |
 | Fetched | 2026-10-12 |
 
@@ -58,6 +63,29 @@ dictionary.
 | `line_loose.brk` | `line_loose.txt` | others with `@lb=loose` |
 | `line_loose_cj.brk` | `line_loose_cj.txt` | `zh`, `ja`, `ko` with `@lb=loose` |
 
+## The dictionaries and break engines
+
+Each `brkitr/*dict.dict` is the item of that name in `icudt78l.dat`,
+extracted by the data file's table of contents as `icupkg -x` does (the
+same extraction reproduces `brkitr/line.brk` byte for byte). Each is a
+`Dict` data file: a `BytesTrie` of ICU's word list with an offset
+transform (the script's block start maps to byte 0).
+
+| file | bytes | transform | engine |
+|---|---|---|---|
+| `thaidict.dict` | 126144 | `0x1000e00` | `ThaiBreakEngine` |
+| `laodict.dict` | 162624 | `0x1000e80` | `LaoBreakEngine` |
+| `burmesedict.dict` | 254448 | `0x1001000` | `BurmeseBreakEngine` |
+| `khmerdict.dict` | 445552 | `0x1001780` | `KhmerBreakEngine` |
+
+`icu-src/source/common/` also holds the files the engine port follows:
+
+| file | contents |
+|---|---|
+| `dictbe.cpp`, `dictbe.h` | the four engines' `divideUpDictionaryRange`, `PossibleWord`, the engines' character sets |
+| `dictionarydata.cpp`, `dictionarydata.h` | `BytesDictionaryMatcher::matches` and `transform`, the data file's indexes |
+| `bytestrie.cpp`, `unicode/bytestrie.h` | the trie walk `first`/`next` that `matches` uses |
+
 ## The bidi sources
 
 `icu-src/source/common/` holds:
@@ -74,6 +102,35 @@ dictionary.
 
 `version.ac` is TeX Live's version record. The rest of ICU's code is left
 out.
+
+## The converters
+
+A fourth part (issue #2382), also unmodified: `cnv/` holds ICU's converter
+alias table `cnvalias.icu` and all 190 converter tables (`.cnv` items) of
+the same `icudt78l.dat` (sha256
+`d7da8e2e31312a3cb574d1a0ebd7b187daa988e15a9b70b78eb68b213a590608`, the
+pin above), each item extracted byte for byte from the package's table of
+contents (as `icupkg -x` does). `\XeTeXinputencoding` and
+`\XeTeXdefaultencoding` open a converter by name with `ucnv_open`, and
+XeTeX_ext.c's `input_line` converts each line with `ucnv_toAlgorithmic`.
+The port follows ICU 78.2's sources (TeX Live's
+`libs/icu/icu-src/source/common/`, not vendored):
+
+- `crates/flashtex-xetex/src/ucnv.rs`: the name lookup (`ucnv_bld.cpp`,
+  `ucnv_io.cpp` over `cnvalias.icu`), and the algorithmic UTF-8, CESU-8,
+  ISO-8859-1, US-ASCII, UTF-16 and UTF-32 converters (`ucnv_u8.cpp`,
+  `ucnvlat1.cpp`, `ucnv_u16.cpp`, `ucnv_u32.cpp`);
+- `src/ucnv_mbcs.rs`: the tables (`ucnvmbcs.cpp`: single-byte,
+  multi-byte, SI/SO stateful, extension-only on a base table, DBCS-only,
+  GB 18030's four-byte ranges, `swaplfnl`) with their extension tables
+  (`ucnv_ext.cpp`).
+
+`src/ucnv_data.rs` lists the tables, and a test of the crate checks it
+against `cnv/`.
+
+Not ported (the port reports their names as unknown encodings): ICU's
+algorithmic UTF-7, IMAP-mailbox-name, SCSU, BOCU-1, ISO-2022, HZ, LMBCS,
+ISCII and x11-compound-text converters.
 
 ## Licence
 

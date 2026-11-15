@@ -1,0 +1,22 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \endlinechar=-1
+\def\p#1{\ifx#1\relax\else\message{\number`#1}\expandafter\p\fi}
+\def\l{\readline1 to\x \ifeof1 \else\message{[\x]}\expandafter\p\x\relax\expandafter\l\fi}
+\def\t#1#2{\message{☃☃#1☃☃}\XeTeXdefaultencoding "#1"\relax\openin1=#2\relax\XeTeXdefaultencoding "utf8"\relax\l\message{|}}
+\t{cp1252}{d0.dat}
+\t{Shift_JIS}{d1.dat}
+\t{x-cp1252}{d2.dat}
+\t{X-cp1252}{d3.dat}
+\t{koi8-r}{d4.dat}
+\t{iso-8859-7}{d5.dat}
+\t{US-ASCII}{d6.dat}
+\t{ibm-37}{d7.dat}
+\t{ibm-37,swaplfnl}{d8.dat}
+\t{ibm-1047_P100-1995,swaplfnl}{d9.dat}
+\t{latin1,swaplfnl}{d10.dat}
+\t{ibm-1133}{d11.dat}
+\t{ibm-851}{d12.dat}
+\t{ISO_8859-01}{d13.dat}
+\t{windows-874}{d14.dat}
+\t{UTF-16,version=3}{d15.dat}
+\t{abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi}{d16.dat}
+\end

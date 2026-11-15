@@ -1,0 +1,24 @@
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \endlinechar=-1
+\def\p#1{\ifx#1\relax\else\message{\number`#1}\expandafter\p\fi}
+\def\l{\readline1 to\x \ifeof1 \else\message{[\x]}\expandafter\p\x\relax\expandafter\l\fi}
+\def\t#1#2{\message{☃☃#1☃☃}\XeTeXdefaultencoding "#1"\relax\openin1=#2\relax\XeTeXdefaultencoding "utf8"\relax\l\message{|}}
+\t{gb18030-2022}{d0.dat}
+\t{ibm-1390_P110-2003}{d1.dat}
+\t{ibm-16684_P110-2003}{d2.dat}
+\t{ibm-971_P100-1995}{d3.dat}
+\t{gsm-03.38-2009}{d4.dat}
+\t{ibm-943_P130-1999}{d5.dat}
+\t{windows-950-2000}{d6.dat}
+\t{euc-tw-2014}{d7.dat}
+\t{ibm-964_P110-1999}{d8.dat}
+\t{ibm-1388_P100-2024}{d9.dat}
+\t{Shift_JIS}{d10.dat}
+\t{EUC-JP}{d11.dat}
+\t{GBK}{d12.dat}
+\t{GB18030}{d13.dat}
+\t{Big5}{d14.dat}
+\t{EUC-KR}{d15.dat}
+\t{ibm-971}{d16.dat}
+\t{ibm-1390}{d17.dat}
+\t{ibm-16684}{d18.dat}
+\end
