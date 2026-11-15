@@ -95,6 +95,62 @@ pub fn libpng_versions() -> (String, String) {
     }
 }
 
+/// What libpng's `png_read_info` gives of a PNG file's header: the queries
+/// XeTeX's `png_scan_file` (xetexdir/image/pngimage.c) makes of the same
+/// libpng, for the XeTeX port's picture sizes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PngHeader {
+    /// `png_get_image_width`, `png_get_image_height`.
+    pub width: u32,
+    pub height: u32,
+    /// `png_get_x_pixels_per_meter`, `png_get_y_pixels_per_meter`: 0 without
+    /// a `pHYs` chunk libpng took, or with one in another unit.
+    pub x_pixels_per_meter: u32,
+    pub y_pixels_per_meter: u32,
+}
+
+/// Why [`png_header`] has no header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PngHeaderError {
+    /// The file cannot be opened, or libpng's structures cannot be made.
+    Open,
+    /// `png_read_info` raised a libpng error (its message is on stderr, as
+    /// libpng's default error function prints it).
+    Libpng,
+}
+
+/// The header of the PNG file `path`, read as `read_png_info` reads it:
+/// `png_create_read_struct` with no error function and a warning function
+/// that drops warnings, then `png_read_info`.
+pub fn png_header(path: &[u8]) -> Result<PngHeader, PngHeaderError> {
+    if !super::xpdf::LINKED {
+        return Err(PngHeaderError::Open);
+    }
+    let name = CString::new(path).map_err(|_| PngHeaderError::Open)?;
+    let mut err: c_int = 0;
+    // SAFETY: a NUL-terminated name; `err` is written before the return.
+    let p = unsafe { ftpng_open(name.as_ptr(), &mut err) };
+    if p.is_null() || err != 0 {
+        return Err(if err == 4 {
+            PngHeaderError::Libpng
+        } else {
+            PngHeaderError::Open
+        });
+    }
+    // SAFETY: a live handle until `ftpng_close`; the queries cannot fail.
+    let h = unsafe {
+        let h = PngHeader {
+            width: ftpng_get(p, WIDTH) as u32,
+            height: ftpng_get(p, HEIGHT) as u32,
+            x_pixels_per_meter: ftpng_get(p, X_PPM) as u32,
+            y_pixels_per_meter: ftpng_get(p, Y_PPM) as u32,
+        };
+        ftpng_close(p);
+        h
+    };
+    Ok(h)
+}
+
 /// `png_image_struct`: libpng's read and info structures, with the file.
 ///
 /// A copy (a checkpoint's, `images::State`) does not share the structures:

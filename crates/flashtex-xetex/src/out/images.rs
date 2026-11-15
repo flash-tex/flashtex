@@ -96,7 +96,7 @@ impl Images {
         }
         let data = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
         let (kind, size) = if pic::is_png(&data) {
-            (Kind::Png, pic::png_size(&data))
+            (Kind::Png, pic::png_file_size(path))
         } else if pic::is_jpeg(&data) {
             (Kind::Jpeg, pic::jpeg_size(&data))
         } else if pic::is_bmp(&data) {

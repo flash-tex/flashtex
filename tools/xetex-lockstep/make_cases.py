@@ -960,12 +960,17 @@ PICTURES = os.path.join(os.path.dirname(OUT), "pictures")
 pictures = {}
 
 
-def png_file(w, h, phys=None, phys_after_idat=False):
-    def chunk(kind, body):
+def png_file(w, h, phys=None, phys_after_idat=False, phys_crc=None, phys2=None):
+    """`phys_crc`: the pHYs chunk's CRC, when not the right one (libpng drops
+    an ancillary chunk whose CRC is wrong, with a warning); `phys2`: a second
+    pHYs chunk after the first (libpng keeps the first)."""
+    def chunk(kind, body, crc=None):
         return (struct.pack(">I", len(body)) + kind + body
-                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF if crc is None else crc))
     data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-    ph = chunk(b"pHYs", struct.pack(">IIB", *phys)) if phys else b""
+    ph = chunk(b"pHYs", struct.pack(">IIB", *phys), phys_crc) if phys else b""
+    if phys2:
+        ph += chunk(b"pHYs", struct.pack(">IIB", *phys2))
     idat = chunk(b"IDAT", zlib.compress(b"\0" + b"\0" * (3 * w)))
     if phys_after_idat:
         data += idat + ph
@@ -1033,6 +1038,11 @@ pictures["p-300dpi.png"] = png_file(600, 150, phys=(11811, 11811, 1))
 pictures["p-aspect.png"] = png_file(100, 100, phys=(3, 2, 0))
 pictures["p-mixed.png"] = png_file(50, 70, phys=(2835, 5670, 1))
 pictures["p-late-phys.png"] = png_file(64, 64, phys=(11811, 11811, 1), phys_after_idat=True)
+# pHYs chunks as libpng reads them (#2501): one with a wrong CRC (dropped: 72
+# dpi), two (the first counts), and values past 2^31 - 1
+pictures["p-phys-badcrc.png"] = png_file(60, 30, phys=(11811, 11811, 1), phys_crc=0x12345678)
+pictures["p-phys-twice.png"] = png_file(60, 30, phys=(2835, 5670, 1), phys2=(11811, 11811, 1))
+pictures["p-phys-huge.png"] = png_file(60, 30, phys=(0xFFFFFFFF, 0x80000000, 1))
 pictures["p-jfif-dpi.jpg"] = jpeg_file(320, 240, jfif(1, 150, 300))
 pictures["p-jfif-dpcm.jpg"] = jpeg_file(200, 100, jfif(2, 40, 40))
 pictures["p-jfif-aspect.jpg"] = jpeg_file(90, 60, jfif(0, 1, 1))
@@ -1160,6 +1170,17 @@ pcase("p006-pictures-in-paragraphs", "pictures in a paragraph, in math and in a 
 \lsshipbox0
 \setbox1=\vbox{\XeTeXpicfile p-info.bmp \par}
 \lsshipbox1
+\end""")
+
+pcase("p008-picfile-png-chunks", "\\XeTeXpicfile of PNG files whose pHYs chunk libpng drops (a wrong CRC), has twice, or holds values past 2^31 - 1",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile p-phys-badcrc.png }
+\hbox{\XeTeXpicfile p-phys-badcrc.png width 1in }
+\hbox{\XeTeXpicfile p-phys-twice.png }
+\hbox{\XeTeXpicfile p-phys-huge.png }
+\hbox{\XeTeXpicfile p-phys-huge.png scaled 4000 }
+}
+\lsshipbox0
 \end""")
 
 os.makedirs(PICTURES, exist_ok=True)
