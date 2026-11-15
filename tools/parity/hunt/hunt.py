@@ -220,13 +220,21 @@ def cmd_xsound(a, rest):
         i, job = item
         cmd = [sys.executable, os.path.join(ROOT, "tools/incr-bench/unicode.py"), os.path.join(BIN, "flashtex-host-unicode"),
                os.path.join(cases, job), "--doc", job, "--verify", "--at", "mid"] + (rest or ["--keys", "2", "--trials", "3"])
+        # its own process group: a document that never ends (one that loops under XeTeX too) is stopped with
+        # its hosts and their engine processes, not left running
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=int(os.environ.get("HUNT_DOC_TIMEOUT", "1800")))
+            so, se = p.communicate(timeout=int(os.environ.get("HUNT_DOC_TIMEOUT", "1800")))
         except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, 9)
+            except OSError:
+                pass
+            p.communicate()
             return i, None, [], "timeout"
-        lines = [json.loads(ln) for ln in r.stdout.splitlines() if ln.startswith("{")]
+        lines = [json.loads(ln) for ln in so.splitlines() if ln.startswith("{")]
         summary = lines[-1] if lines and "compiles" in lines[-1] else None
-        return i, summary, lines, (r.stderr.strip().splitlines() or [""])[-1][:300]
+        return i, summary, lines, (se.strip().splitlines() or [""])[-1][:300]
 
     bad = 0
     with open(os.path.join(out, "xsound.jsonl"), "w") as f, \
