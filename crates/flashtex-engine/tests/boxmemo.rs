@@ -384,6 +384,41 @@ fn a_register_set_to_the_hole_moved_into_a_formula_never_replays() {
 }
 
 #[test]
+fn a_freed_hole_is_never_taken_for_a_box_made_after_it() {
+    // (lane DRAFTS-BM2) setting again the register the call set to the hole,
+    // or to a box around it, frees the hole; the next box node takes its
+    // address, and the end took that box for the hole: a replay spliced the
+    // register's box in its place (with BOX-MEMO on, `\\kern 2.0` and a
+    // `0.0` rule where pdfTeX has the call's own 2pt rule)
+    let rule = "\\hbox to 2pt{\\vrule width 2pt height 1pt}";
+    for (i, setup) in [
+        "\\begingroup\\setbox2\\box9 \\setbox2\\hbox{}\\endgroup",
+        "\\setbox2\\box9 \\setbox2\\hbox{}",
+        "\\begingroup\\setbox2\\hbox{\\box9}\\setbox2\\hbox{}\\endgroup",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let s = check(
+            &format!("hole-freed-{i}"),
+            &[
+                "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n",
+                HOLE_PRELUDE,
+                "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+                 \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n\
+                 \\def\\measure{",
+                setup,
+                rule,
+                rule,
+                "}\\one\\a\\one\\a\\one\\b\\one\\b\\end\n",
+            ]
+            .concat(),
+        );
+        assert_eq!(stat(&s, "hits"), 0, "{setup}: {s}");
+    }
+}
+
+#[test]
 fn calls_ending_in_expansions_replay() {
     // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
     // `\end`: `\if@endpe ... \fi` and its hooks after the last
