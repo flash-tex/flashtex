@@ -324,10 +324,14 @@ tests check them:
 - `save_ptr`, `input_ptr`, `param_ptr` and `nest_ptr`, bounded by the statistics' high-water marks
   at the call's end (`max_save_stack` & co.): exact when the call raised the mark, more than enough
   when it did not. `save_ptr` gets two words more for each local assignment at the call's own
-  level, which saves the old value or not, depending on that location's level.
+  level, which saves the old value or not, depending on that location's level, and one word more
+  for each local assignment in the call's groups, which saves one word for a location at
+  `level_zero` (a control sequence never defined) and two for any other (tex.web §276–§277). The
+  key holds no location's level.
 
-An offer replays only where every limit would hold. Otherwise the normal path runs, and overflows
-as pdfTeX does.
+An offer replays only where every limit would hold. Otherwise it is a miss (`Room` in the
+statistics), and the normal path runs, and overflows as pdfTeX does. Where it does not overflow
+(the bound was more than enough), the call is recorded again with the room it takes from there.
 
 ## 6. Storage, checkpoints and restores
 

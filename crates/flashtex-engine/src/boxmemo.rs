@@ -2543,16 +2543,17 @@ impl Globals {
                 s.index.insert(cs, ix);
             }
         });
-        let (found, partial) = ST.with(|s| {
+        let (found, partial, no_room) = ST.with(|s| {
             let s = s.borrow();
             let (Some(v), Some(ix)) = (
                 s.store.get(&cs),
                 s.index.get(&cs).and_then(|ix| ix.get(&hash)),
             ) else {
-                return (None, None);
+                return (None, None, false);
             };
             let mut best: Option<(u64, usize)> = None;
             let mut partial = None;
+            let mut no_room = false;
             let mut k2_seen: Vec<(*const i32, bool)> = vec![];
             for (i, e) in ix.iter().map(|&i| (i, &v[i])) {
                 if best.is_some_and(|(u, _)| u >= e.last_used) {
@@ -2563,8 +2564,11 @@ impl Globals {
                     || e.ctx != ctx
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
-                    || !self.bm_room_ok(&e.room)
                 {
+                    continue;
+                }
+                if !self.bm_room_ok(&e.room) {
+                    no_room = true;
                     continue;
                 }
                 // (K2 in place, once per kept K2)
@@ -2604,9 +2608,12 @@ impl Globals {
                     partial = Some((e.last_used, i));
                 }
             }
-            (best.map(|b| b.1), partial.map(|p| p.1))
+            (best.map(|b| b.1), partial.map(|p| p.1), no_room)
         });
-        let mut why = "NotRecorded";
+        // (an entry kept back only by its room on the stacks is its own
+        // reason, `Room`: the call runs for real, and is recorded again
+        // with the room it takes from here)
+        let mut why = if no_room { "Room" } else { "NotRecorded" };
         let doomed = found
             .is_some_and(|i| ST.with(|s| s.borrow().store.get(&cs).is_some_and(|v| v[i].doomed)));
         if doomed {
@@ -2671,7 +2678,7 @@ impl Globals {
             }
         }
         self.bm_miss(why);
-        if debug() && why == "NotRecorded" {
+        if debug() && matches!(why, "NotRecorded" | "Room") {
             let now = self.bm_key_by_loc();
             let diff: Vec<String> = LAST_KEY.with(|l| {
                 l.borrow().get(&cs).map_or(vec![], |old| {
@@ -3846,19 +3853,25 @@ impl Globals {
         Ok(())
     }
 
-    /// The room a finished recording took on TeX's stacks ([`Room`]). A
-    /// local assignment at the call's own level saves the old value or
-    /// not as the location's level is there, which the key does not hold:
-    /// each may take up to two more save-stack words on another path.
+    /// The room a finished recording took on TeX's stacks ([`Room`]). What
+    /// a local assignment saves depends on its location's level, which the
+    /// key does not hold (`eq_define`, tex.web §277, and `eq_save`, §276):
+    /// - at the call's own level it saves nothing where the location's
+    ///   level is the current one (or the call is at level one), and one
+    ///   or two words otherwise: up to two more words on another path;
+    /// - in a group of the call's, the first one to a location saves one
+    ///   word where the location's level is `level_zero` (a control
+    ///   sequence never defined) and two otherwise, as after a
+    ///   `\global\let` to an undefined one: up to one more word.
     fn bm_room_of(&self, rec: &Rec) -> Room {
         let mut depth = 0i32;
-        let mut outer_local = 0i32;
+        let mut more = 0i32;
         for o in &rec.ops {
             match o {
                 Op::Begin(_) => depth += 1,
                 Op::End => depth -= 1,
-                Op::Def { kind, .. } | Op::Sa { kind, .. } if depth <= 0 && *kind < 2 => {
-                    outer_local += 1
+                Op::Def { kind, .. } | Op::Sa { kind, .. } if *kind < 2 => {
+                    more += if depth <= 0 { 2 } else { 1 }
                 }
                 _ => {}
             }
@@ -3866,7 +3879,7 @@ impl Globals {
         let s = &rec.start;
         Room {
             level: rec.peak_level,
-            save: (self.max_save_stack - s.save_ptr).max(0) + 2 * outer_local,
+            save: (self.max_save_stack - s.save_ptr).max(0) + more,
             input: (self.max_in_stack - rec.base).max(0),
             param: (self.max_param_stack - rec.param0).max(0),
             nest: (self.max_nest_stack - s.nest_ptr).max(0),
