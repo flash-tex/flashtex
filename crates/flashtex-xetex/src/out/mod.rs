@@ -536,9 +536,10 @@ pub fn finish(g: &mut Globals) -> i32 {
 /// `FORCE_SOURCE_DATE` or not: the PDF's dates are the output's), else of
 /// `session` (the pinned clock, `Host::clock`), else of now.
 fn pdf_date(session: Option<i64>) -> Option<String> {
-    let secs = std::env::var("SOURCE_DATE_EPOCH")
-        .ok()
-        .and_then(|v| v.trim().parse::<i64>().ok())
+    // (as the engine's start time reads it, `Globals::start_time`; an
+    // invalid value has stopped the run)
+    let secs = std::env::var_os("SOURCE_DATE_EPOCH")
+        .and_then(|v| flashtex_engine::pdftex::utils::parse_source_date_epoch(v.as_encoded_bytes()))
         .or(session)
         .unwrap_or_else(|| {
             std::time::SystemTime::now()
