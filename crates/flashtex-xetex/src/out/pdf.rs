@@ -122,6 +122,8 @@ struct Writer<'a> {
     faces: HashMap<[u8; 32], Arc<FaceData>>,
     /// What the PDF does not carry as the document asks (reported).
     pub warnings: Vec<String>,
+    /// The `pdf:bop`/`pdf:eop` streams written, by their content's address.
+    bop_eop: HashMap<usize, u32>,
 }
 
 /// The resources a content stream uses.
@@ -157,7 +159,29 @@ impl<'a> Writer<'a> {
             agl: None,
             faces: HashMap::new(),
             warnings: Vec::new(),
+            bop_eop: HashMap::new(),
         }
+    }
+
+    /// A page's `pdf:bop` or `pdf:eop` stream (pdfdoc.c `doc_flush_page`):
+    /// the one in effect when the page ended, else the document's last
+    /// (pages are flushed when the document closes). Each is one object
+    /// however many pages use it; the last one, written at the close, has
+    /// a newline added (`pdf_doc_close_page_tree`).
+    fn bop_eop(&mut self, at_end: &Option<Arc<Vec<u8>>>, last: &Option<Arc<Vec<u8>>>) -> Option<u32> {
+        let s = at_end.as_ref().or(last.as_ref())?;
+        let key = Arc::as_ptr(s) as usize;
+        if let Some(&o) = self.bop_eop.get(&key) {
+            return Some(o);
+        }
+        let mut data = s.to_vec();
+        if last.as_ref().is_some_and(|l| Arc::ptr_eq(l, s)) {
+            data.push(b'\n');
+        }
+        let o = self.alloc();
+        self.stream(o, b"", &data, true);
+        self.bop_eop.insert(key, o);
+        Some(o)
     }
 
     fn agl(&mut self) -> Arc<Agl> {
@@ -467,6 +491,19 @@ impl<'a> Writer<'a> {
         let content = self.content(&b.dl, &b.sup, &mut res);
         let contents = self.alloc();
         self.stream(contents, b"", &content, true);
+        let bop = self.bop_eop(&b.sup.bop, &doc.bop);
+        let eop = self.bop_eop(&b.sup.eop, &doc.eop);
+        let contents = match (bop, eop) {
+            (None, None) => format!("{contents} 0 R"),
+            _ => {
+                let refs: Vec<String> = [bop, Some(contents), eop]
+                    .into_iter()
+                    .flatten()
+                    .map(|o| format!("{o} 0 R"))
+                    .collect();
+                format!("[{}]", refs.join(" "))
+            }
+        };
         let resources = self.resources(&res, &b.sup)?;
         // annotations
         let mut annots = Vec::new();
@@ -500,7 +537,7 @@ impl<'a> Writer<'a> {
         let [x0, y0, x1, y1] = b.dl.pdf_box;
         let _ = write!(
             Bytes(&mut d),
-            "<</Type /Page /Parent {} 0 R /MediaBox [{} {} {} {}] /Contents {contents} 0 R /Resources ",
+            "<</Type /Page /Parent {} 0 R /MediaBox [{} {} {} {}] /Contents {contents} /Resources ",
             self.pages_root,
             n(x0, 3),
             n(y0, 3),

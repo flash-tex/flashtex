@@ -428,7 +428,11 @@ impl<'a, M: Metrics> Builder<'a, M> {
             b.end_form(None);
         }
         let page = b.streams.pop().expect("the page");
-        Ok(page.finish())
+        let mut built = page.finish();
+        // `pdf_doc_finish_page`: the page keeps the bop and eop of now
+        built.sup.bop = b.doc.bop.clone();
+        built.sup.eop = b.doc.eop.clone();
+        Ok(built)
     }
 
     pub fn cur(&mut self) -> &mut Stream {

@@ -115,6 +115,10 @@ pub struct Supplement {
     pub page_dict: Dict,
     /// `pdf:exobj <<...>>` (forms only).
     pub form_dict: Dict,
+    /// A page: the `pdf:bop` and `pdf:eop` contents in effect when it
+    /// ended ([`Doc::bop`]).
+    pub bop: Option<std::sync::Arc<Vec<u8>>>,
+    pub eop: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 /// A page or form as built.
@@ -272,6 +276,12 @@ pub struct Doc {
     /// What went wrong reading the output: the run fails (a page that
     /// cannot be read is never dropped silently).
     pub errors: Vec<String>,
+    /// `pdf:bop` and `pdf:eop` (pdfdoc.c's `pages.bop`/`pages.eop`): the
+    /// content stream written before and after every page's own. Each
+    /// special makes a new stream (one object, shared by the pages that
+    /// ended while it was in effect); one without content changes nothing.
+    pub bop: Option<std::sync::Arc<Vec<u8>>>,
+    pub eop: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 impl Doc {
