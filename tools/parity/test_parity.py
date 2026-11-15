@@ -9,6 +9,7 @@ import gzip
 import io
 import json
 import os
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -432,8 +433,13 @@ class Corpus(unittest.TestCase):
             if isinstance(a, Exception):
                 raise a
             return a
+
+        def rng(url, start, timeout=120):  # a server that ignores the range: the whole body
+            return 0, get(url, timeout)
         with tempfile.TemporaryDirectory() as d, mock.patch.object(corpus, "http_get", get), \
-                mock.patch.object(corpus.time, "sleep", lambda s: None):
+                mock.patch.object(corpus, "http_range", rng), \
+                mock.patch.object(corpus.time, "sleep", lambda s: None), \
+                mock.patch.dict(os.environ, {"FLASHTEX_PARITY_BLOBS": ""}):
             man = os.path.join(d, "m.json")
             with open(man, "w") as f:
                 json.dump({"tier": "nightly-5k", "entries": [
@@ -458,7 +464,8 @@ class Corpus(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 self.assertIn(f"fetch failed after {corpus.FETCH_TRIES} tries", err.getvalue())
                 self.assertEqual(answers, [])
-                # a cached file that is not the pinned bytes is fetched again
+                # a cached file that is not the pinned bytes (and no copy in the blob store) is fetched again
+                shutil.rmtree(os.path.join(cache, "blobs"))
                 with open(os.path.join(cache, "eprints", "1603.06059v3"), "wb") as f:
                     f.write(b"pin")
                 answers[:] = [good]

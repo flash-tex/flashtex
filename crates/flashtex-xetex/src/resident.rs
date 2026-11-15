@@ -1550,9 +1550,8 @@ impl Engine {
         let mem_len = g.mem.len();
         g.host.dl.set_on(dl_on, mem_len);
         system::set_no_pdf(g, c.no_pdf);
-        g.intr_verify_on = crate::intrinsics::enabled();
-        g.intr_at_switch = false;
-        g.host.intrinsics = crate::intrinsics::Report::default();
+        // (after the restore above: S₀ holds the mode of the run that took it)
+        g.set_intrinsics_verify(crate::intrinsics::enabled());
         // S₀ is armed by the run's first `big_switch` (`crate::ckpt`); a run
         // from S₀ or a page asks for no S₀
         g.ckpt_request = if want_s0 { REQ_LOOKUP } else { 0 };
