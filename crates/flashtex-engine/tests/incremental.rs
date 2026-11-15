@@ -7822,3 +7822,122 @@ fn a_call_reading_the_hyphenchar_a_font_took_from_the_default_at_its_load() {
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &other)], &what);
     }
 }
+
+/// A TFM file with two characters, `A` and `V`, both 0.5 wide, and one
+/// kern of `kern` (a `fix_word`, in design-size units times 2^20) between
+/// `A` and `V`; check sum 0x12345678, design size 10pt, seven parameters.
+/// Two such files differ only in the kern's word.
+fn kern_tfm(kern: i32) -> Vec<u8> {
+    let (bc, ec) = (b'A' as u16, b'V' as u16);
+    let (lh, nw, nh, nd, ni, nl, nk, ne, np) =
+        (2u16, 2u16, 2u16, 1u16, 1u16, 1u16, 1u16, 0u16, 7u16);
+    let lf = 6 + lh + (ec - bc + 1) + nw + nh + nd + ni + nl + nk + ne + np;
+    let mut t: Vec<u8> = vec![];
+    for v in [lf, lh, bc, ec, nw, nh, nd, ni, nl, nk, ne, np] {
+        t.extend(v.to_be_bytes());
+    }
+    let word = |t: &mut Vec<u8>, v: i32| t.extend(v.to_be_bytes());
+    word(&mut t, 0x1234_5678); // the check sum
+    word(&mut t, 10 << 20); // the design size
+    for c in bc..=ec {
+        // width 1, height 1, depth 0, italic 0; `A` has a ligature/kern
+        // program at instruction 0
+        match c as u8 {
+            b'A' => t.extend([1, 1 << 4, 1, 0]),
+            b'V' => t.extend([1, 1 << 4, 0, 0]),
+            _ => t.extend([0, 0, 0, 0]),
+        }
+    }
+    for v in [0, 1 << 19] {
+        word(&mut t, v); // widths
+    }
+    for v in [0, 7 << 17] {
+        word(&mut t, v); // heights
+    }
+    word(&mut t, 0); // depths
+    word(&mut t, 0); // italic corrections
+    t.extend([128, b'V', 128, 0]); // stop; before `V`: kern 0
+    word(&mut t, kern);
+    for v in [0, 1 << 18, 1 << 17, 1 << 16, 7 << 16, 1 << 20, 1 << 16] {
+        word(&mut t, v); // slant, space, stretch, shrink, x-height, quad, extra space
+    }
+    assert_eq!(t.len(), 4 * lf as usize);
+    t
+}
+
+/// (lane F-FONTKEY, REVIEW-D's and AUDIT-VF's notes on #2272) What a font
+/// is includes its ligature and kerning program and its kerns, and neither
+/// its name nor its check sum pins them: a check sum is a word of the file,
+/// and two files in two directories may share name, sizes, check sum and
+/// every character's metrics. A `\pdfcopyfont` copy has the name of the
+/// font copied and pdfTeX's fixed area, so a copy of `d1/fk` and a copy of
+/// `d2/fk` made at the same number differed in nothing the font's hash
+/// took, though `AV` is kerned by -1pt in one and by -3pt in the other. A
+/// registered `\measure` of `AV` in the copy is recorded and replayed in
+/// edits' windows; the copy then becomes one of the other font, every other
+/// key equal, and the width typeset after it must be the new one. Run with
+/// BOX-MEMO off, on and verify.
+#[test]
+fn a_call_kerning_in_a_copy_of_a_font_that_differs_only_in_its_kerns() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let before: String = (0..12).map(|i| para(i, "alpha")).collect();
+    let after: String = (12..30).map(|i| para(i, "beta")).collect();
+    let doc = |which: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\font\\fka=d1/fk at 10pt \\font\\fkb=d2/fk at 10pt\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             {{\\pdfcopyfont\\fkc=\\fk{which} \\fkc\\measure{{AV}}}}\\typeout{{AV=\\the\\dimen1}}\\the\\dimen1\\par\n\n\
+             {after}\\end{{document}}\n"
+        )
+    };
+    for mode in ["off", "on", "verify"] {
+        let dir = e.dir.join(format!("font-copy-kerns-{mode}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (d, kern) in [("d1", -(1 << 20) / 10), ("d2", -3 * (1 << 20) / 10)] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+            std::fs::write(dir.join(d).join("fk.tfm"), kern_tfm(kern)).unwrap();
+        }
+        let mut h = Host::start_env(
+            &e,
+            &dir,
+            &[
+                ("FLASHTEX_BOXMEMO", mode),
+                ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+                ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
+            ],
+        );
+        let first = doc("a", "plain");
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &first)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        // both files were found, and the width is logged
+        let width = |dir: &Path| -> String {
+            let log =
+                String::from_utf8_lossy(&std::fs::read(dir.join("doc.log")).unwrap()).into_owned();
+            assert!(!log.contains("\n! "), "{mode}: {log}");
+            let at = log.find("AV=").unwrap_or_else(|| panic!("{mode}: {log}"));
+            log[at..].lines().next().unwrap().to_string()
+        };
+        let one = width(&dir);
+        // edits before the call: their windows record it, then replay it
+        for word in ["plainx", "plain", "plainx", "plain"] {
+            let text = doc("a", word);
+            let what = format!("{mode} {word}");
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+        }
+        // the copy is now one of the other font, made at the same number
+        let other = doc("b", "plain");
+        let what = format!("{mode} a copy of the other font");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &other)], &what);
+        // (the two fonts do kern `AV` differently: the test tests something)
+        assert_ne!(one, width(&dir), "{mode}");
+    }
+}
