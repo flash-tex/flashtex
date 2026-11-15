@@ -154,6 +154,36 @@ of the copyright holder.
 
 ----------------------------------------------------------------------------
 
+Routines of src/out/ (agl.rs, tounicode.rs, cffcid.rs, pdf.rs, doc.rs,
+page.rs, special.rs) port parts of dvipdfm-x 20260317, the xdvipdfmx of TeX
+Live 2026 (texk/dvipdfm-x: agl.c, tt_cmap.c, tt_gsub.c, tt_post.c, type0.c,
+pdfencoding.c, cmap_write.c, cff_dict.c, cidtype0.c, type1.c, tt_table.c,
+tt_aux.c, pngimage.c, pdfnames.c, pdfdoc.c, dvi.c, dvipdfmx.c, spc_pdfm.c,
+spc_dvipdfmx.c, specials.c, pdfximage.c, unicode.c; third_party/dvipdfmx
+lists each file, its sha256 and the routines ported). Each such routine
+names the C it ports. dvipdfm-x's notice reads:
+
+  This is dvipdfmx, an eXtended version of dvipdfm by Mark A. Wicks.
+
+  Copyright (C) 2002-2026 by Jin-Hwan Cho, Matthias Franz, and Shunsaku
+  Hirata, the dvipdfmx project team.
+  Copyright (C) 2012-2015 by Khaled Hosny <khaledhosny@eglug.org>
+  Copyright (c) 2006 SIL. (xdvipdfmx extensions for XeTeX support)
+  Copyright (C) 1998, 1999 by Mark A. Wicks <mwicks@kettering.edu>
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+The ported routines are therefore GPL-2.0-or-later, like the rest of this
+crate, whose licence text follows.
+
 ============================================================================
 
                     GNU GENERAL PUBLIC LICENSE
