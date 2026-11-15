@@ -4774,7 +4774,7 @@ impl Globals {
                         }
                         // §637
                         __av_mem[crate::ix::U((q) as usize)].set_hh_lh(yz_OK);
-                        if ((w).wrapping_abs() >= 8388608i32) {
+                        if ((((w) as i64).abs()) >= ((8388608i32) as i64)) {
                             {
                                 {
                                     self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = (o).wrapping_add(3i32);
@@ -4787,7 +4787,7 @@ impl Globals {
                                 break 'l_exit_f;
                             }
                         }
-                        if ((w).wrapping_abs() >= 32768i32) {
+                        if ((((w) as i64).abs()) >= ((32768i32) as i64)) {
                             {
                                 {
                                     self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = (o).wrapping_add(2i32);
@@ -4810,7 +4810,7 @@ impl Globals {
                                 break 'l_L2_f;
                             }
                         }
-                        if ((w).wrapping_abs() >= 128i32) {
+                        if ((((w) as i64).abs()) >= ((128i32) as i64)) {
                             {
                                 {
                                     self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = (o).wrapping_add(1i32);
@@ -7832,7 +7832,7 @@ impl Globals {
     /// internal structures to PDF page description.
     // §692
     pub fn pdf_set_origin(&mut self, mut h: scaled, mut v: scaled) {
-        if ((((h).wrapping_sub(self.pdf_origin_h)).wrapping_abs() >= self.min_bp_val) || (((v).wrapping_sub(self.pdf_origin_v)).wrapping_abs() >= self.min_bp_val)) {
+        if ((((((h).wrapping_sub(self.pdf_origin_h)) as i64).abs()) >= ((self.min_bp_val) as i64)) || (((((v).wrapping_sub(self.pdf_origin_v)) as i64).abs()) >= ((self.min_bp_val) as i64))) {
             {
                 self.pdf_print(1045i32);
                 self.pdf_print_bp((h).wrapping_sub(self.pdf_origin_h));
@@ -7891,7 +7891,7 @@ impl Globals {
     /// internal structures to PDF page description.
     // §692
     pub fn pdf_set_origin_temp(&mut self, mut h: scaled, mut v: scaled) {
-        if ((((h).wrapping_sub(self.pdf_origin_h)).wrapping_abs() >= self.min_bp_val) || (((v).wrapping_sub(self.pdf_origin_v)).wrapping_abs() >= self.min_bp_val)) {
+        if ((((((h).wrapping_sub(self.pdf_origin_h)) as i64).abs()) >= ((self.min_bp_val) as i64)) || (((((v).wrapping_sub(self.pdf_origin_v)) as i64).abs()) >= ((self.min_bp_val) as i64))) {
             {
                 self.pdf_print(1045i32);
                 self.pdf_print_bp((h).wrapping_sub(self.pdf_origin_h));
