@@ -524,7 +524,7 @@ JSON, before the first `PAGE` that draws it:
 | key | meaning |
 |---|---|
 | `id` | the IMAGE item's id (pdfTeX's `/Im<n>` number) |
-| `key` | hex; changes when the file (path, size, mtime; Unicode mode also its ctime, inode and device, #2444) or the selection changes |
+| `key` | hex; changes when the file (path, size, mtime, ctime, inode, device: a rewrite in place that keeps size and mtime changes the ctime, #2444) or the selection changes |
 | `type` | `png`, `jpeg`, `jbig2`, `pdf` |
 | `file` | absolute path of the image file the engine read |
 | `width`, `height` | pixels (PDF: the box, in bp) |
