@@ -7,11 +7,13 @@
 % engine looks at a control sequence's meaning or name must be seen:
 % |get_next| reading |eq_type| and |equiv| of a control sequence (from a
 % file, a token list, an active character, the \.{\\par} of an empty line,
-% a \.{\\noexpand}ed one), the active character a math character of math
-% code |"8000| stands for (read without |get_next|), and |id_lookup|, which \.{\\csname} and e-TeX's
+% a \.{\\noexpand}ed one), and |id_lookup|, which \.{\\csname} and e-TeX's
 % \.{\\ifcsname} use (a name looked up and not found is a read too: a
 % changed .aux may define it), and e-TeX's \.{\\ifcsname} of an empty or
-% one-character name, which tests a meaning without |id_lookup|.
+% one-character name, which tests a meaning without |id_lookup|, and the
+% active character a math character of math code |"8000| stands for, whose
+% meaning |set_math_char| and |scan_math| read without |get_next|
+% (tex.web \S1152).
 %
 % While |rs_on| (the host turns it on at the .aux point, before the .aux is
 % read) each site calls the hand-written |flashtex_cs_read| or
@@ -78,10 +80,9 @@ cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 begin cur_cs:=cur_chr+active_base;
 cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
-  {tex.web \S1152 reads the meaning without |get_next|}
 @z
 
-@x pdftex.web l.38694 -\.{\\ifcsname} of an empty or one-character name is a read
+@x pdftex.web l.38694 - \.{\\ifcsname} of an empty or one-character name is a read
   flush_list(n);
 @y
   flush_list(n);
