@@ -22,7 +22,13 @@ import Foundation
 ///   `.sty` downloaded later into a trusted folder: each is recorded when
 ///   the user trusts the prompt that counted it, and a later one asks
 ///   again. The walk is the project copy's (EngineV3Mirror.sync: 20,000
-///   entries, hidden files skipped); files past that bound are not checked.
+///   entries linked, hidden files skipped; past that it looks only for
+///   quarantined files, up to 200,000 entries, so a later download there
+///   asks again like any other). A walk cut short even so cannot vouch for
+///   the files it did not reach: the project is not trusted until the user
+///   trusts it as it is (`incompleteSuffix`), and files past 200,000
+///   entries are then not checked. The editor's open documents are checked
+///   whatever the walk saw: they are compiled.
 /// - A lone file in a shared folder (`isShared`: Downloads, Desktop, ...)
 ///   is not a project: the folder is never walked for trust. Trust covers
 ///   the file and the files its own download brought (the same quarantine
@@ -159,7 +165,8 @@ enum EngineV3Trust {
             }
         }
 
-        /// Live Share taints: canonical project root → the session event.
+        /// Live Share taints: canonical project root, and the root's folder
+        /// identity (`taintKeys`), → the session event.
         func loadTaints() -> [String: String] {
             let data: Data?
             switch self {
@@ -193,29 +200,52 @@ enum EngineV3Trust {
     /// (LiveShareController): the project is untrusted until the user trusts
     /// it again, whatever then happens to its files. The record is the app's
     /// own (the trust store, beside the trust records), so no save path,
-    /// editor, `git checkout` or copy can drop it, as one would drop a
+    /// editor or checkout can drop it, as one would drop a
     /// `com.apple.quarantine` attribute (the project-files helper's atomic
     /// save does not carry extended attributes). `event`: the session; a
     /// later session's edits need trusting again.
+    ///
+    /// The taint is kept under the root's path and under its folder
+    /// identity (volume and inode), so a renamed or moved project (on the
+    /// same volume) is still tainted at its new path (#2060). A copy is
+    /// another folder and is not tainted: the host's files carry no mark.
     static func taint(root: URL, event: String, store: Store = .current) {
         var t = store.loadTaints()
-        let key = canonical(root).path
-        guard t[key] != event else { return }
-        t[key] = event
-        store.saveTaints(t)
+        var changed = false
+        for key in taintKeys(root) where t[key] != event {
+            t[key] = event
+            changed = true
+        }
+        if changed { store.saveTaints(t) }
+    }
+
+    /// Where a taint of `root` is kept: its canonical path, and its folder
+    /// identity when it can be read (a rename or a move within the volume
+    /// keeps it). A folder that later reuses a tainted folder's inode is
+    /// taken as tainted: that fails closed.
+    static func taintKeys(_ root: URL) -> [String] {
+        var keys = [canonical(root).path]
+        if let id = identity(root) { keys.append("folder:\(id.volume):\(id.inode)") }
+        return keys
     }
 
     /// The subject a taint adds: the root's identity under a path of its
     /// own (`#liveshare`, never a real file, so it never replaces the
-    /// folder's quarantine record), carrying the session event. Nil when the
+    /// folder's quarantine record), carrying the session event (both, when
+    /// the path and the folder name different sessions). Nil when the
     /// root is not tainted; `.some(nil)` when it cannot be read (fails closed).
     static func taintSubject(root: URL, store: Store) -> Identity?? {
-        guard let event = store.loadTaints()[canonical(root).path] else { return nil }
+        let t = store.loadTaints()
+        let events = Set(taintKeys(root).compactMap { t[$0] })
+        guard !events.isEmpty else { return nil }
         guard var id = identity(root) else { return .some(nil) }
         id.path += "#liveshare"
-        id.quarantine = "liveshare;" + event
+        id.quarantine = "liveshare;" + events.sorted().joined(separator: ";")
         return .some(id)
     }
+
+    /// The path suffix of the subject a walk cut short adds (`decide`).
+    static let incompleteSuffix = "#incomplete-walk"
 
     // MARK: decisions
 
@@ -289,10 +319,31 @@ enum EngineV3Trust {
     /// (`isShared`: a lone file in Downloads), only the files the document
     /// itself reads (`referencedFiles`), so other downloads there never ask.
     /// Reads the disk: call off the main thread.
-    static func decide(root: URL, main: String, texts: [String: String], walkQuarantined: [URL], store: Store = .current) -> Decision {
-        let others = isShared(root) ? referencedFiles(root: root, main: main, texts: texts).filter(isQuarantined) : walkQuarantined
-        guard let need = subjects(root: root, main: root.appendingPathComponent(main), others: others, store: store) else {
+    /// `walkTruncated`: the walk stopped at its bound, so files past it
+    /// were not checked. That fails closed: the root's identity under
+    /// `incompleteSuffix` is a subject of its own, so the project is
+    /// trusted only once the user trusts it as it is. The editor's open
+    /// documents (`texts`) are checked whatever the walk reached.
+    static func decide(root: URL, main: String, texts: [String: String], walkQuarantined: [URL], walkTruncated: Bool = false,
+                       store: Store = .current) -> Decision {
+        let shared = isShared(root)
+        var others = shared ? referencedFiles(root: root, main: main, texts: texts).filter(isQuarantined) : walkQuarantined
+        if !shared {
+            // Hidden, or past the walk's bound: an open document still reaches the compiler.
+            let walked = Set(others.map { canonical($0).path })
+            for rel in texts.keys.sorted() where rel != main {
+                let url = root.appendingPathComponent(rel)
+                if isQuarantined(url), !walked.contains(canonical(url).path) { others.append(url) }
+            }
+        }
+        guard var need = subjects(root: root, main: root.appendingPathComponent(main), others: others, store: store) else {
             return Decision(trusted: false, others: others, need: [])
+        }
+        if walkTruncated, !shared {
+            guard var id = identity(root) else { return Decision(trusted: false, others: others, need: []) }
+            id.path += incompleteSuffix
+            id.quarantine = "incomplete-walk"
+            need.append(id)
         }
         let records = store.load()
         let missing = need.filter { !records.contains($0) }
