@@ -261,8 +261,29 @@ extension SourceEditorView.Coordinator {
     /// completion) and however stale `lastKnownText` is. Only this path pays
     /// the O(n) pair scan. During an IME composition the open session is
     /// carried forward instead: the marked text already made the names differ.
+    ///
+    /// The next keystroke of a rename reuses the session the previous one
+    /// left (`carriedLinkedSession`, both names rewritten; checked in
+    /// O(name) against the storage) instead of scanning again; any other
+    /// edit drops it.
     func beginLinkedEnvironmentEdit(in tv: NSTextView, range: NSRange) {
         let continuing = tv.hasMarkedText() ? linkedSession : nil
+        let carried = carriedLinkedSession
+        carriedLinkedSession = nil
+        if continuing == nil, let carried, let storage = tv.textStorage,
+           carried.covers(range), carried.continuesRename(in: storage.mutableString) {
+            linkedSession = carried
+            return
+        }
+        if continuing == nil {
+            // A name with no braced twin anywhere (a new environment being
+            // typed) cannot link: a literal search, not the lex.
+            if let storage = tv.textStorage, !LinkedEnvironmentEditing.mayLink(at: range.location, in: storage.string as NSString) {
+                linkedSession = nil
+                return
+            }
+            linkedPairScans += 1
+        }
         let text = SourceEditorView.nativeText(of: tv) as NSString
         linkedSession = EditorChangeEnvironment.linkedSession(for: range, in: text, continuing: continuing)
     }
@@ -291,10 +312,13 @@ extension SourceEditorView.Coordinator {
         guard let storage = tv.textStorage,
               let partnerEdit = EditorChangeEnvironment.partnerEdit(for: session, in: storage.mutableString) else { return }
         let saved = tv.selectedRange()
+        let renamed = session.renamed(to: partnerEdit.replacement, in: storage.length)
         programmaticChanges += 1
+        var rewrote = false
         if tv.shouldChangeText(in: partnerEdit.range, replacementString: partnerEdit.replacement) {
             tv.textStorage?.replaceCharacters(in: partnerEdit.range, with: partnerEdit.replacement)
             tv.didChangeText()
+            rewrote = true
         }
         var restored = saved
         if partnerEdit.range.location < saved.location {
@@ -303,5 +327,6 @@ extension SourceEditorView.Coordinator {
         let limit = tv.textStorage?.length ?? 0
         tv.setSelectedRange(NSRange(location: max(0, min(restored.location, limit)), length: 0))
         programmaticChanges -= 1
+        if rewrote { carriedLinkedSession = renamed } // the next keystroke of this rename needs no scan
     }
 }

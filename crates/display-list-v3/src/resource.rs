@@ -344,6 +344,72 @@ impl Sources {
     }
 }
 
+/// `SPAN_SHIFT` (spec §5.3.1, `span-shift-v1`): `{"shifts": [[file, from,
+/// delta], ...]}`. Applied in order, each moves every span the client holds
+/// in `file` on a line `>= from` by `delta` lines; `from + delta >= 1`, so
+/// no line goes below 1. A `SOURCES` that follows re-declares what the
+/// shifts do not describe.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpanShifts {
+    pub shifts: Vec<(u32, u32, i64)>,
+}
+
+impl SpanShifts {
+    pub fn to_json(&self) -> Json {
+        Json::Obj(vec![(
+            "shifts".into(),
+            Json::Arr(
+                self.shifts
+                    .iter()
+                    .map(|&(f, from, d)| {
+                        Json::Arr(vec![
+                            Json::Int(f as i64),
+                            Json::Int(from as i64),
+                            Json::Int(d),
+                        ])
+                    })
+                    .collect(),
+            ),
+        )])
+    }
+
+    pub fn from_json(j: &Json) -> Result<SpanShifts, String> {
+        let mut s = SpanShifts::default();
+        let int = |v: &Json| {
+            v.as_i64()
+                .filter(|i| (0..=u32::MAX as i64).contains(i))
+                .map(|i| i as u32)
+        };
+        for e in j.get("shifts").and_then(Json::as_array).unwrap_or(&[]) {
+            match e.as_array().ok_or("shifts entry is not an array")? {
+                [f, from, d] => {
+                    let (f, from) = (
+                        int(f).ok_or("bad shift file")?,
+                        int(from).ok_or("bad shift line")?,
+                    );
+                    let d = d.as_i64().ok_or("bad shift delta")?;
+                    if from as i64 + d < 1 {
+                        return Err("a shift moves a line below 1".into());
+                    }
+                    s.shifts.push((f, from, d));
+                }
+                _ => return Err("shifts entry is not [file, from, delta]".into()),
+            }
+        }
+        Ok(s)
+    }
+
+    /// Where a span at `(file, line)` is after the shifts.
+    pub fn apply(&self, mut at: (u32, u32)) -> (u32, u32) {
+        for &(f, from, d) in &self.shifts {
+            if at.0 == f && at.1 >= from {
+                at.1 = (at.1 as i64 + d).max(1) as u32;
+            }
+        }
+        at
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

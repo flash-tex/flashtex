@@ -26,7 +26,8 @@ with pdfTeX on them (the expected output is pdfTeX's, never stored).
   font dictionary, an /Info dictionary), a copy with a broken xref table
   (xpdf reconstructs it), a PDF 1.7 file (the version check), and pdfTeX's
   own output with embedded Type 1 subsets, with and without /CharSet, and
-  with object streams.
+  with object streams; and two pages whose resources hold an object
+  pdfTeX cannot copy (a bare keyword, a reference to object -1).
 
 zlib's output can differ between zlib versions, so a regeneration with
 another Python may change the compressed bytes of the PNGs and PDFs; the
@@ -487,7 +488,28 @@ def type1c_pdf():
     return pdf_file(objs, 1)
 
 
+def uncopyable_pdf(value):
+    """One page whose ExtGState holds `value`, an object pdftoepdf cannot
+    copy (a bare keyword is xpdf's objCmd, a reference to object -1 its
+    objError): pdfTeX stops with "type <...> cannot be copied"."""
+    content = b"/GS1 gs 0 0 m 10 10 l S\n"
+    return pdf_file({
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] "
+            b"/Resources << /ExtGState << /GS1 << /Type /ExtGState /Foo " + value
+            + b" >> >> >> /Contents 4 0 R >>"),
+        4: stream(b"", content),
+    }, 1)
+
+
+def gen_uncopyable_pdfs():
+    out("pdf-cmd.pdf", uncopyable_pdf(b"bar"))
+    out("pdf-errobj.pdf", uncopyable_pdf(b"-1 0 R"))
+
+
 def gen_pdfs():
+    gen_uncopyable_pdfs()
     out("pdf-type1c.pdf", type1c_pdf())
     objs = hand_pdf()
     out("pdf-hand.pdf", pdf_file(objs, 1, info=21))

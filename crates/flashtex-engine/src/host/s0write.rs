@@ -220,6 +220,41 @@ mod tests {
         assert!(no_tmp(&d));
     }
 
+    /// A writer that died before its rename (a host killed with a save
+    /// pending, a crash, a reboot) left its partial file, and nothing removed
+    /// it: the next write of the path removes it. A live writer's file (this
+    /// process's), another path's and a name not a writer's stay.
+    #[cfg(unix)]
+    #[test]
+    fn a_write_removes_a_dead_writers_partial_file() {
+        let d = dir("dead");
+        let p = d.join("doc.s1");
+        let dead = {
+            let mut c = std::process::Command::new("true").spawn().unwrap();
+            let id = c.id();
+            c.wait().unwrap();
+            id
+        };
+        let partial = d.join(format!("doc.s1.{dead}.1793000000000000000.0.tmp"));
+        let kept = [
+            d.join(format!(
+                "doc.s1.{}.1793000000000000000.0.tmp",
+                std::process::id()
+            )),
+            d.join(format!("other.s1.{dead}.1793000000000000000.0.tmp")),
+            d.join(format!("doc.s1.{dead}.notes.tmp")),
+        ];
+        for f in kept.iter().chain([&partial]) {
+            std::fs::write(f, b"a partial file").unwrap();
+        }
+        image(30, 5).write(p.to_str().unwrap(), &|| false).unwrap();
+        assert!(!partial.exists(), "the dead writer's partial file is left");
+        for f in &kept {
+            assert!(f.exists(), "{} was removed", f.display());
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// Saves of one path in a row: the newest is the file left, whatever
     /// the writer had started; the superseded ones report nothing or
     /// succeeded before the next came.

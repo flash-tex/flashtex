@@ -9,6 +9,241 @@ import XCTest
 /// reconnect, the IME hold and local undo (proposal §7.2–§7.3).
 @MainActor
 final class SessionTransportTests: XCTestCase {
+    func testRefusedReplaceRestoresOptimisticEditorText() throws {
+        let project = CollabProject(replica: 1, caps: .init(maxFiles: 2, maxTextBytes: 3, localFileHeadroom: 0, localTextHeadroom: 0))
+        let file = FileID.random()
+        _ = try project.fileOp { try $0.create(file, kind: .text, path: "a.tex") }
+        _ = try project.insert("abc", at: 0, in: file)
+        let session = CollabSession(role: .hub, replica: 1, name: "Host", colourIndex: 0)
+        let binding = CollabTextBinding(file: file, document: try XCTUnwrap(project.text(file)), session: session)
+        let host = FakeHost()
+        host.text.setString("axc") // the editor has already applied the replacement
+        binding.attach(host)
+
+        binding.localReplace(1..<2, with: "x")
+
+        XCTAssertEqual(host.text as String, "axc")
+        let reverted = expectation(description: "deferred revert")
+        DispatchQueue.main.async { reverted.fulfill() }
+        wait(for: [reverted], timeout: 1)
+        XCTAssertEqual(host.text as String, "abc")
+        XCTAssertEqual(binding.document.text, "abc")
+
+        host.text.setString("axc")
+        binding.localReplace(1..<2, with: "x")
+        host.text.setString("ayc") // a newer edit still needs to match the refused CRDT text
+        let resynced = expectation(description: "deferred resync")
+        DispatchQueue.main.async { resynced.fulfill() }
+        wait(for: [resynced], timeout: 1)
+        XCTAssertEqual(host.text as String, "abc")
+        XCTAssertEqual(host.applies, 2)
+    }
+
+    func testQueuedRefusalsResyncTheEditorBeforeTheNextEdit() throws {
+        let project = CollabProject(replica: 1, caps: .init(maxFiles: 2, maxTextBytes: 3, localFileHeadroom: 0, localTextHeadroom: 0))
+        let file = FileID.random()
+        _ = try project.fileOp { try $0.create(file, kind: .text, path: "a.tex") }
+        _ = try project.insert("abc", at: 0, in: file)
+        let session = CollabSession(role: .hub, replica: 1, name: "Host", colourIndex: 0)
+        let binding = CollabTextBinding(file: file, document: try XCTUnwrap(project.text(file)), session: session)
+        let host = FakeHost()
+        host.text.setString("abc")
+        host.binding = binding
+        binding.attach(host)
+        host.moveCaret(to: 1)
+        host.type("x")
+        host.type("y")
+        let resynced = expectation(description: "queued resync")
+        DispatchQueue.main.async { resynced.fulfill() }
+        wait(for: [resynced], timeout: 1)
+        XCTAssertEqual(host.collabText, "abc")
+        XCTAssertEqual(binding.document.text, "abc")
+
+        host.text.setString("abcx") // a stale editor may submit a range beyond the CRDT
+        binding.localReplace(4..<4, with: "z")
+        let invalidRangeResynced = expectation(description: "invalid range resync")
+        DispatchQueue.main.async { invalidRangeResynced.fulfill() }
+        wait(for: [invalidRangeResynced], timeout: 1)
+        XCTAssertEqual(host.collabText, "abc")
+    }
+
+    /// §2.4a over the wire: the hub and a guest each make an edit within
+    /// their own headroom, but together past the cap. The hub refuses the
+    /// guest's as `project_full`, relays none of it and ends the guest's
+    /// connection; the guest's copy stops following (it never goes on
+    /// diverged).
+    func testARemoteOperationRefusedAsProjectFullEndsTheGuestsSession() throws {
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 12, localFileHeadroom: 0, localTextHeadroom: 2)
+        defer { CollabSession.capsOverride = nil }
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        let g = h.guest(name: "Bob")
+        let s = try XCTUnwrap(join(g))
+        waitUntil(5, "sync") { s.text(of: h.file) == "abc" }
+        // Both at 3 bytes; each may add 7 locally (12 - 2 - 3), so together 14 > 12.
+        let hubBinding = try XCTUnwrap(h.hubSession.binding(for: h.file))
+        let guestBinding = try XCTUnwrap(s.binding(for: h.file))
+        guestBinding.localReplace(3..<3, with: "GGGGGGG")
+        hubBinding.localReplace(0..<0, with: "HHHHHHH")
+        waitUntil(10, "the guest's session ends") { if case .ended = g.state { return true } else { return false } }
+        if case let .ended(why) = g.state { XCTAssertEqual(why, CollabSession.projectFullMessage) }
+        XCTAssertFalse(h.hubSession.text(of: h.file)!.contains("G"), "the hub took none of the refused edit")
+        h.hub.stop()
+    }
+
+    func testRefusedHeldOperationEndsGuestSession() throws {
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 1000, localFileHeadroom: 0, localTextHeadroom: 0)
+        defer { CollabSession.capsOverride = nil }
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 12, localFileHeadroom: 0, localTextHeadroom: 0)
+        let g = h.guest()
+        let s = try XCTUnwrap(join(g))
+        waitUntil(5, "sync") { s.text(of: h.file) == "abc" }
+        let host = FakeHost()
+        host.text.setString("abc")
+        let binding = try XCTUnwrap(s.binding(for: h.file))
+        binding.attach(host)
+        host.composing = true
+        try XCTUnwrap(h.hubSession.binding(for: h.file)).localReplace(3..<3, with: String(repeating: "H", count: 20))
+        waitUntil(5, "held") { binding.heldCount > 0 }
+        host.composing = false
+        binding.release()
+        waitUntil(5, "project full ends guest") { if case .ended = g.state { return true } else { return false } }
+        XCTAssertEqual(g.state, .ended(CollabSession.projectFullMessage))
+        g.leave(); h.hub.stop()
+    }
+
+    func testHubDoesNotRelayHeldTextThatItLaterRefuses() throws {
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 12, localFileHeadroom: 0, localTextHeadroom: 0)
+        defer { CollabSession.capsOverride = nil }
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 1000, localFileHeadroom: 0, localTextHeadroom: 0)
+        let a = h.guest(name: "A"), b = h.guest(name: "B")
+        let asession = try XCTUnwrap(join(a))
+        let bsession = try XCTUnwrap(join(b))
+        waitUntil(5, "sync") { asession.text(of: h.file) == "abc" && bsession.text(of: h.file) == "abc" }
+        let host = FakeHost()
+        host.text.setString("abc")
+        let hb = try XCTUnwrap(h.hubSession.binding(for: h.file))
+        hb.attach(host)
+        host.composing = true
+        try XCTUnwrap(asession.binding(for: h.file)).localReplace(3..<3, with: String(repeating: "a", count: 20))
+        waitUntil(5, "hub held text") { hb.heldCount > 0 }
+        XCTAssertEqual(bsession.text(of: h.file), "abc")
+        host.composing = false
+        hb.release()
+        waitUntil(5, "sender refused") { if case .ended = a.state { return true } else { return false } }
+        XCTAssertEqual(a.state, .ended(CollabSession.projectFullMessage))
+        XCTAssertEqual(bsession.text(of: h.file), "abc")
+        XCTAssertEqual(b.state, .joined)
+        a.leave(); b.leave(); h.hub.stop()
+    }
+
+    func testHubRelaysAcceptedPrefixBeforeRefusingSender() throws {
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 12, localFileHeadroom: 0, localTextHeadroom: 2)
+        defer { CollabSession.capsOverride = nil }
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        let a = h.guest(name: "A"), b = h.guest(name: "B")
+        let asession = try XCTUnwrap(join(a))
+        let bsession = try XCTUnwrap(join(b))
+        waitUntil(5, "sync") { asession.text(of: h.file) == "abc" && bsession.text(of: h.file) == "abc" }
+        let hb = try XCTUnwrap(h.hubSession.binding(for: h.file))
+        let ab = try XCTUnwrap(asession.binding(for: h.file))
+        hb.localReplace(0..<0, with: "HHHHH")
+        ab.localReplace(3..<3, with: "aa")
+        ab.localReplace(5..<5, with: "bbbbb")
+        waitUntil(10, "sender refused") { if case .ended = a.state { return true } else { return false } }
+        waitUntil(5, "other guest converges") { bsession.text(of: h.file) == h.hubSession.text(of: h.file) }
+        XCTAssertEqual(a.state, .ended(CollabSession.projectFullMessage))
+        XCTAssertEqual(h.hubSession.text(of: h.file), "HHHHHabcaa")
+        XCTAssertEqual(bsession.text(of: h.file), h.hubSession.text(of: h.file))
+        XCTAssertEqual(b.state, .joined)
+        a.leave(); b.leave(); h.hub.stop()
+    }
+
+    /// #2059 finding 1: the hub drops a guest's file-map operations (P1),
+    /// so a guest's `shareFile` would make a file only its own copy holds.
+    /// It is refused and changes nothing; so is a share the caps refuse.
+    func testAGuestCannotShareAFileAndARefusedShareChangesNothing() throws {
+        let guest = CollabSession(role: .guest, replica: 7, name: "G", colourIndex: 1)
+        let before = guest.project.digest
+        XCTAssertThrowsError(try guest.shareFile(path: "mine.tex", text: "hi")) {
+            XCTAssertEqual($0 as? CollabSession.ShareError, .notHub)
+        }
+        XCTAssertEqual(guest.project.digest, before)
+        XCTAssertTrue(guest.textFiles.isEmpty)
+        XCTAssertEqual(guest.project.files.stateVector[7], 0)
+
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 4, localFileHeadroom: 0, localTextHeadroom: 0)
+        defer { CollabSession.capsOverride = nil }
+        let hub = CollabSession(role: .hub, replica: 8, name: "H", colourIndex: 0)
+        XCTAssertThrowsError(try hub.shareFile(path: "big.tex", text: "too long")) {
+            XCTAssertEqual($0 as? CollabError, .projectFull)
+        }
+        XCTAssertTrue(hub.textFiles.isEmpty, "no file without its text")
+        XCTAssertEqual(hub.project.files.count, 0)
+        XCTAssertNoThrow(try hub.shareFile(path: "ok.tex", text: "fits"))
+        XCTAssertEqual(hub.textFiles.map(\.path), ["ok.tex"])
+    }
+
+    /// #2059 finding 4: the hub relayed a guest's text operation even when
+    /// it refused it, so every other guest integrated (and split its runs
+    /// for) what it would refuse too. Now the hub relays none of it and
+    /// ends the sender's part, which holds what the hub does not.
+    func testHubRelaysNoneOfARefusedOperationAndEndsItsSender() throws {
+        let h = try Harness(text: "abcdef")
+        try h.start(self)
+        let a = h.guest(name: "A"), b = h.guest(name: "B")
+        let asession = try XCTUnwrap(join(a)), bsession = try XCTUnwrap(join(b))
+        waitUntil(5, "sync") { asession.text(of: h.file) == "abcdef" && bsession.text(of: h.file) == "abcdef" }
+        var bRefused: [CollabProject.ReceiveError] = []
+        bsession.onRejected = { bRefused += $0 }
+        let doc = try XCTUnwrap(h.hubSession.project.text(h.file))
+        let hubRuns = doc.runCount
+        let ids = (0..<6).map { CollabID(replica: h.hubSession.replica, counter: UInt64($0)) }
+        // A's own ids, origins out of order ('e' left of 'b'): malformed.
+        let bad = TextOp.insert(id: CollabID(replica: asession.replica, counter: 0), originLeft: ids[4],
+                                originRight: ids[1], content: "x")
+        a.connection!.send(.update(seq: 1, sections: [.text(h.file, [bad])]))
+        waitUntil(10, "sender's part ends") { if case .ended = a.state { return true } else { return false } }
+        XCTAssertEqual(a.state, .ended(CollabSession.refusedMessage))
+        XCTAssertEqual(doc.runCount, hubRuns, "the refusal split nothing")
+        XCTAssertEqual(h.hubSession.text(of: h.file), "abcdef")
+        // A later edit from the hub reaches B, so anything relayed before it has too.
+        try XCTUnwrap(h.hubSession.binding(for: h.file)).localReplace(0..<0, with: "!")
+        waitUntil(5, "B follows") { bsession.text(of: h.file) == "!abcdef" }
+        XCTAssertEqual(bRefused, [], "nothing refused was relayed")
+        XCTAssertEqual(bsession.project.text(h.file)?.stateVector[asession.replica], 0)
+        XCTAssertEqual(b.state, .joined)
+        a.leave(); b.leave(); h.hub.stop()
+    }
+
+    /// #2059 finding 6: a replica holding another version of an id keeps
+    /// whichever arrived first (§2.4), with the same state vector as its
+    /// peers. A guest that is sent the other version now ends its part
+    /// instead of going on with different text.
+    func testAGuestHoldingAnotherVersionOfAnIDEndsInsteadOfDiverging() throws {
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        let g = h.guest()
+        let s = try XCTUnwrap(join(g))
+        waitUntil(5, "sync") { s.text(of: h.file) == "abc" }
+        let hub = h.hubSession.replica
+        let next = try XCTUnwrap(h.hubSession.project.text(h.file)).stateVector[hub]
+        // A faulty replica gave the guest its own version of the hub's next id.
+        let forged = TextOp.insert(id: CollabID(replica: hub, counter: next), originLeft: nil, originRight: nil, content: "X")
+        XCTAssertEqual(s.project.receive([.text(h.file, [forged])]), [])
+        XCTAssertEqual(s.text(of: h.file), "abcX")
+        try XCTUnwrap(h.hubSession.binding(for: h.file)).localReplace(0..<0, with: "Y")
+        waitUntil(10, "the guest's part ends") { if case .ended = g.state { return true } else { return false } }
+        XCTAssertEqual(g.state, .ended(CollabSession.refusedMessage))
+        XCTAssertEqual(h.hubSession.text(of: h.file), "Yabc")
+        h.hub.stop()
+    }
+
     func testIdentityIsSelfSignedP256AndFingerprintRoundTrips() throws {
         let id = try CollabIdentity()
         XCTAssertEqual(id.fingerprint.count, 32)

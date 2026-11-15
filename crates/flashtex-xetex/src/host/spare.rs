@@ -267,7 +267,7 @@ pub struct Ident {
     dev: u64,
 }
 
-fn ident(p: &Path) -> Option<Ident> {
+pub(crate) fn ident(p: &Path) -> Option<Ident> {
     let m = std::fs::metadata(p).ok()?;
     Some(Ident {
         size: m.len(),

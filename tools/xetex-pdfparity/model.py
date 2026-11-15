@@ -6,7 +6,7 @@
 """
 from content import Interp, _r
 from fonts import FontCache
-from pdfdoc import Doc, Stream, name, text
+from pdfdoc import Doc, Stream, is_ref, name, text
 
 INFO_KEYS = ("/Title", "/Author", "/Subject", "/Keywords", "/Creator")
 BOXES = ("/MediaBox", "/CropBox", "/BleedBox", "/TrimBox", "/ArtBox")
@@ -135,6 +135,32 @@ def named_dests(doc):
     return names
 
 
+def acroform_desc(doc, cat):
+    """The catalog's /AcroForm: its other entries by value, and each of its
+    /Fields as the annotation it is: page and position in that page's
+    /Annots (the same object), or its name alone when it is not on a page
+    (a `null` or a copy). hyperref's form fields are `pdf:ann @name`
+    widgets named again in /Fields (#1781); a writer that loses the name
+    writes `null` there."""
+    af = doc.get(cat.get("/AcroForm"))
+    if not isinstance(af, dict):
+        return None
+    where = {}
+    for i, (_ref, p) in enumerate(doc.pages):
+        for k, a in enumerate(doc.get(p.get("/Annots")) or []):
+            if is_ref(a):
+                where.setdefault(a, (i, k))
+    fields = []
+    for f in doc.get(af.get("/Fields")) or []:
+        o = doc.get(f)
+        t = text(doc.get(o.get("/T"))) if isinstance(o, dict) else None
+        at = where.get(f) if is_ref(f) else None
+        fields.append({"T": t, "page": at[0] if at else None, "annot": at[1] if at else None,
+                       "null": o is None})
+    return {"fields": fields,
+            "rest": doc.canon({k: v for k, v in af.items() if k != "/Fields"})}
+
+
 def extract(path):
     doc = Doc.open(path)
     fonts = FontCache(doc)
@@ -168,6 +194,7 @@ def extract(path):
                        else dest_desc(doc, oa, names) if oa is not None else None),
         "ViewerPreferences": doc.canon(cat.get("/ViewerPreferences")),
         "PageLabels": doc.canon(cat.get("/PageLabels")),
+        "AcroForm": acroform_desc(doc, cat),
     }
     m.fonts = fonts
     return m

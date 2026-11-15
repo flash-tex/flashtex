@@ -16,7 +16,7 @@ on:
         description: "cold opens per ref"
         default: "2"
       perf:
-        description: "1: also a perf record of the first ref's open (its top symbols)"
+        description: "1: also a perf record of the first ref's open (its top symbols); 2: of every ref's"
         default: "0"
 
 permissions:

@@ -1,0 +1,46 @@
+% Preview probe: \pdfliteral's modes and the q/Q balance. `page` (the
+% default) ends the text object and moves the origin to the current point;
+% `direct` writes inside the text object as it stands. One case per page.
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+\noindent Page mode: before \pdfliteral{1 0 0 rg 0 0 m 30 8 l 0 0 1 RG 0.8 w S}after, red.\pdfliteral{0 g 0 G}
+\par\noindent Next line, black again.
+\newpage
+
+\noindent Direct mode: A\pdfliteral direct{0 0 1 rg}B\pdfliteral direct{0 g}C.
+\newpage
+
+% A string a literal shows, in the font's range but in letters TeX typesets
+% nowhere in this font (X, j): not in pdfTeX's font subset, so the PDF
+% shows no ink for them; the display list flags the page INCOMPLETE. (Past
+% /LastChar their width would be 0 too: not shown here, as the positions
+% check would then differ by design; the engine's unit test covers it.)
+\noindent A string shown by a literal: [\pdfliteral direct{(Xj) Tj}] then text.
+\newpage
+
+\noindent Direct mode text state: \pdfliteral direct{2 Tc}spaced\pdfliteral direct{0 Tc}
+\pdfliteral direct{150 Tz}wide\pdfliteral direct{100 Tz}
+\pdfliteral direct{3 Ts}raised\pdfliteral direct{0 Ts} done.
+\newpage
+
+\noindent Balanced: \pdfliteral{q 0 0.6 0 rg}green\pdfliteral{Q} and black.
+\newpage
+
+\noindent Saved colour across a line: \pdfliteral{q 0.7 0 0.7 rg}purple text that goes on
+for long enough to break across the lines of this paragraph, set with
+a \verb|q| at its start and the matching \verb|Q| after its end.\pdfliteral{Q}
+And black after it.
+\newpage
+
+\noindent An extra Q with nothing saved: \pdfliteral{Q}text after it.
+\newpage
+
+\noindent A q left open at the end of the page, with a colour: \pdfliteral{q 0 0 1 rg}blue.
+\newpage
+
+\noindent The next page starts black.
+\newpage
+
+\noindent A clip: \pdfliteral{q 0 -2 40 6 re W n}clipped text here\pdfliteral{Q} unclipped.
+\end{document}
