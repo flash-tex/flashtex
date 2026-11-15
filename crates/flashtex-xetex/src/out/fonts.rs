@@ -12,13 +12,21 @@
 //!   the entry's `.enc` file or with the program's built-in encoding; the
 //!   resource is Classic's `type1` resource (spec §5.1), with the same key.
 //!
-//! A font that cannot be drawn this way (a TFM font without a map entry or
-//! program, a virtual font, a native font file that cannot be read) gets a
-//! resource with a `problem` (spec §5.1), and the pages using it are
-//! flagged INCOMPLETE.
+//! * A **virtual font** is a TFM font with no map entry and a VF file
+//!   ([`super::vf`], dvipdfm-x's `vf.c`). It has no resource of its own:
+//!   each of its characters is a packet of DVI commands in the fonts its
+//!   VF file names, which are located as xdvipdfmx's `dvi_locate_font`
+//!   locates them ([`Fonts::located`]): TFM fonts with a map entry, or
+//!   virtual fonts again.
+//!
+//! A font that cannot be drawn this way (a TFM font without a map entry,
+//! program or VF file, a VF file that cannot be read, a native font file
+//! that cannot be read) gets a resource with a `problem` (spec §5.1), and
+//! the pages using it are flagged INCOMPLETE.
 
 use super::agl::Agl;
 use super::fontmap::{parse_enc, FontMap, MapIndex};
+use super::vf::{sqxfw, Tfm, Vf, VfFontDef};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::sha256::{hex, sha256, Sha256};
 use flashtex_engine::resolver::Format;
@@ -223,12 +231,41 @@ pub enum FontDef {
     Tfm(TfmDef),
 }
 
+/// A font of a page: one the XDV stream defines, by its DVI number, or
+/// one a virtual font's file names, by its place in [`Fonts::located`]
+/// (xdvipdfmx keeps both in `loaded_fonts`, with their `source`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontRef {
+    Dvi(i32),
+    Located(usize),
+}
+
+/// A virtual font at a size (vf.c's `struct vf`: xdvipdfmx has one for
+/// each size a VF file is used at).
+#[derive(Clone, Debug)]
+pub struct VfLoaded {
+    pub name: Vec<u8>,
+    /// The size (DVI units) the packets' fix words are scaled by.
+    pub ptsize: i32,
+    pub vf: Arc<Vf>,
+    /// The fonts the file defines, in its order: the number the packets
+    /// select each by, and its place in [`Fonts::located`]. The first is
+    /// a packet's font at its start.
+    pub dev: Vec<(i32, usize)>,
+}
+
 /// What the page builder needs of a defined font.
 #[derive(Clone, Debug)]
 pub struct Loaded {
     pub def: FontDef,
-    /// The display-list resource id.
+    /// The display-list resource id (0: a virtual font, which has none).
     pub res: u16,
+    /// A virtual font: its place in [`Fonts::vfs`].
+    pub vf: Option<usize>,
+    /// A font a virtual font names: its TFM file's fix words, which its
+    /// characters advance by (the engine has the metrics of the XDV
+    /// stream's own fonts only).
+    pub tfm: Option<Arc<Tfm>>,
     /// Why its glyphs cannot be drawn, if they cannot.
     pub problem: Option<String>,
     /// Native fonts: units per em, `hhea` ascender and descender (font
@@ -305,6 +342,14 @@ pub enum ResKind {
 pub struct Fonts {
     /// By DVI font number.
     pub defined: HashMap<i32, Loaded>,
+    /// The fonts located for virtual fonts ([`FontRef::Located`]).
+    pub located: Vec<Loaded>,
+    /// The virtual fonts read, each at each size used.
+    pub vfs: Vec<Arc<VfLoaded>>,
+    /// The VF and TFM files read for them, by font name (`None`: no such
+    /// file).
+    vf_files: HashMap<Vec<u8>, Option<Arc<Vf>>>,
+    tfm_files: HashMap<Vec<u8>, Result<Arc<Tfm>, String>>,
     /// Resources, by id - 1.
     pub res: Vec<FontRes>,
     by_key: HashMap<[u8; 32], u16>,
@@ -320,6 +365,23 @@ pub struct Fonts {
     pub cache: Option<Arc<FontCache>>,
     /// Without one, the faces this run parsed ([`Fonts::face_data`]).
     faces: HashMap<[u8; 32], Arc<FaceData>>,
+    /// How many virtual fonts are being read, each for the one before.
+    vf_loading: usize,
+}
+
+/// dvi.c's `VF_NESTING_MAX`: how deep a virtual font's character may be
+/// another virtual font's.
+pub const VF_NESTING_MAX: usize = 16;
+
+/// `kpse_find_file` for a format whose files have `suffix`: the name with
+/// the suffix first (unless it has it), then the name as it is.
+fn find_suffixed(name: &str, suffix: &str, format: Format) -> Option<String> {
+    if !name.ends_with(suffix) {
+        if let Some(p) = flashtex_engine::system::find_file(&format!("{name}{suffix}"), format) {
+            return Some(p);
+        }
+    }
+    flashtex_engine::system::find_file(name, format)
 }
 
 impl Fonts {
@@ -341,8 +403,16 @@ impl Fonts {
         self.defined.get(&k)
     }
 
+    /// The font `r` names.
+    pub fn font(&self, r: FontRef) -> Option<&Loaded> {
+        match r {
+            FontRef::Dvi(k) => self.defined.get(&k),
+            FontRef::Located(i) => self.located.get(i),
+        }
+    }
+
     pub fn resource(&self, id: u16) -> Option<&FontRes> {
-        self.res.get(id as usize - 1)
+        self.res.get((id as usize).checked_sub(1)?)
     }
 
     /// `x:fontmapline` / `pdf:mapline`.
@@ -390,6 +460,8 @@ impl Fonts {
                 name: Vec::new(),
             }),
             res,
+            vf: None,
+            tfm: None,
             problem: Some(problem),
             upm: 1000,
             ascent: 0,
@@ -482,6 +554,8 @@ impl Fonts {
         Loaded {
             def: FontDef::Native(n.clone()),
             res,
+            vf: None,
+            tfm: None,
             problem: None,
             upm,
             ascent: font.ascender,
@@ -524,15 +598,149 @@ impl Fonts {
         self.programs.keys().cloned().collect()
     }
 
+    /// A TFM font of size `t.size`, as dvi.c's `dvi_locate_font` finds
+    /// what draws it: with no font map entry a virtual font, with one
+    /// the entry's font program. (xdvipdfmx then tries a PK font, made by
+    /// `mktexpk`; this output has no bitmap fonts.)
     fn load_tfm(&mut self, t: &TfmDef) -> Loaded {
         let tfm = String::from_utf8_lossy(&t.name).into_owned();
-        let Some(e) = self.font_map().get(&t.name) else {
-            let why = if flashtex_engine::system::find_file(&tfm, Format::Vf).is_some() {
-                "a virtual font"
-            } else {
-                "no font map entry"
+        if self.font_map().get(&t.name).is_none() {
+            return match self.vf_locate(&t.name, t.size) {
+                Ok(Some(vf)) => Loaded {
+                    def: FontDef::Tfm(t.clone()),
+                    res: 0,
+                    vf: Some(vf),
+                    tfm: None,
+                    problem: None,
+                    upm: 1000,
+                    ascent: 0,
+                    descent: 0,
+                    advances: Arc::new(Vec::new()),
+                },
+                Ok(None) => self.missing(&tfm, format!("TFM font {tfm}: no font map entry")),
+                Err(e) => self.missing(&tfm, format!("TFM font {tfm}: its virtual font: {e}")),
             };
-            return self.missing(&tfm, format!("TFM font {tfm}: {why}"));
+        }
+        self.load_physical(t)
+    }
+
+    /// vf.c's `vf_locate_font`: the virtual font `name` at `ptsize`, read
+    /// from its VF file unless it is there at that size already, with the
+    /// fonts the file defines located (`read_a_font_def`). `Ok(None)`:
+    /// there is no such VF file. An `Err` is where xdvipdfmx stops with a
+    /// fatal error.
+    fn vf_locate(&mut self, name: &[u8], ptsize: i32) -> Result<Option<usize>, String> {
+        if let Some(i) = self
+            .vfs
+            .iter()
+            .position(|v| v.name == name && v.ptsize == ptsize)
+        {
+            return Ok(Some(i));
+        }
+        let Some(vf) = self.vf_file(name)? else {
+            return Ok(None);
+        };
+        // vf.c reads without a limit, and a file that names itself at a
+        // growing size never ends there
+        if self.vf_loading >= VF_NESTING_MAX {
+            return Err("Virtual fonts nested too deeply!".into());
+        }
+        // "This code needs to be able to recurse": the font is there, by
+        // name and size, while its own fonts are located
+        let this = self.vfs.len();
+        let mut loaded = VfLoaded {
+            name: name.to_vec(),
+            ptsize,
+            vf: vf.clone(),
+            dev: Vec::new(),
+        };
+        self.vfs.push(Arc::new(loaded.clone()));
+        self.vf_loading += 1;
+        for d in &vf.fonts {
+            let id = self.locate(d, sqxfw(ptsize, d.size as i32));
+            loaded.dev.push((d.font_id, id));
+        }
+        self.vf_loading -= 1;
+        self.vfs[this] = Arc::new(loaded);
+        Ok(Some(this))
+    }
+
+    /// `dvi_locate_font` for a font a VF file defines, at `ptsize`: its
+    /// place in [`Fonts::located`].
+    fn locate(&mut self, d: &VfFontDef, ptsize: i32) -> usize {
+        let id = self.located.len();
+        let t = TfmDef {
+            checksum: d.checksum,
+            size: ptsize,
+            // a fix word of points, as DVI units
+            dsize: (d.design_size >> 4) as i32,
+            name: d.name.clone(),
+        };
+        // its place is taken before a virtual font's own fonts are located
+        let name = String::from_utf8_lossy(&d.name).into_owned();
+        self.located.push(Loaded {
+            def: FontDef::Tfm(t.clone()),
+            res: 0,
+            vf: None,
+            tfm: None,
+            problem: Some(format!("TFM font {name}: being located")),
+            upm: 1000,
+            ascent: 0,
+            descent: 0,
+            advances: Arc::new(Vec::new()),
+        });
+        // "TFM must exist here."
+        let loaded = match self.tfm_file(&d.name) {
+            Ok(tfm) => Loaded {
+                tfm: Some(tfm),
+                ..self.load_tfm(&t)
+            },
+            Err(e) => self.missing(&name, format!("TFM font {name}: {e}")),
+        };
+        self.located[id] = Loaded {
+            def: FontDef::Tfm(t),
+            ..loaded
+        };
+        id
+    }
+
+    /// The VF file of font `name` (`kpse_vf_format`), read once.
+    fn vf_file(&mut self, name: &[u8]) -> Result<Option<Arc<Vf>>, String> {
+        if let Some(v) = self.vf_files.get(name) {
+            return Ok(v.clone());
+        }
+        let n = String::from_utf8_lossy(name).into_owned();
+        let read = find_suffixed(&n, ".vf", Format::Vf).and_then(|p| std::fs::read(p).ok());
+        let vf = match read {
+            Some(d) => Some(Arc::new(Vf::parse(&d)?)),
+            None => None,
+        };
+        self.vf_files.insert(name.to_vec(), vf.clone());
+        Ok(vf)
+    }
+
+    /// The TFM file of font `name` (tfm.c's `tfm_open`), read once.
+    fn tfm_file(&mut self, name: &[u8]) -> Result<Arc<Tfm>, String> {
+        if let Some(t) = self.tfm_files.get(name) {
+            return t.clone();
+        }
+        let n = String::from_utf8_lossy(name).into_owned();
+        let tfm = match find_suffixed(&n, ".tfm", Format::Tfm) {
+            None => Err(format!("Unable to find TFM file \"{n}\".")),
+            Some(p) => match std::fs::read(&p) {
+                Err(_) => Err(format!("Could not open specified TFM/OFM file \"{n}\".")),
+                Ok(d) => Tfm::parse(&d).map(Arc::new),
+            },
+        };
+        self.tfm_files.insert(name.to_vec(), tfm.clone());
+        tfm
+    }
+
+    /// The Type 1 program a TFM font's map entry names.
+    fn load_physical(&mut self, t: &TfmDef) -> Loaded {
+        let tfm = String::from_utf8_lossy(&t.name).into_owned();
+        let Some(e) = self.font_map().get(&t.name) else {
+            return self.missing(&tfm, format!("TFM font {tfm}: no font map entry"));
         };
         let Some(ff) = e
             .font_file
@@ -632,6 +840,8 @@ impl Fonts {
         Loaded {
             def: FontDef::Tfm(t.clone()),
             res,
+            vf: None,
+            tfm: None,
             problem: None,
             upm: 1000,
             ascent: 0,

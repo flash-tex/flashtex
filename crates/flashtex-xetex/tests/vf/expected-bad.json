@@ -1,0 +1,9 @@
+{
+ "oracle": "This is xdvipdfmx Version 20260317 by the DVIPDFMx project team,",
+ "pdf": true,
+ "said": [
+  "Unexpected opcode: 139",
+  "xdvipdfmx:fatal: Unexpected opcode in vf file"
+ ],
+ "xetex_exit": 1
+}

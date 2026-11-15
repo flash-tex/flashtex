@@ -12,7 +12,10 @@ Two measurements:
    1in/1in from the top left of the MediaBox): the largest deviation, in bp
    and in em of the glyph's size. Native glyphs (`set_glyphs`) and TFM
    characters (`set_char`/`set`, widths from the TFM through kpsewhich, as
-   DVItype scales them) are walked; glyphs are paired in page order.
+   DVItype scales them) are walked; glyphs are paired in page order. A
+   character of a virtual font (a TFM font with no map entry and a VF
+   file) is the characters its packet sets, where xdvipdfmx puts them
+   (VirtualFonts, after dvipdfm-x's vf.c).
 
     precision.py FILE.pdf [FILE.xdv] [...]       # pairs: a .pdf, then its .xdv
 """
@@ -93,9 +96,20 @@ def digits(pdf):
 # ---------------------------------------------------------------------------
 # XDV
 # ---------------------------------------------------------------------------
+_KPSE = {}
+
+
+def kpsewhich(name):
+    """The path kpsewhich finds `name` at, or None (asked once per name)."""
+    if name not in _KPSE:
+        _KPSE[name] = subprocess.run(["kpsewhich", name], capture_output=True,
+                                     text=True).stdout.strip() or None
+    return _KPSE[name]
+
+
 def tfm_widths(name, scaled):
     """A TFM font's character widths in DVI units, as DVItype computes them."""
-    path = subprocess.run(["kpsewhich", name + ".tfm"], capture_output=True, text=True).stdout.strip()
+    path = kpsewhich(name + ".tfm")
     if not path:
         return {}
     with open(path, "rb") as f:
@@ -332,11 +346,246 @@ def paper_height(text):
     return None
 
 
+def sqxfw(sq, fw):
+    """dvipdfm-x numbers.c's `sqxfw`: a scaled quantity times a fix word,
+    with xdvipdfmx's rounding (32-bit, as the C computes it)."""
+    sign = 1
+    if sq < 0:
+        sign, sq = -sign, -sq
+    if fw < 0:
+        sign, fw = -sign, -fw
+    m = 0xFFFFFFFF
+    a, b, c, d = (sq & m) >> 16, sq & 0xFFFF, (fw & m) >> 16, fw & 0xFFFF
+    ad, bd, bc, ac = (a * d) & m, (b * d) & m, (b * c) & m, (a * c) & m
+    e, f, g = bd >> 16, ad >> 16, ad & 0xFFFF
+    h, i, j, k = bc >> 16, bc & 0xFFFF, ac >> 16, ac & 0xFFFF
+    r = ((e + g + i + 8) >> 4) & m
+    r = (r + ((f + h + k) << 12)) & m
+    r = (r + (j << 28)) & m
+    if r >= 1 << 31:
+        r -= 1 << 32
+    return r if sign > 0 else -r
+
+
+class VirtualFonts:
+    """Virtual fonts as xdvipdfmx reads and runs them (dvipdfm-x's vf.c and
+    dvi.c's `dvi_locate_font`; FlashTeX's writer ports the same code,
+    crates/flashtex-xetex/src/out/vf.rs): a TFM font with no entry in
+    `pdftex.map` and a VF file is virtual, and each of its characters is
+    the packet's characters in the fonts the VF file names (located the
+    same way, so a virtual font may name another), with every length of
+    the packet scaled by the font's size through `sqxfw`."""
+
+    NESTING_MAX = 16
+
+    def __init__(self):
+        self._mapped = None
+        self._tfm = {}
+        self._vf = {}
+        self._located = {}
+
+    def _kpse(self, name):
+        return kpsewhich(name)
+
+    def mapped(self, name):
+        """Whether `name` has a font map entry (then it is never virtual)."""
+        if self._mapped is None:
+            self._mapped = set()
+            path = self._kpse("pdftex.map")
+            if path:
+                with open(path, "rb") as f:
+                    for line in f:
+                        w = line.split()
+                        if w and not w[0].startswith((b"%", b"*", b"#", b";")):
+                            self._mapped.add(w[0].decode("latin-1"))
+        return name in self._mapped
+
+    def fix_widths(self, name):
+        """tfm.c's widths of a TFM file as fix words: (bc, ec, {char: fw})."""
+        if name not in self._tfm:
+            path = self._kpse(name + ".tfm")
+            out = (0, -1, {})
+            if path:
+                with open(path, "rb") as f:
+                    b = f.read()
+                hw = [int.from_bytes(b[2 * i:2 * i + 2], "big") for i in range(12)]
+                lh, bc, ec, nw = hw[1], hw[2], hw[3], hw[4]
+                ci = 24 + 4 * lh
+                wb = ci + 4 * (ec - bc + 1)
+                ws = [int.from_bytes(b[wb + 4 * k:wb + 4 * k + 4], "big", signed=True) for k in range(nw)]
+                out = (bc, ec, {c: ws[b[ci + 4 * (c - bc)]] for c in range(bc, ec + 1)
+                                if b[ci + 4 * (c - bc)] < nw})
+            self._tfm[name] = out
+        return self._tfm[name]
+
+    def fix_width(self, name, ch):
+        """`tfm_get_fw_width`: above the last character, index 0's."""
+        bc, ec, w = self.fix_widths(name)
+        if bc <= ch <= ec:
+            return w.get(ch, 0)
+        return w.get(0, 0) if (ch > ec and bc == 0) else 0
+
+    def _read_vf(self, name):
+        """(fonts [(number, scale fix word, name)], {char: packet}) or None."""
+        if name in self._vf:
+            return self._vf[name]
+        path = self._kpse(name + ".vf")
+        out = None
+        if path and not self.mapped(name):
+            with open(path, "rb") as f:
+                b = f.read()
+            i = 0
+            if b[:2] == bytes([247, 202]):
+                i = 3 + b[2] + 8
+            fonts, packets = [], {}
+            while i < len(b):
+                code = b[i]
+                i += 1
+                if 243 <= code <= 246:
+                    n = code - 242
+                    # `get_unsigned_num`: unsigned, but a signed quad
+                    k = int.from_bytes(b[i:i + n], "big", signed=(n == 4))
+                    i += n + 4
+                    scale = int.from_bytes(b[i:i + 4], "big", signed=True)
+                    i += 8
+                    a, l = b[i], b[i + 1]
+                    i += 2
+                    fonts.append((k, scale, b[i + a:i + a + l].decode("latin-1")))
+                    i += a + l
+                elif code < 242:
+                    ch = b[i]
+                    i += 4
+                    if code:
+                        packets[ch] = b[i:i + code]
+                    i += code
+                elif code == 242:
+                    n = int.from_bytes(b[i:i + 4], "big")
+                    ch = int.from_bytes(b[i + 4:i + 8], "big")
+                    i += 12
+                    if n:
+                        packets[ch] = b[i:i + n]
+                    i += n
+                else:
+                    break
+            out = (fonts, packets)
+        self._vf[name] = out
+        return out
+
+    def locate(self, name, size, depth=0):
+        """`dvi_locate_font`: {"name", "size", "vf": None or (dev fonts,
+        packets)}; dev fonts are [(number, located font)]."""
+        key = (name, size)
+        if key in self._located:
+            return self._located[key]
+        font = {"name": name, "size": size, "vf": None}
+        self._located[key] = font
+        vf = self._read_vf(name) if depth < self.NESTING_MAX else None
+        if vf is not None:
+            fonts, packets = vf
+            font["vf"] = ([(k, self.locate(nm, sqxfw(size, scale), depth + 1)) for k, scale, nm in fonts],
+                          packets)
+        return font
+
+    def run(self, font, ch, h, v, emit, special, depth=0):
+        """`vf_set_char`: character `ch` of virtual font `font` at (h, v).
+        emit(h, v, char, size) for each character of a font that is not
+        virtual; special(text, h, v) for each special."""
+        dev, packets = font["vf"]
+        pkt = packets.get(ch)
+        if pkt is None or depth >= self.NESTING_MAX:
+            return
+        size = font["size"]
+        cur = dev[0][1] if dev else None
+        w = x = y = z = 0
+        stack = []
+        i = 0
+
+        def num(n, signed=True):
+            nonlocal i
+            val = int.from_bytes(pkt[i:i + n], "big", signed=signed)
+            i += n
+            return val
+
+        def char(c, advance):
+            nonlocal h
+            if cur is None:
+                return
+            if cur["vf"] is not None:
+                self.run(cur, c, h, v, emit, special, depth + 1)
+            else:
+                emit(h, v, c, cur["size"])
+            if advance:
+                h += sqxfw(cur["size"], self.fix_width(cur["name"], c))
+
+        while i < len(pkt):
+            op = pkt[i]
+            i += 1
+            if op <= 127:
+                char(op, True)
+            elif 128 <= op <= 130:
+                char(num(op - 127, False), True)
+            elif 133 <= op <= 135:
+                char(num(op - 132, False), False)
+            elif op in (132, 137):
+                num(4)
+                wd = sqxfw(size, num(4))
+                if op == 132:
+                    h += wd
+            elif op == 138:
+                pass
+            elif op == 141:
+                stack.append((h, v, w, x, y, z))
+            elif op == 142:
+                if stack:
+                    h, v, w, x, y, z = stack.pop()
+            elif 143 <= op <= 146:
+                h += sqxfw(size, num(op - 142))
+            elif 147 <= op <= 151:
+                if op > 147:
+                    w = sqxfw(size, num(op - 147))
+                h += w
+            elif 152 <= op <= 156:
+                if op > 152:
+                    x = sqxfw(size, num(op - 152))
+                h += x
+            elif 157 <= op <= 160:
+                v += sqxfw(size, num(op - 156))
+            elif 161 <= op <= 165:
+                if op > 161:
+                    y = sqxfw(size, num(op - 161))
+                v += y
+            elif 166 <= op <= 170:
+                if op > 166:
+                    z = sqxfw(size, num(op - 166))
+                v += z
+            elif 171 <= op <= 238:
+                # `fnt1`..`fnt4` are read signed (vf.c), so a font numbered
+                # 128 to 255 is not found by `fnt1`
+                k = op - 171 if op <= 234 else num(op - 234)
+                for n, f in dev:
+                    if n == k:
+                        cur = f
+                        break
+            elif 239 <= op <= 242:
+                n = num(op - 238, signed=(op == 242))
+                if n < 0:
+                    continue
+                text = pkt[i:i + n].decode("latin-1")
+                i += n
+                if not text.lstrip(" ").startswith("Warning:"):
+                    special(text, h, v)
+            else:
+                return
+
+
 def xdv_glyphs(path):
     """Per page: [(x_dvi, y_dvi, glyph or char code, native?, size, px, py)]
     and conv (bp per DVI unit). (px, py) is the glyph's page position less
     the page origin (72 bp, H - 72 bp), with the transformations of the
-    specials applied (Specials)."""
+    specials applied (Specials). A virtual font's character gives the
+    characters of its packet (VirtualFonts), each at its own place and
+    size."""
+    vfs = VirtualFonts()
     with open(path, "rb") as f:
         b = f.read()
     i = 0
@@ -375,7 +624,13 @@ def xdv_glyphs(path):
             else:
                 c = u(op - 127 if op <= 131 else op - 132)
             fo = fonts.get(f)
-            pages[-1].append((h, v, c, False, fo["size"] if fo else 0) + at(h, v))
+            if fo is not None and fo.get("located") and fo["located"]["vf"] is not None:
+                page = pages[-1]
+                vfs.run(fo["located"], c, h, v,
+                        lambda hh, vv, cc, size: page.append((hh, vv, cc, False, size) + at(hh, vv)),
+                        lambda text, hh, vv: sp.special(text, hh * conv, -vv * conv))
+            else:
+                pages[-1].append((h, v, c, False, fo["size"] if fo else 0) + at(h, v))
             if op <= 131 and fo is not None:
                 h += fo["widths"].get(c, 0)
         elif op in (132, 137):
@@ -439,7 +694,8 @@ def xdv_glyphs(path):
             i += 2
             nm = b[i + a:i + a + l].decode("latin-1")
             i += a + l
-            fonts[k] = {"widths": tfm_widths(nm, sc), "size": sc, "native": False}
+            fonts[k] = {"widths": tfm_widths(nm, sc), "size": sc, "native": False,
+                        "located": vfs.locate(nm, sc)}
         elif op == 247:
             i += 1
             num, den, mag = u(4), u(4), u(4)

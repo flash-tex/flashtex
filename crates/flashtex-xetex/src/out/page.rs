@@ -22,10 +22,11 @@
 
 use super::doc::{Annot, Built, Col, Doc, Phantom, Raw, Supplement};
 use super::fonts::{
-    FontDef, NativeDef, TfmDef, XDV_FLAG_COLORED, XDV_FLAG_EMBOLDEN, XDV_FLAG_EXTEND,
-    XDV_FLAG_SLANT, XDV_FLAG_VERTICAL,
+    FontDef, FontRef, NativeDef, TfmDef, VF_NESTING_MAX, XDV_FLAG_COLORED, XDV_FLAG_EMBOLDEN,
+    XDV_FLAG_EXTEND, XDV_FLAG_SLANT, XDV_FLAG_VERTICAL,
 };
 use super::pdfobj::Obj;
+use super::vf::{is_warning_special, sqxfw, Cmd, Packet};
 use flashtex_display_list::page::{
     flags, paint, Color, Dest, Item, Link, LinkKind, Page, Path, RuleKind, Seg, StreamKind, Stroke,
     NO_COLUMN,
@@ -344,7 +345,13 @@ pub struct Builder<'a, M: Metrics> {
     pub mag: i32,
     pub r: Regs,
     pub stack: Vec<Regs>,
-    pub font: Option<i32>,
+    pub font: Option<FontRef>,
+    /// Inside a virtual font's character: how deep the stack was where the
+    /// outermost one began (dvi.c's `marked_depth`, which a packet's pushes
+    /// and pops do not move), and how many are being run, each for the one
+    /// before (`num_saved_fonts`).
+    vf_depth: Option<usize>,
+    vf_nest: usize,
     /// The page at the bottom, a form being defined (`pdf:bxobj`) above.
     pub streams: Vec<Stream>,
     /// 1-based page number.
@@ -395,6 +402,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
             r: Regs::default(),
             stack: Vec::new(),
             font: None,
+            vf_depth: None,
+            vf_nest: 0,
             streams: Vec::new(),
             page_no,
             page_width: w,
@@ -572,8 +581,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
                     self.r.z = rds(&mut i, (op - 166) as usize)?;
                     self.r.v = self.r.v.wrapping_add(self.r.z);
                 }
-                171..=234 => self.font = Some((op - 171) as i32),
-                235..=238 => self.font = Some(rd(&mut i, (op - 234) as usize)? as i32),
+                171..=234 => self.font = Some(FontRef::Dvi((op - 171) as i32)),
+                235..=238 => {
+                    self.font = Some(FontRef::Dvi(rd(&mut i, (op - 234) as usize)? as i32))
+                }
                 239..=242 => {
                     let k = rd(&mut i, (op - 238) as usize)? as usize;
                     let s = b.get(i..i + k).ok_or("XDV special truncated")?;
@@ -693,33 +704,85 @@ impl<'a, M: Metrics> Builder<'a, M> {
         [a * ma, a * mb, c * ma + d * mc, c * mb + d * md]
     }
 
+    /// dvi.c's `dvi_set` (`advance`) and `dvi_put`: character `c` of the
+    /// current font, which is a font program's glyph or a virtual font's
+    /// packet.
+    ///
+    /// The width it advances by has two rules, each its side's own, and
+    /// both are meant. A font of the XDV stream, virtual or not, advances
+    /// by the engine's width of the character: TeX's arithmetic, which
+    /// every later position of the stream assumes (the rule here for every
+    /// TFM font). A font a VF file names advances by `sqxfw(size, fix
+    /// word)` of its TFM file, xdvipdfmx's rule for every character: TeX
+    /// knows nothing of the inside of a packet. The two can differ by 1 sp.
     fn set_char(&mut self, c: u32, advance: bool) {
         let Some(k) = self.font else {
+            if self.vf_nest > 0 {
+                // a packet's character with no font: the VF file defines
+                // none (fatal in dvi.c)
+                self.doc.errors.push("No font selected!".into());
+            }
             return;
         };
-        let Some(l) = self.doc.fonts.get(k).cloned() else {
+        // what is needed of the font, without a copy of its names
+        let Some(l) = self.doc.fonts.font(k) else {
             return;
         };
         let FontDef::Tfm(t) = &l.def else {
             // a native font's characters come as glyphs
             return;
         };
-        let (wd, ht, dp) = self.metrics.tfm_char(k, c).unwrap_or((0, 0, 0));
-        if let Some(p) = &l.problem {
-            let p = p.clone();
+        let (tsize, res, vf) = (t.size, l.res, l.vf);
+        let problem = l.problem.clone();
+        let dims = match (k, &l.tfm) {
+            (FontRef::Dvi(k), _) => Ok(self.metrics.tfm_char(k, c)),
+            // a virtual font's own font: its TFM file's fix words at its
+            // size, `sqxfw(font->size, tfm_get_fw_width(...))`
+            (FontRef::Located(_), Some(m)) => {
+                let ch = c as i32;
+                match (m.fw_width(ch), m.fw_height(ch), m.fw_depth(ch)) {
+                    (Some(w), Some(h), Some(d)) => {
+                        Ok(Some((sqxfw(tsize, w), sqxfw(tsize, h), sqxfw(tsize, d))))
+                    }
+                    // below the TFM file's first character (fatal in tfm.c)
+                    _ => Err(format!("Invalid char: {ch}")),
+                }
+            }
+            // (a font with a `problem`: no TFM file)
+            (FontRef::Located(_), None) => Ok(None),
+        };
+        let (wd, ht, dp) = match dims {
+            Ok(d) => d.unwrap_or((0, 0, 0)),
+            Err(e) => {
+                self.doc.errors.push(e);
+                return;
+            }
+        };
+        if let (None, Some(v)) = (&problem, vf) {
+            // the packet draws what there is to draw, and its characters
+            // widen a link, not this one's box
+            self.vf_set_char(c as i32, v);
+            if advance {
+                // dvi.c's `dvi_set`: `dvi_right(width)`, with the virtual
+                // font the current one again
+                self.right(wd);
+            }
+            return;
+        }
+        if let Some(p) = problem {
             self.cur().unsupported(p, None);
         } else {
-            if t.size > 0 {
-                let w = wd as f64 / t.size as f64 * 1000.0;
+            if tsize > 0 {
+                let w = wd as f64 / tsize as f64 * 1000.0;
                 self.doc
                     .fonts
                     .widths
-                    .entry(l.res)
+                    .entry(res)
                     .or_default()
                     .entry(c.min(0xFFFF) as u16)
                     .or_insert(w);
             }
-            let size = self.dvi_to_bp(t.size);
+            let size = self.dvi_to_bp(tsize);
             let m = self.glyph_matrix(size, 1.0, 0.0);
             let (x, y) = self.stream_point();
             let here = self.here;
@@ -727,11 +790,11 @@ impl<'a, M: Metrics> Builder<'a, M> {
             s.sync_fill(None, None);
             s.sync_text_render(0);
             s.sync_glyph_matrix(m);
-            s.use_font(l.res);
+            s.use_font(res);
             s.sync_span(here.0);
             let (px, py) = s.to_page(x, y);
             s.push(Item::Glyph {
-                font: l.res,
+                font: res,
                 code: c.min(0xFFFF) as u16,
                 x: px,
                 y: py,
@@ -740,15 +803,148 @@ impl<'a, M: Metrics> Builder<'a, M> {
         }
         self.track(0, wd, ht, dp);
         if advance {
-            self.r.h = self.r.h.wrapping_add(wd);
+            // dvi.c's `dvi_set`: `dvi_right(width)`
+            self.right(wd);
         }
+    }
+
+    /// vf.c's `vf_set_char`: character `ch` of virtual font `vf` (its
+    /// place in the run's virtual fonts) at the current point: its packet's
+    /// commands, between `dvi_vf_init` and `dvi_vf_finish`. Every length of
+    /// the packet is a fix word scaled by the font's size (`sqxfw`). Where
+    /// xdvipdfmx stops with a fatal error (a packet cut short, an opcode a
+    /// packet may not hold, a nesting too deep) the rest of the packet is
+    /// left and the run fails, as its does (`Doc::errors`).
+    fn vf_set_char(&mut self, ch: i32, vf: usize) {
+        let Some(v) = self.doc.fonts.vfs.get(vf).cloned() else {
+            return;
+        };
+        let msg = |what: std::fmt::Arguments| {
+            format!("virtual font {}: {what}", String::from_utf8_lossy(&v.name))
+        };
+        let ptsize = v.ptsize;
+        // dvi_vf_init: the state is pushed, w, x, y and z are zero, and
+        // the font is the first the VF file defines (none if it has none)
+        if self.vf_nest >= VF_NESTING_MAX {
+            self.doc
+                .errors
+                .push("Virtual fonts nested too deeply!".into());
+            return;
+        }
+        self.stack.push(self.r);
+        self.r.w = 0;
+        self.r.x = 0;
+        self.r.y = 0;
+        self.r.z = 0;
+        let saved_font = self.font;
+        let saved_depth = self.vf_depth;
+        self.vf_nest += 1;
+        if self.vf_depth.is_none() {
+            self.vf_depth = Some(self.stack.len() - 1);
+        }
+        self.font = v.dev.first().map(|d| FontRef::Located(d.1));
+        match v.vf.packet(ch) {
+            None => self.doc.diag(msg(format_args!(
+                "char=0x{ch:x}({ch}): Tried to set a nonexistent character in a virtual font"
+            ))),
+            Some(packet) => {
+                let mut p = Packet::new(&packet);
+                while let Some(cmd) = p.next() {
+                    let cmd = match cmd {
+                        Ok(c) => c,
+                        Err(e) => {
+                            self.doc.errors.push(msg(format_args!("{e}")));
+                            break;
+                        }
+                    };
+                    let sc = |d: i32| sqxfw(ptsize, d);
+                    match cmd {
+                        Cmd::Set(c) => self.set_char(c as u32, true),
+                        Cmd::Put(c) => self.set_char(c as u32, false),
+                        // vf_setrule, vf_putrule
+                        Cmd::SetRule { height, width } => {
+                            let w = sc(width);
+                            self.rule(sc(height), w);
+                            self.right(w);
+                        }
+                        Cmd::PutRule { height, width } => self.rule(sc(height), sc(width)),
+                        Cmd::Nop => {}
+                        Cmd::Push => self.stack.push(self.r),
+                        Cmd::Pop => {
+                            if let Some(r) = self.stack.pop() {
+                                self.r = r;
+                            }
+                        }
+                        Cmd::Right(d) => self.right(sc(d)),
+                        Cmd::W0 => self.right(self.r.w),
+                        Cmd::W(d) => {
+                            self.r.w = sc(d);
+                            self.right(self.r.w);
+                        }
+                        Cmd::X0 => self.right(self.r.x),
+                        Cmd::X(d) => {
+                            self.r.x = sc(d);
+                            self.right(self.r.x);
+                        }
+                        Cmd::Down(d) => self.r.v = self.r.v.wrapping_add(sc(d)),
+                        Cmd::Y0 => self.r.v = self.r.v.wrapping_add(self.r.y),
+                        Cmd::Y(d) => {
+                            self.r.y = sc(d);
+                            self.r.v = self.r.v.wrapping_add(self.r.y);
+                        }
+                        Cmd::Z0 => self.r.v = self.r.v.wrapping_add(self.r.z),
+                        Cmd::Z(d) => {
+                            self.r.z = sc(d);
+                            self.r.v = self.r.v.wrapping_add(self.r.z);
+                        }
+                        // vf_fnt: a number the file does not define leaves
+                        // the font as it is
+                        Cmd::Fnt(id) => match v.dev.iter().find(|d| d.0 == id) {
+                            Some(d) => self.font = Some(FontRef::Located(d.1)),
+                            None => self
+                                .doc
+                                .diag(msg(format_args!("Font_id: {id} not found in VF"))),
+                        },
+                        // vf_xxx
+                        Cmd::Special(s) => {
+                            if !is_warning_special(s) {
+                                self.special(s);
+                            }
+                        }
+                        Cmd::BadSpecial(len) => self
+                            .doc
+                            .diag(msg(format_args!("VF: Special with {len} bytes???"))),
+                        // pTeX's vertical writing
+                        Cmd::Dir(0) => {}
+                        Cmd::Dir(d) => self.cur().unsupported(
+                            msg(format_args!("direction {d} (vertical writing)")),
+                            None,
+                        ),
+                    }
+                }
+            }
+        }
+        // dvi_vf_finish: one pop, whatever the packet left on the stack
+        if let Some(r) = self.stack.pop() {
+            self.r = r;
+        }
+        self.font = saved_font;
+        self.vf_depth = saved_depth;
+        self.vf_nest -= 1;
+    }
+
+    /// The stack's depth as dvipdfmx's links see it (dvi.c's
+    /// `marked_depth`): that of the page's own pushes and pops, which a
+    /// virtual font's character does not add to.
+    pub fn depth(&self) -> usize {
+        self.vf_depth.unwrap_or(self.stack.len())
     }
 
     fn set_glyphs(&mut self, xy: &[(i32, i32)], gids: &[u16]) {
         let Some(k) = self.font else {
             return;
         };
-        let Some(l) = self.doc.fonts.get(k).cloned() else {
+        let Some(l) = self.doc.fonts.font(k).cloned() else {
             return;
         };
         let FontDef::Native(n) = &l.def else {
@@ -1001,7 +1197,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
 
     /// The current font's size (DVI units), 0 when none is selected.
     fn font_size(&self) -> i32 {
-        let Some(l) = self.font.and_then(|k| self.doc.fonts.get(k)) else {
+        let Some(l) = self.font.and_then(|k| self.doc.fonts.font(k)) else {
             return 0;
         };
         match &l.def {
@@ -1011,7 +1207,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
     }
 
     pub fn expand_annot(&mut self, r: [f64; 4]) {
-        let depth = self.stack.len();
+        let depth = self.depth();
         // dvipdfmx's `dvi_is_tracking_boxes`: a link is open, `pdf:nolink`
         // is not in effect, and this is the depth of `pdf:bann` or deeper.
         if self.doc.nolink {
