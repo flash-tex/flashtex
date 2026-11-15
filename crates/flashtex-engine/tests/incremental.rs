@@ -5924,10 +5924,13 @@ fn a_stored_s0_with_images_reopens() {
 /// directory as pdfTeX does (`INPUT defs.tex` for `\input`, not
 /// `./defs.tex`: `system::record_file_as`; `INPUT ./defs.tex` for the
 /// `\pdffilesize` of LaTeX's `\IfFileExists`), while the incremental
-/// journal keeps the path found. So a host with `-recorder` makes the same restarts as one
-/// without, for a body edit (S₀ kept), an edit of a file the preamble read
-/// (S₀'s key fails) and of one the body read, and stores and reopens the
-/// same S₀; every compile equals scratch runs.
+/// journal keeps the path found. Without `-recorder` the steps restart as
+/// they say: a body edit keeps S₀, an edit of a file the preamble read
+/// fails S₀'s key, and a stored S₀ reopens. With it (#2291, Commander
+/// ruling) every compile runs from the format with a `.fls` of its own,
+/// and an `open` of the stored S₀ is refused (the caller compiles, cold)
+/// before anything is recorded: no stray `pdflatex<pid>.fls` is left.
+/// Every compile equals scratch runs.
 #[test]
 fn the_recorder_leaves_the_journal_keys_alone() {
     let Some(e) = env() else {
@@ -5972,7 +5975,6 @@ fn the_recorder_leaves_the_journal_keys_alone() {
         "converged_at",
         "revalidated",
     ];
-    let mut seen: Vec<Vec<String>> = vec![];
     for recorder in [false, true] {
         let dir = e.dir.join(format!("recorder-{recorder}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -6000,6 +6002,10 @@ fn the_recorder_leaves_the_journal_keys_alone() {
             assert!(r.contains("\"saved\""), "recorder {recorder}: {r}");
         }
         if recorder {
+            // #2291: every pass from the format, a body edit included
+            for g in &got {
+                assert!(g.contains("mode=\"cold\""), "-recorder: not cold: {got:?}");
+            }
             let fls = std::fs::read_to_string(dir.join("doc.fls")).unwrap_or_default();
             assert!(
                 // (`\input`'s `open_input` spelling, and LaTeX's
@@ -6008,31 +6014,46 @@ fn the_recorder_leaves_the_journal_keys_alone() {
                     && fls.lines().any(|l| l == "INPUT ./defs.tex"),
                 "doc.fls does not list the files as pdfTeX does:\n{fls}"
             );
+        } else {
+            // (the steps test what they say: S₀ kept, then its key failing)
+            assert!(
+                got[1].contains("mode=\"incremental\" restart_preamble=false"),
+                "{got:?}"
+            );
+            assert!(got[2].contains("restart_preamble=true"), "{got:?}");
         }
+        let fls_files = |d: &Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .map(|x| x.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".fls"))
+                .collect();
+            v.sort();
+            v
+        };
         let mut h = Host::start_engine(&e, &dir, &[], engine, &[], Stdio::null());
         let reference = dir.with_extension("ref");
         copy_dir(&dir, &reference);
+        let before = fls_files(&dir);
         let r = h.cmd(&format!("open {}", s0.display()));
-        assert!(
-            r.contains("\"mode\":\"open\""),
-            "recorder {recorder}: not opened from S0: {r}"
-        );
-        check_against(&e, &dir, &reference, &r, "the open");
-        got.push(format!("open: mode={}", field(&r, "mode")));
-        seen.push(got);
+        if recorder {
+            assert!(
+                r.contains("\"error\"") && r.contains("-recorder"),
+                "-recorder: S0 opened: {r}"
+            );
+            assert_eq!(fls_files(&dir), before, "the refused open left a .fls");
+            let r = compile_and_check(&e, &mut h, &dir, &[], "after the refused open");
+            assert!(r.contains("\"mode\":\"cold\""), "{r}");
+            assert_eq!(fls_files(&dir), ["doc.fls"], "a stray .fls");
+        } else {
+            assert!(
+                r.contains("\"mode\":\"open\""),
+                "recorder {recorder}: not opened from S0: {r}"
+            );
+            check_against(&e, &dir, &reference, &r, "the open");
+        }
     }
-    assert_eq!(seen[0], seen[1], "-recorder changed the restarts");
-    // (the steps test what they say: S₀ kept, then its key failing)
-    assert!(
-        seen[1][1].contains("mode=\"incremental\" restart_preamble=false"),
-        "{:?}",
-        seen[1]
-    );
-    assert!(
-        seen[1][2].contains("restart_preamble=true"),
-        "{:?}",
-        seen[1]
-    );
 }
 
 /// Lane COLD-OPEN: a beamer document (its preamble declares the navigation

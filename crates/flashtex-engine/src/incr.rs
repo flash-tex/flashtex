@@ -3983,6 +3983,14 @@ impl Session {
         s1: Option<Result<host::s1::File, String>>,
         stop_at: Option<usize>,
     ) -> Result<Report, String> {
+        // #2291 (Commander ruling): with `-recorder` every run is from the
+        // format, with a `.fls` of its own; an open of S₀ would list only
+        // the body's files, so it is refused and the caller compiles
+        // (`compile_pass`: cold). Refused before S₀ is read, so nothing is
+        // recorded for it.
+        if self.run_options.recorder {
+            return Err("-recorder: S0 is not opened, every run is cold (#2291)".into());
+        }
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
         let first_line = self.first_line.clone();

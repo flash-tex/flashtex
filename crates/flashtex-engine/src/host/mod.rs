@@ -821,6 +821,10 @@ impl Session {
     /// or another process). `Err` if the file does not fit this engine or
     /// S₀'s key no longer holds; the caller then starts with `cold`.
     pub fn open_s0(o: RunOptions, path: &str) -> Result<(Session, OpenReport), String> {
+        // (`-recorder`: every run is cold, #2291; `incr::Session::open_s1`)
+        if o.recorder {
+            return Err("-recorder: S0 is not opened, every run is cold (#2291)".into());
+        }
         let mut s: Option<Session> = None;
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));
