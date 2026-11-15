@@ -2497,8 +2497,7 @@ impl Globals {
         let p = k::font_id_base + f;
         let id = font_name_number(self.bm_str(t));
         if self.bm_eq(p).hh().b0() != k::set_font {
-            let first =
-                FONT_NAMED_FIRST.with(|m| *m.borrow_mut().entry(f).or_insert(id) == id);
+            let first = FONT_NAMED_FIRST.with(|m| *m.borrow_mut().entry(f).or_insert(id) == id);
             if first {
                 return;
             }
