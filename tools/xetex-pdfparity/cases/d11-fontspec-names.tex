@@ -1,0 +1,27 @@
+% d11-fontspec-names: TeX Live's OpenType fonts by family, full, PostScript and feature-suffixed name (#1783); Linux xelatex finds them through fontconfig, macOS xelatex does not (both engines then stop at the same error)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes}
+\newfontfamily\zza{TeX Gyre Pagella}
+\newfontfamily\zzc{TeXGyrePagella-Italic}
+\newfontfamily\zzd{Latin Modern Roman}
+\newfontfamily\zze{Fira Sans Light}
+\newfontfamily\zzf{Libertinus Serif}
+\newfontfamily\zzg{DejaVu Sans}
+\newfontfamily\zzii{Latin Modern Mono}
+\newfontfamily\zzj{TeX Gyre Heros Cn}
+\newfontfamily\zzk{Fira Sans}[UprightFont=* Book, BoldFont=* Heavy]
+\newfontfamily\zzl{EB Garamond}
+\newfontfamily\zzn{Linux Libertine O}
+\newfontfamily\zzo{CMU Serif}
+\newfontfamily\zzp{STIX Two Text}
+\newfontfamily\zzr{Amiri}
+\newfontfamily\zzt{TeX Gyre Pagella:+smcp}
+\begin{document}
+Termes \textbf{bold} \textit{it}.
+{\zza Pagella \textbf{b} \textit{i} \textbf{\textit{bi}}}
+{\zzc Pagella Italic} {\zzd LM \textsc{Caps} \textbf{b}} {\zze Fira Light \textbf{b}}
+{\zzf Libertinus \textbf{b}} {\zzg DejaVu \textit{i}} {\zzii LM Mono} {\zzj Heros Cn}
+{\zzk Fira Book \textbf{Heavy}} {\zzl EB Garamond} {\zzn Libertine} {\zzo CMU} {\zzp STIX}
+{\zzr Amiri} {\zzt colon smcp}
+\end{document}
