@@ -892,6 +892,22 @@ fn etex_penalty_arrays_are_compared_by_content() {
 }
 
 #[test]
+fn a_call_that_ends_no_paragraph_is_replayed_after_an_error() {
+    // (#2433's test, REVIEW-3 on #2041) only a call that ends a paragraph
+    // resets `error_count`; one that does not is replayed at any count.
+    // Calls 3 and 4 come after an undefined control sequence, with the
+    // count at 1: replayed (3 hits), where refusing every offer at a
+    // nonzero count replayed only call 2
+    let s = check(
+        "error-no-par",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1 height 2pt}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\measure{1pt}\\measure{1pt}\\undefinedx\\measure{1pt}\\measure{1pt}\\message{[\\the\\dimen1]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
 fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
     // (lane REVIEW, #1977) the call's body skips `\foo` in a false
     // conditional, read in place (changes/throughput.ch [4]); then `\foo`
