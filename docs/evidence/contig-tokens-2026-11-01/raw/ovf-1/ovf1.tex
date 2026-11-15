@@ -1,0 +1,8 @@
+% Lane CONTIG-TOKENS: "main memory size" overflow while \edef builds a list (runaway text),
+% with every earlier \x freed by flush_list (pending segments under LAZY-FLUSH).
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\tracingstats=2 \tracingonline=1
+\def\x{abcdefghij}
+\count255=0
+\def\loop{\advance\count255 by 1 \immediate\write16{round \the\count255}\edef\x{\x\x}\loop}
+\loop
