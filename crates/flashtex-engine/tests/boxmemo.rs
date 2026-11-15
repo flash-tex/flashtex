@@ -559,6 +559,52 @@ fn protrusion_around_a_replayed_call_is_the_normal_paths() {
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
 
+/// (lane TESTGAPS2, #1977's loops [5]-[7]) `\measure`'s body reads `\foo`
+/// in place (changes/throughput.ch) in the way `read` says, after
+/// `defs`; three calls, then `\foo` becomes `\outer`, which makes the
+/// fourth call's reading of it an error ("Forbidden control sequence
+/// found while scanning ..."). A replay that kept the recording would
+/// skip the error: the log with BOX-MEMO on would lack it. `\foo` is in
+/// the key only because #1977 has those loops stand aside while a
+/// recording is in progress; calls 2 and 3 replay, call 4 misses.
+fn an_outer_control_sequence_read_in_place(tag: &str, defs: &str, read: &str) {
+    let s = check(
+        tag,
+        &format!(
+            "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\scrollmode\n\
+             \\def\\foo{{}}{defs}\n\
+             \\def\\measure#1{{\\begingroup\\setbox0\\hbox{{{read}\\vrule width #1}}\
+             \\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\measure{{1pt}}\\message{{[\\the\\dimen1]}}\\measure{{1pt}}\\message{{[\\the\\dimen1]}}\
+             \\measure{{1pt}}\\message{{[\\the\\dimen1]}}\n\
+             \\outer\\def\\foo{{}}\n\
+             \\measure{{1pt}}\\message{{[\\the\\dimen1]}}\\end\n"
+        ),
+    );
+    assert!(stat(&s, "recordings") >= 1, "{tag}: {s}");
+    assert_eq!(stat(&s, "hits"), 2, "{tag}: {s}");
+}
+
+#[test]
+fn an_outer_control_sequence_in_a_delimited_argument_is_in_the_key() {
+    // [5]: `macro_call`'s delimited parameter, matched in place. The
+    // loop starts after the argument's first stored token, which
+    // `get_token` reads as before; so `\foo` comes second.
+    an_outer_control_sequence_read_in_place("outer-delimited", "\\def\\eat#1.{}", "\\eat x\\foo.");
+}
+
+#[test]
+fn an_outer_control_sequence_in_a_braced_argument_is_in_the_key() {
+    // [6]: `macro_call`'s undelimited argument, a group copied in place
+    an_outer_control_sequence_read_in_place("outer-braced", "\\def\\eat#1{}", "\\eat{\\foo}");
+}
+
+#[test]
+fn an_outer_control_sequence_in_a_definition_is_in_the_key() {
+    // [7]: `scan_toks`'s body of a `\def`, copied in place
+    an_outer_control_sequence_read_in_place("outer-def", "", "\\def\\tmp{\\foo}");
+}
+
 #[test]
 fn whatsits_of_a_call_act_at_its_shipout() {
     // (lane AUDIT-WHATSIT) the shipout-time whatsits a recorded call
