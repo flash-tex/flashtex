@@ -61,6 +61,14 @@
 //! `\ifcsname` that finds nothing abandons the recording (no key for
 //! absence).
 //!
+//! Last, the room the real path would need (`Needs`): the final statistics
+//! print the high-water marks of the input, parameter and save stacks and
+//! of the buffer, and the extent of `mem`. A recording keeps how far above
+//! its start its run took each mark (`flashtex_intr_hw`) and how much memory
+//! it needed (`flashtex_intr_cell`); a variant is admitted only where the
+//! real path would raise no mark and grow no part of `mem` (a replay, which
+//! allocates no more than the real path, then grows none either).
+//!
 //! # Storage
 //!
 //! The recordings live in [`Host`](crate::state::Host), outside the word
@@ -305,6 +313,71 @@ pub(crate) struct Entry {
     pub(crate) ops: Vec<Op>,
     /// The store's clock at its last use (least recently used goes first).
     used: u64,
+    needs: Needs,
+}
+
+/// The room a kept variant's real path needs above where it starts.
+#[derive(Clone, Copy, Debug, Default)]
+struct Needs {
+    /// How far above its start the run took each high-water mark
+    /// (`HW_*`), if it offered one at all.
+    hw: [Option<i32>; 4],
+    /// Single-word nodes: the most it held at once beyond its start.
+    one: i64,
+    /// Variable-size memory: the size of a free block that serves every
+    /// `get_node` of the run (0: it makes none).
+    var: i64,
+}
+
+/// The high-water marks `flashtex_intr_hw` reports: `max_in_stack` (kind 0,
+/// `input_ptr` before a push), `max_param_stack` (1, `param_ptr` after),
+/// `max_save_stack` (2, `save_ptr` at the check), `max_buf_stack` (3, the
+/// end of a `\csname` name in `buffer`). Each is raised where the value
+/// offered exceeds it.
+const HW_KINDS: usize = 4;
+
+/// What a recorded run allocates and frees (`flashtex_intr_cell`).
+#[derive(Default)]
+struct MemUse {
+    /// Single-word nodes held beyond the start, now and at most.
+    one: i64,
+    one_peak: i64,
+    /// Variable-size nodes the run holds, in the order allocated; whether
+    /// it freed each last one first (`lifo`).
+    live: Vec<(i32, i64)>,
+    lifo: bool,
+    var: i64,
+    var_peak: i64,
+    var_total: i64,
+    var_largest: i64,
+}
+
+impl MemUse {
+    fn new() -> Self {
+        MemUse {
+            lifo: true,
+            ..MemUse::default()
+        }
+    }
+
+    /// `get_node` carves from the top of a free block, and merges a free
+    /// block with the free blocks after it before it carves: a block of
+    /// `b` words serves every allocation of the run if `b` is at least what
+    /// the run takes from it at once plus the largest node and the two
+    /// words a split leaves. Freed last-first, what is taken at once is
+    /// what the run holds at once (each freed node is the block's next
+    /// word, merged back); otherwise at most everything it allocates.
+    fn var_need(&self) -> i64 {
+        if self.var_total == 0 {
+            return 0;
+        }
+        let held = if self.lifo {
+            self.var_peak
+        } else {
+            self.var_total
+        };
+        held + self.var_largest + 2
+    }
 }
 
 impl Entry {
@@ -380,6 +453,12 @@ struct Rec {
     tainted: HashSet<i32>,
     /// A check of the admitted variant `id`: the replay's state.
     verify: Option<(u64, crate::intrinsics_verify::Pending)>,
+    /// Where the run starts, for each high-water mark (`HW_KINDS`): the
+    /// input level below the body, `param_ptr`, `save_ptr`, `first`.
+    hw_base: [i32; HW_KINDS],
+    /// The highest value each mark was offered in the run.
+    hw_peak: [Option<i32>; HW_KINDS],
+    mem: MemUse,
 }
 
 /// The run's counts, for `FLASHTEX_INTRINSICS_STATS`.
@@ -622,6 +701,7 @@ impl Globals {
     /// read set hold now, or why none.
     fn intr_admit(&self, cs: i32) -> Result<usize, &'static str> {
         let ctx = self.intr_ctx();
+        let hw_now = self.intr_hw_now(self.intr_body_level());
         let entries = &self.host.intrinsics.store.entries;
         let mut order: Vec<usize> = (0..entries.len())
             .filter(|&i| entries[i].cs == cs)
@@ -660,6 +740,13 @@ impl Globals {
                     .any(|r| matches!(r, Read::Meaning(p, ..) if *p == arm))
             {
                 why = "Checkpoint";
+                continue;
+            }
+            if !self.intr_room(&e.needs, &hw_now) {
+                if debug() {
+                    eprintln!("intrinsics: variant {} needs {:?}", e.id, e.needs);
+                }
+                why = "HighWater";
                 continue;
             }
             return Ok(i);
@@ -860,9 +947,10 @@ impl Globals {
     ) {
         self.host.intrinsics.stats.started += 1;
         let marks = self.intr_marks();
+        let base = self.intr_body_level();
         self.host.intrinsics.rec = Some(Rec {
             cs,
-            base: self.intr_body_level(),
+            base,
             level: self.cur_level,
             cond: self.cond_ptr,
             ctx: self.intr_ctx(),
@@ -876,8 +964,13 @@ impl Globals {
             taint: HashMap::new(),
             tainted: HashSet::new(),
             verify,
+            hw_base: self.intr_hw_now(base),
+            hw_peak: [None; HW_KINDS],
+            mem: MemUse::new(),
         });
         self.intr_rec_on = true;
+        // (the allocation hooks report to the recording too)
+        self.intr_churn = true;
         // the macro's own meaning, and \escapechar (printing)
         self.intr_rec_read(cs);
         self.intr_rec_read(int_base + escape_char_code);
@@ -891,6 +984,7 @@ impl Globals {
             return;
         };
         self.intr_rec_on = false;
+        self.intr_churn = self.host.intrinsics.churn_on != 0;
         if debug() {
             eprintln!(
                 "intrinsics: recording of \\{} abandoned: {why} (cmd {} chr {} cs {})",
@@ -905,6 +999,7 @@ impl Globals {
             );
         }
         if let Some((id, p)) = rec.verify {
+            self.intr_churn_stop();
             self.drop_checkpoint(p.ck());
             self.intr_check_failed(id, vec![format!("impure.{why}")], vec![]);
             return;
@@ -1468,6 +1563,7 @@ impl Globals {
         }
         let mut rec = self.host.intrinsics.rec.take().expect("checked");
         self.intr_rec_on = false;
+        self.intr_churn = self.host.intrinsics.churn_on != 0;
         let now = self.intr_marks();
         let why = if self.after_token != 0 {
             Some("State")
@@ -1531,6 +1627,14 @@ impl Globals {
                 rec.ops.len()
             );
         }
+        let mut needs = Needs {
+            one: rec.mem.one_peak,
+            var: rec.mem.var_need(),
+            ..Needs::default()
+        };
+        for k in 0..HW_KINDS {
+            needs.hw[k] = rec.hw_peak[k].map(|v| v - rec.hw_base[k]);
+        }
         let r = &mut self.host.intrinsics;
         if r.fault == Fault::SkipRead {
             let cs = rec.cs;
@@ -1567,7 +1671,96 @@ impl Globals {
             reads: rec.reads,
             ops: rec.ops,
             used: store.clock,
+            needs,
         });
+    }
+
+    /// Where a run whose body is pushed at input level `base` starts, for
+    /// each high-water mark (`HW_KINDS`).
+    fn intr_hw_now(&self, base: i32) -> [i32; HW_KINDS] {
+        [base - 1, self.param_ptr, self.save_ptr, self.first]
+    }
+
+    /// Would the real path, started at `now`, leave every high-water mark
+    /// and the extent of `mem` as they are?
+    fn intr_room(&self, n: &Needs, now: &[i32; HW_KINDS]) -> bool {
+        let max = [
+            self.max_in_stack,
+            self.max_param_stack,
+            self.max_save_stack,
+            self.max_buf_stack,
+        ];
+        for k in 0..HW_KINDS {
+            if n.hw[k].is_some_and(|d| now[k] as i64 + d as i64 > max[k] as i64) {
+                return false;
+            }
+        }
+        // the free single-word nodes (`get_avail` takes one of them before
+        // it grows the one-word region)
+        let free = (self.mem_end as i64 + 1 - self.hi_mem_min as i64) - self.dyn_used as i64;
+        if n.one > free {
+            return false;
+        }
+        n.var == 0 || self.intr_free_block(n.var)
+    }
+
+    /// Is there a free variable-size block of at least `need` words
+    /// (`rover`'s ring: `node_size` is `info`, `rlink` is `link` of the next
+    /// word)?
+    fn intr_free_block(&self, need: i64) -> bool {
+        let len = self.mem.len() as i32;
+        let mut p = self.rover;
+        for _ in 0..100_000 {
+            if p < 0 || p + 1 >= len {
+                return false;
+            }
+            if self.mem[p as usize].hh().lh() as i64 >= need {
+                return true;
+            }
+            p = self.mem[(p + 1) as usize].hh().rh();
+            if p == self.rover {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// `changes/intrinsics.ch`: a recorded run offers value `v` to
+    /// high-water mark `k` (`HW_KINDS`).
+    pub fn flashtex_intr_hw(&mut self, k: i32, v: i32) {
+        if let Some(rec) = self.host.intrinsics.rec.as_mut() {
+            let m = &mut rec.hw_peak[k as usize];
+            *m = Some(m.map_or(v, |m| m.max(v)));
+        }
+    }
+
+    /// A recorded run allocates (`s > 0`) or frees (`s < 0`) `|s|` words at
+    /// `p`: one word is a single-word node, more a variable-size one.
+    pub(crate) fn intr_rec_mem(&mut self, p: i32, s: i32) {
+        let Some(rec) = self.host.intrinsics.rec.as_mut() else {
+            return;
+        };
+        let m = &mut rec.mem;
+        let w = s.unsigned_abs() as i64;
+        if w == 1 {
+            m.one += s as i64;
+            m.one_peak = m.one_peak.max(m.one);
+        } else if s > 0 {
+            m.live.push((p, w));
+            m.var += w;
+            m.var_peak = m.var_peak.max(m.var);
+            m.var_total += w;
+            m.var_largest = m.var_largest.max(w);
+        } else {
+            // (a node from before the run is not the run's)
+            match m.live.iter().rposition(|&(q, _)| q == p) {
+                Some(i) => {
+                    m.lifo &= i + 1 == m.live.len();
+                    m.var -= m.live.remove(i).1;
+                }
+                None => m.lifo = false,
+            }
+        }
     }
 
     /// The input level `macro_call` will push the body at: above the

@@ -28,12 +28,20 @@
 %   output, leaving its own input levels or conditionals); src/intrinsics.rs
 %   abandons the recording at any of those.
 %
-% * |intr_churn|: verify mode is checking a call, one path or the other. The
-%   cells the path allocates or frees (|get_avail|, |fast_get_avail|,
-%   |free_avail|, |flush_list|, |get_node|, |free_node|) are reported to
-%   |flashtex_intr_cell| and |flashtex_intr_flush|: the verifier compares
-%   every other |mem| word either path wrote, so an in-place change of a node
-%   the call found (|\limits|'s |subtype(tail)|) is a difference.
+% * |intr_churn|: a recording is in progress, or verify mode is checking a
+%   call, one path or the other. The cells the path allocates (a positive
+%   size) or frees (negative) (|get_avail|, |fast_get_avail|, |free_avail|,
+%   |flush_list|, |get_node|, |free_node|) are reported to
+%   |flashtex_intr_cell| and |flashtex_intr_flush|: a recording keeps how much
+%   memory its run needs, and the verifier compares every other |mem| word
+%   either path wrote, so an in-place change of a node the call found
+%   (|\limits|'s |subtype(tail)|) is a difference.
+%
+% * The high-water marks the final statistics print (|max_in_stack|,
+%   |max_param_stack|, |max_save_stack|, |max_buf_stack|) are reported to
+%   |flashtex_intr_hw| where a recorded run may raise them: a replay is
+%   admitted only where the real path would raise none of them, nor grow
+%   |mem|.
 %
 % The recordings are kept outside the word space (|Host|), so that they
 % survive a restore; their guard compares every read value in full.
@@ -54,7 +62,7 @@ get_avail:=p;
   begin link(#):=avail; avail:=#;
 @y
 @d free_avail(#)== {single-word node liberation}
-  begin if intr_churn then flashtex_intr_cell(#,1);
+  begin if intr_churn then flashtex_intr_cell(#,-1);
   link(#):=avail; avail:=#;
 @z
 
@@ -90,7 +98,7 @@ if intr_churn then flashtex_intr_cell(r,s);
 @x xetex.web - free_node: the cells the path frees (verify)
 begin node_size(p):=s; link(p):=empty_flag;
 @y
-begin if intr_churn then flashtex_intr_cell(p,s);
+begin if intr_churn then flashtex_intr_cell(p,-s);
 node_size(p):=s; link(p):=empty_flag;
 @z
 
@@ -124,6 +132,13 @@ else if (p>=prim_eqtb_base)and(p<frozen_null_font) then
 else  begin if intr_rec_on then flashtex_intr_name(p);
   print_esc(text(p));
   end;
+@z
+
+@x xetex.web - the save stack's high-water mark (kind 2)
+@d check_full_save_stack==if save_ptr>max_save_stack then
+@y
+@d check_full_save_stack==if intr_rec_on then flashtex_intr_hw(2,save_ptr);
+  if save_ptr>max_save_stack then
 @z
 
 @x xetex.web - a group boundary, for the recording
@@ -196,6 +211,15 @@ begin if intr_rec_on then flashtex_intr_meaning;
 print_cmd_chr(cur_cmd,cur_chr);
 @z
 
+@x xetex.web - the input stack's high-water mark (kind 0)
+@d push_input==@t@> {enter a new input level, save the old}
+  begin if input_ptr>max_in_stack then
+@y
+@d push_input==@t@> {enter a new input level, save the old}
+  begin if intr_rec_on then flashtex_intr_hw(0,input_ptr);
+  if input_ptr>max_in_stack then
+@z
+
 @x xetex.web - every control sequence a recorded run reads is reported
 @<If an alignment entry has just ended, take appropriate action@>;
 exit:end;
@@ -227,7 +251,9 @@ flush_list(r);
 if eq_type(cur_cs)=undefined_cs then
 @y
 flush_list(r);
-if intr_rec_on then flashtex_intr_lookup(cur_cs);
+if intr_rec_on then
+  begin flashtex_intr_hw(3,j); flashtex_intr_lookup(cur_cs);
+  end;
 if eq_type(cur_cs)=undefined_cs then
 @z
 
@@ -239,6 +265,15 @@ begin flashtex_poll;
 save_scanner_status:=scanner_status; save_warning_index:=warning_index;
 if intr_at_switch then if flashtex_intr_call then return;
 intr_at_switch:=false;
+@z
+
+@x xetex.web - the parameter stack's high-water mark (kind 1)
+if n>0 then
+  begin if param_ptr+n>max_param_stack then
+@y
+if n>0 then
+  begin if intr_rec_on then flashtex_intr_hw(1,param_ptr+n);
+  if param_ptr+n>max_param_stack then
 @z
 
 @x xetex.web - a recorded run fetches an internal quantity
@@ -377,7 +412,9 @@ case subtype(p) of
   b:=(eq_type(cur_cs)<>undefined_cs);
 @y
   flush_list(n);
-  if intr_rec_on then flashtex_intr_lookup(cur_cs);
+  if intr_rec_on then
+    begin flashtex_intr_hw(3,m); flashtex_intr_lookup(cur_cs);
+    end;
   b:=(eq_type(cur_cs)<>undefined_cs);
 @z
 
@@ -457,6 +494,7 @@ procedure flashtex_intr_switch; external;
 procedure flashtex_intr_command; external;
 procedure flashtex_intr_cell(@!p,@!s:integer); external;
 procedure flashtex_intr_flush(@!p:integer); external;
+procedure flashtex_intr_hw(@!k,@!v:integer); external;
 
 @* \[55] Index.
 @z

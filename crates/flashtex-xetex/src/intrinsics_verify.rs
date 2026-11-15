@@ -173,22 +173,25 @@ impl Globals {
     /// `get_node`, `free_node`). Their words differ between the two paths
     /// where those allocate differently; the roots that reach them are
     /// compared by content instead.
+    /// (`s > 0` allocates, `s < 0` frees; a recording counts them,
+    /// `crate::intrinsics`.)
     pub fn flashtex_intr_cell(&mut self, p: i32, s: i32) {
+        self.intr_rec_mem(p, s);
         let r = &mut self.host.intrinsics;
         if r.churn_on != 0 {
             let set = &mut r.churn[r.churn_on as usize - 1];
-            set.extend(p..p.saturating_add(s.max(1)));
+            set.extend(p..p.saturating_add(s.unsigned_abs().max(1) as i32));
         }
     }
 
     /// `flush_list(p)`: every cell of the list goes free.
     pub fn flashtex_intr_flush(&mut self, mut p: i32) {
-        if self.host.intrinsics.churn_on == 0 {
+        if self.host.intrinsics.churn_on == 0 && !self.intr_rec_on {
             return;
         }
         let mut n = 0;
-        while p != NULL && p >= 0 && (p as usize) < self.mem.len() && n < 10_000_000 {
-            self.flashtex_intr_cell(p, 1);
+        while p != NULL && p >= 0 && (p as usize) < self.mem.len() && n < self.mem.len() {
+            self.flashtex_intr_cell(p, -1);
             p = self.mem[p as usize].hh().rh();
             n += 1;
         }

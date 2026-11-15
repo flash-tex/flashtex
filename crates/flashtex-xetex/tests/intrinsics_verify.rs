@@ -669,7 +669,11 @@ fn the_verify_recorders_holes_are_never_replayed() {
             "\\setbox2\\hbox{$\\sum@H@\\sum@H@\\sum@H@$}",
             "Command",
         ),
-        ("\\over\\relax", "$@H@x$ $@H@x$ $@H@x$\\par", "Command"),
+        (
+            "\\over\\relax",
+            "$\\relax@H@x$ $\\relax@H@x$ $\\relax@H@x$\\par",
+            "Command",
+        ),
         ("\\deadcycles=0\\relax", vmode, "Command"),
         ("\\pagegoal=500pt\\relax", vmode, "Command"),
         ("\\batchmode\\relax", vmode, "Command"),
@@ -705,7 +709,7 @@ fn the_verify_recorders_holes_are_never_replayed() {
 /// there (it inserts the v-part), whoever reads the token. Recorded with
 /// `\IntrB` a `\relax`, the call must not replay in a cell once `\IntrB`
 /// is `&`: a replay would make the definition, the real path ends the
-/// cell.
+/// cell (and goes on with errors, the same in every mode).
 #[test]
 fn an_ampersand_read_only_for_its_token_is_seen_by_the_guard() {
     for body in [
@@ -718,7 +722,7 @@ fn an_ampersand_read_only_for_its_token_is_seen_by_the_guard() {
              \\begin{{document}}\\relax\n\
              \\setbox0\\hbox{{\\relax\\pdfstringdefPreHook\\relax\\pdfstringdefPreHook}}\n\
              \\let\\IntrB=&\n\
-             \\halign{{#\\cr\\relax\\pdfstringdefPreHook x\\cr}}\n\
+             \\halign{{#\\relax\\cr\\relax\\pdfstringdefPreHook x\\cr}}\n\
              \\end{{document}}\n"
         )) else {
             return;
@@ -729,28 +733,109 @@ fn an_ampersand_read_only_for_its_token_is_seen_by_the_guard() {
     }
 }
 
+/// A document with `\IntrA` of 4 * 2^18 = 1,048,576 tokens, whose hook
+/// copies it; with `headroom`, a list of three times as many tokens made
+/// and dropped first, so that the free single-word nodes hold a copy.
+fn long_doc(headroom: bool) -> String {
+    let copy = "\\unexpanded\\expandafter{\\IntrA}";
+    let double = format!("\\edef\\IntrA{{{copy}{copy}}}\n");
+    let room = if headroom {
+        format!("\\edef\\IntrBig{{{copy}{copy}{copy}}}\\let\\IntrBig\\relax\n")
+    } else {
+        String::new()
+    };
+    format!(
+        "\\documentclass{{article}}\\def\\IntrA{{aaaa}}\n{}{room}\
+         \\def\\pdfstringdefPreHook{{\\edef\\IntrX{{{copy}}}}}\n\
+         \\begin{{document}}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\edef\\IntrA{{{copy}b}}\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\end{{document}}\n",
+        double.repeat(18)
+    )
+}
+
 /// A value of more than a million tokens is recorded, replayed and
 /// compared to its end (#2258: both were cut at the millionth token, so
 /// the check of a correct replay differed, and two lists alike in their
 /// first million compared equal).
 #[test]
 fn a_value_longer_than_a_million_tokens_is_compared_to_its_end() {
-    // 4 * 2^18 = 1,048,576 tokens
-    let double =
-        "\\edef\\IntrA{\\unexpanded\\expandafter{\\IntrA}\\unexpanded\\expandafter{\\IntrA}}\n";
-    let Some((on, verify)) = modes_agree(&format!(
-        "\\documentclass{{article}}\\def\\IntrA{{aaaa}}\n{}\
-         \\def\\pdfstringdefPreHook{{\\edef\\IntrX{{\\unexpanded\\expandafter{{\\IntrA}}}}}}\n\
-         \\begin{{document}}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
-         \\edef\\IntrA{{\\unexpanded\\expandafter{{\\IntrA}}b}}\n\\pdfstringdefPreHook\n\
-         \\pdfstringdefPreHook\nx\\end{{document}}\n",
-        double.repeat(18)
-    )) else {
+    let Some((on, verify)) = modes_agree(&long_doc(true)) else {
         return;
     };
     assert_eq!(count(&on, "replayed"), 2, "{on}");
     assert_eq!(count(&on, "missed.Meaning"), 1, "{on}");
     assert_eq!(count(&verify, "verify.checked"), 2, "{verify}");
+}
+
+/// A name of the letters of `k` (base 26), for generated control sequences.
+fn letters(mut k: usize) -> String {
+    let mut s = String::new();
+    loop {
+        s.insert(0, (b'a' + (k % 26) as u8) as char);
+        k /= 26;
+        if k == 0 {
+            return s;
+        }
+    }
+}
+
+/// The final statistics print the high-water marks of the input, parameter
+/// and save stacks and of the buffer, and the extent of `mem`; a replay
+/// pushes, saves and allocates (almost) nothing. So a variant is admitted
+/// only where the real path would move none of them: here a copy of a
+/// million tokens with no free nodes to hold it (`mem` grows; before, the
+/// replay's log said one word less), a chain of 300 macros called one
+/// input level deeper than it was recorded, and 600 local definitions
+/// called with more on the save stack. Calls where the marks are as high
+/// already still replay.
+#[test]
+fn a_replay_is_refused_where_the_real_path_would_raise_a_high_water_mark() {
+    let Some((on, _)) = modes_agree(&long_doc(false)) else {
+        return;
+    };
+    assert!(count(&on, "missed.HighWater") > 0, "{on}");
+    let chain: String = (0..300)
+        .map(|k| {
+            format!(
+                "\\def\\IntrC{}{{\\IntrC{}\\relax}}",
+                letters(k),
+                letters(k + 1)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + &format!("\\def\\IntrC{}{{\\relax}}", letters(300));
+    let saves: String = (0..600)
+        .map(|k| format!("\\def\\IntrQ{}{{}}", letters(k)))
+        .collect();
+    for (pre, body, deeper) in [
+        (
+            chain.as_str(),
+            "\\IntrCa".to_string(),
+            "\\IntrWrap".to_string(),
+        ),
+        (
+            "",
+            format!("\\begingroup{saves}\\endgroup"),
+            "\\begingroup\\def\\IntrZa{}\\def\\IntrZb{}\\def\\IntrZc{}\\relax\
+             \\pdfstringdefPreHook\\endgroup"
+                .to_string(),
+        ),
+    ] {
+        let Some((on, verify)) = modes_agree(&format!(
+            "\\documentclass{{article}}{pre}\n\
+             \\def\\pdfstringdefPreHook{{{body}}}\n\
+             \\def\\IntrWrap{{\\relax\\pdfstringdefPreHook\\relax}}\n\
+             \\begin{{document}}\\relax\n\\pdfstringdefPreHook\\relax\n{deeper}\n\
+             \\pdfstringdefPreHook\\relax\nx\\end{{document}}\n"
+        )) else {
+            return;
+        };
+        assert_eq!(count(&on, "missed.HighWater"), 1, "{body:.40}: {on}");
+        assert_eq!(count(&on, "replayed"), 1, "{body:.40}: {on}");
+        assert_eq!(count(&verify, "verify.checked"), 1, "{body:.40}: {verify}");
+    }
 }
 
 /// A body whose last tokens only expand (`\fi`) is used up inside
@@ -835,7 +920,7 @@ fn a_let_of_the_end_of_a_template_is_never_replayed() {
     never_replayed_in(
         "",
         "\\let\\IntrA=\\IntrE\\relax",
-        "\\halign{#\\futurelet\\IntrE\\relax\\cr x\\cr}\n\\relax@H@\\relax@H@\\relax@H@x",
+        "\\halign{#\\global\\futurelet\\IntrE\\relax\\cr x\\cr}\n\\relax@H@\\relax@H@\\relax@H@x",
         "Template",
     );
 }
