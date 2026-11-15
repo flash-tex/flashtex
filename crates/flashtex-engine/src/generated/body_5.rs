@@ -182,7 +182,7 @@ impl Globals {
     // §772
     pub fn flush_whatsit_node(&mut self, mut p: halfword, mut s: small_number) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(whatsit_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(s);
         if (__av_mem[crate::ix::U((p) as usize)].hh().rh() != null) {
@@ -214,7 +214,7 @@ impl Globals {
     // §785
     pub fn pdf_print_rect_spec(&mut self, mut r: halfword) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.pdf_print_mag_bp((__av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].int()).wrapping_sub(self.pdf_origin_h));
         {
             {
@@ -284,7 +284,7 @@ impl Globals {
     // §1564
     pub fn warn_dest_dup(&mut self, mut id: i32, mut byname: small_number, mut s1: str_number, mut s2: str_number) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         if (__av_eqtb[crate::ix::U(((29370i32) - 1) as usize)].int() > 0i32) {
             return;
         }
@@ -314,7 +314,7 @@ impl Globals {
         let mut s: str_number = 0; // §1630
         let mut d: i32 = 0; // §1630
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (__av_mem[crate::ix::U((p) as usize)].hh().b0() == pdf_action_user) {
             {
                 self.pdf_print_toks_ln(__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().lh());
@@ -512,7 +512,7 @@ impl Globals {
     // §1630
     pub fn set_rect_dimens(&mut self, mut p: halfword, mut parent_box: halfword, mut x: scaled, mut y: scaled, mut w: scaled, mut h: scaled, mut d: scaled, mut margin: scaled) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         { let __v760 = self.cur_h; __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_int(__v760); }
         if (w == (1073741824i32).wrapping_neg()) {
             { let __v761 = (x).wrapping_add(__av_mem[crate::ix::U(((parent_box).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_int(__v761); }
@@ -550,7 +550,7 @@ impl Globals {
     // §1630
     pub fn do_annot(&mut self, mut p: halfword, mut parent_box: halfword, mut x: scaled, mut y: scaled) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (!self.is_shipping_page) {
             self.pdf_error(1860i32, 1945i32);
         }
@@ -575,7 +575,7 @@ impl Globals {
     // §1635
     pub fn push_link_level(&mut self, mut p: halfword) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.pdf_link_stack_ptr >= pdf_max_link_level) {
             self.overflow(1946i32, pdf_max_link_level);
         }
@@ -598,9 +598,9 @@ impl Globals {
     // §1635
     pub fn do_link(&mut self, mut p: halfword, mut parent_box: halfword, mut x: scaled, mut y: scaled) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (!self.is_shipping_page) {
             self.pdf_error(1860i32, 1947i32);
         }
@@ -625,9 +625,9 @@ impl Globals {
     pub fn end_link(&mut self) {
         let mut p: halfword = 0; // §1635
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.pdf_link_stack_ptr < 1i32) {
             self.pdf_error(1860i32, 1948i32);
         }
@@ -663,9 +663,9 @@ impl Globals {
     pub fn append_link(&mut self, mut parent_box: halfword, mut x: scaled, mut y: scaled, mut i: small_number) {
         let mut p: halfword = 0; // §1636
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.pdfassert((__av_mem[crate::ix::U((parent_box) as usize)].hh().b0() == hlist_node));
         p = self.copy_node_list(self.pdf_link_stack[crate::ix::U(((i) - 1) as usize)].link_node);
         self.pdf_link_stack[crate::ix::U(((i) - 1) as usize)].ref_link_node = p;
@@ -689,7 +689,7 @@ impl Globals {
         let mut c: i32 = 0; // §1637
         let mut t: i32 = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (!self.is_shipping_page) {
             self.pdf_error(1860i32, 1950i32);
         }
@@ -730,9 +730,9 @@ impl Globals {
     // §1637
     pub fn do_thread(&mut self, mut p: halfword, mut parent_box: halfword, mut x: scaled, mut y: scaled) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if self.doing_leaders {
             return;
         }
@@ -760,9 +760,9 @@ impl Globals {
     pub fn append_thread(&mut self, mut parent_box: halfword, mut x: scaled, mut y: scaled) {
         let mut p: halfword = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(pdf_thread_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_lh(max_halfword);
         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(null);
@@ -789,9 +789,9 @@ impl Globals {
     // §1637
     pub fn end_thread(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.pdf_thread_level != self.cur_s) {
             self.pdf_error(1860i32, 1951i32);
         }
@@ -848,9 +848,9 @@ impl Globals {
     pub fn do_dest(&mut self, mut p: halfword, mut parent_box: halfword, mut x: scaled, mut y: scaled) {
         let mut k: i32 = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (!self.is_shipping_page) {
             self.pdf_error(1860i32, 1952i32);
         }
@@ -912,7 +912,7 @@ impl Globals {
     // §1637
     pub fn out_form(&mut self, mut p: halfword) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.pdf_end_text();
         {
             self.pdf_print(113i32);
@@ -1047,7 +1047,7 @@ impl Globals {
         let mut img_w: i32 = 0; // §1637
         let mut img_h: i32 = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         image = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].hh().lh()) as usize)].int4).wrapping_add(4i32)) as usize)];
         if ((self.image_rotate(image) == 90i32) || (self.image_rotate(image) == 270i32)) {
             {
@@ -1289,7 +1289,7 @@ impl Globals {
         let mut g: scaled = 0; // §1637
         let mut g2: scaled = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         snap_unit = __av_mem[crate::ix::U(((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32)) as usize)].int();
         if (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as usize)].hh().b0() > normal) {
             stretch_amount = max_dimen;
@@ -1340,7 +1340,7 @@ impl Globals {
         let mut cur_g: scaled = 0; // §1637
         let mut this_box: halfword = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         tmp_v = self.cur_v;
         this_box = b;
         cur_g = 0i32;
@@ -1435,7 +1435,7 @@ impl Globals {
         let mut g: scaled = 0; // §1637
         let mut g2: scaled = 0; // §1637
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (!(((!(p >= self.hi_mem_min)) && (__av_mem[crate::ix::U((p) as usize)].hh().b0() == whatsit_node)) && (__av_mem[crate::ix::U((p) as usize)].hh().b1() == pdf_snapy_comp_node))) {
             self.pdf_error(1954i32, 1965i32);
         }
@@ -1465,7 +1465,7 @@ impl Globals {
     // §1637
     pub fn do_snapy(&mut self, mut p: halfword) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.count_do_snapy = (self.count_do_snapy).wrapping_add(1i32);
         if (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int() != 0i32) {
             self.cur_v = (self.cur_v).wrapping_add(__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int());
@@ -1495,7 +1495,7 @@ impl Globals {
         let mut cur_g: scaled = 0; // §729
         let mut i: small_number = 0; // §729
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         cur_g = 0i32;
         cur_glue = 0.0f64;
         this_box = self.temp_ptr;
@@ -2070,7 +2070,7 @@ impl Globals {
         let mut cur_glue: f64 = 0.0; // §738
         let mut cur_g: scaled = 0; // §738
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         cur_g = 0i32;
         cur_glue = 0.0f64;
         this_box = self.temp_ptr;
@@ -2408,7 +2408,7 @@ impl Globals {
     // §747
     pub fn fix_pdfoutput(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         if (!self.fixed_pdfoutput_set) {
             {
                 self.fixed_pdfoutput = __av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int();
@@ -2429,7 +2429,7 @@ impl Globals {
     // §748
     pub fn fix_pdf_draftmode(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         if (!self.fixed_pdf_draftmode_set) {
             {
                 self.fixed_pdf_draftmode = __av_eqtb[crate::ix::U(((29368i32) - 1) as usize)].int();
@@ -2499,9 +2499,9 @@ impl Globals {
         let mut save_text_procset: i32 = 0; // §750
         let mut pdf_last_resources: i32 = 0; // §750
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_done_f: {
             if (__av_eqtb[crate::ix::U(((29311i32) - 1) as usize)].int() > 0i32) {
                 {
@@ -3840,7 +3840,7 @@ impl Globals {
     // §791
     pub fn ship_out(&mut self, mut p: halfword) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.fix_pdfoutput();
         if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() > 0i32) {
             self.pdf_ship_out(p, true);
@@ -4133,7 +4133,7 @@ impl Globals {
         let mut moddate_given: bool = false; // §807
         let mut trapped_given: bool = false; // §807
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.pdf_new_dict(obj_type_others, 0i32, 3i32);
         creator_given = false;
         producer_given = false;
@@ -4517,7 +4517,7 @@ impl Globals {
         let mut r: halfword = 0; // §823
         let mut d: scaled = 0; // §823
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         kern_stretch = 0i32;
         if (((self.prev_char_p == null) || (__av_mem[crate::ix::U((self.prev_char_p) as usize)].hh().rh() != p)) || (__av_mem[crate::ix::U((p) as usize)].hh().rh() == null)) {
             return kern_stretch;
@@ -4556,7 +4556,7 @@ impl Globals {
         let mut r: halfword = 0; // §823
         let mut d: scaled = 0; // §823
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         kern_shrink = 0i32;
         if (((self.prev_char_p == null) || (__av_mem[crate::ix::U((self.prev_char_p) as usize)].hh().rh() != p)) || (__av_mem[crate::ix::U((p) as usize)].hh().rh() == null)) {
             return kern_shrink;
@@ -4595,7 +4595,7 @@ impl Globals {
         let mut r: halfword = 0; // §823
         let mut ef: i32 = 0; // §823
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if ((!(p >= self.hi_mem_min)) && (__av_mem[crate::ix::U((p) as usize)].hh().b0() == disc_node)) {
             {
                 r = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh();
@@ -4671,7 +4671,7 @@ impl Globals {
         let mut f: internal_font_number = 0; // §823
         let mut c: i32 = 0; // §823
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         char_pw = 0i32;
         if (side == left_side) {
             self.last_leftmost_char = null;
@@ -4717,7 +4717,7 @@ impl Globals {
         let mut new_margin_kern: halfword = 0;
         let mut k: halfword = 0; // §823
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         k = self.get_node(margin_kern_node_size);
         __av_mem[crate::ix::U((k) as usize)].set_hh_b0(margin_kern_node);
         __av_mem[crate::ix::U((k) as usize)].set_hh_b1(side);
@@ -4765,9 +4765,9 @@ impl Globals {
         let mut font_shrink: scaled = 0; // §823
         let mut k: scaled = 0; // §823
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // goto labels: common_ending, exit
         let mut __goto_1: i32 = 0;
         'l_dispatch_1: loop {
@@ -5379,9 +5379,9 @@ impl Globals {
         let mut g: halfword = 0; // §844
         let mut o: glue_ord = 0; // §844
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             'l_common_ending_f: {
                 self.last_badness = 0i32;
@@ -5658,9 +5658,9 @@ impl Globals {
         let mut d: scaled = 0; // §855
         let mut p: halfword = 0; // §855
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.cur_list.aux_field.int() > __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int()) {
             {
                 d = ((__av_mem[crate::ix::U(((__av_eqtb[crate::ix::U(((26629i32) - 1) as usize)].hh().rh()).wrapping_add(1i32)) as usize)].int()).wrapping_sub(self.cur_list.aux_field.int())).wrapping_sub(__av_mem[crate::ix::U(((b).wrapping_add(3i32)) as usize)].int());
@@ -5687,7 +5687,7 @@ impl Globals {
         let mut new_noad: halfword = 0;
         let mut p: halfword = 0; // §862
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(noad_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(ord_noad);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(normal);
@@ -5715,7 +5715,7 @@ impl Globals {
         let mut new_style: halfword = 0;
         let mut p: halfword = 0; // §864
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(style_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(style_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(s);
@@ -5733,7 +5733,7 @@ impl Globals {
         let mut new_choice: halfword = 0;
         let mut p: halfword = 0; // §865
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(style_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(choice_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(0i32);
@@ -5755,7 +5755,7 @@ impl Globals {
     // §869
     pub fn show_info(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.show_node_list(__av_mem[crate::ix::U((self.temp_ptr) as usize)].hh().lh());
     }
 
@@ -5767,7 +5767,7 @@ impl Globals {
         let mut fraction_rule: halfword = 0;
         let mut p: halfword = 0; // §880
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.new_rule();
         __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_int(t);
         __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_int(0i32);
@@ -5784,7 +5784,7 @@ impl Globals {
         let mut p: halfword = 0; // §881
         let mut q: halfword = 0; // §881
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.new_kern(k);
         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(b);
         q = self.fraction_rule(t);
@@ -5809,7 +5809,7 @@ impl Globals {
         let mut b: halfword = 0; // §885
         let mut p: halfword = 0; // §885
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         q = self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq();
         hd = (q.b1()).wrapping_sub(0i32);
         b = self.new_null_box();
@@ -5832,7 +5832,7 @@ impl Globals {
     pub fn stack_into_box(&mut self, mut b: halfword, mut f: internal_font_number, mut c: quarterword) {
         let mut p: halfword = 0; // §887
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.char_box(f, c);
         { let __v906 = __av_mem[crate::ix::U(((b).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v906); }
         __av_mem[crate::ix::U(((b).wrapping_add(5i32)) as usize)].set_hh_rh(p);
@@ -5885,9 +5885,9 @@ impl Globals {
         let mut z: small_number = 0; // §882
         let mut large_attempt: bool = false; // §882
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_found_f: {
             f = null_font;
             w = 0i32;
@@ -6067,7 +6067,7 @@ impl Globals {
         let mut f: internal_font_number = 0; // §891
         let mut v: scaled = 0; // §891
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if ((__av_mem[crate::ix::U(((b).wrapping_add(1i32)) as usize)].int() != w) && (__av_mem[crate::ix::U(((b).wrapping_add(5i32)) as usize)].hh().rh() != null)) {
             {
                 if (__av_mem[crate::ix::U((b) as usize)].hh().b0() == vlist_node) {
@@ -6110,7 +6110,7 @@ impl Globals {
         let mut n: i32 = 0; // §892
         let mut f: scaled = 0; // §892
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         n = self.x_over_n(m, 65536i32);
         f = self.remainder;
         if (f < 0i32) {
@@ -6144,7 +6144,7 @@ impl Globals {
         let mut n: i32 = 0; // §893
         let mut f: scaled = 0; // §893
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == mu_glue) {
             {
                 n = self.x_over_n(m, 65536i32);
@@ -6166,7 +6166,7 @@ impl Globals {
     // §894
     pub fn flush_math(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.flush_node_list(__av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh());
         self.flush_node_list(self.cur_list.aux_field.int());
         { let __ix926 = self.cur_list.head_field; __av_mem[crate::ix::U((__ix926) as usize)].set_hh_rh(null); }
@@ -6188,9 +6188,9 @@ impl Globals {
         let mut x: halfword = 0; // §896
         let mut r: halfword = 0; // §896
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_found_f: {
             match __av_mem[crate::ix::U((p) as usize)].hh().rh() {
                 math_char => {
@@ -6274,9 +6274,9 @@ impl Globals {
     // §898
     pub fn fetch(&mut self, mut a: halfword) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.cur_c = __av_mem[crate::ix::U((a) as usize)].hh().b1();
         self.cur_f = __av_eqtb[crate::ix::U(((((math_font_base).wrapping_add(__av_mem[crate::ix::U((a) as usize)].hh().b0())).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh();
         if (self.cur_f == null_font) {
@@ -6338,9 +6338,9 @@ impl Globals {
     // §910
     pub fn make_over(&mut self, mut q: halfword) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         { let __v929 = { let __a930_0 = self.clean_box((q).wrapping_add(1i32), ((2i32).wrapping_mul((self.cur_style / 2i32))).wrapping_add(1i32)); let __a930_1 = (3i32).wrapping_mul(self.font_info[crate::ix::U(((8i32).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U((((27696i32).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh()) as usize)])) as usize)].int()); let __a930_2 = self.font_info[crate::ix::U(((8i32).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U((((27696i32).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh()) as usize)])) as usize)].int(); self.overbar(__a930_0, __a930_1, __a930_2) }; __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_lh(__v929); }
         __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(sub_box);
     }
@@ -6353,9 +6353,9 @@ impl Globals {
         let mut y: halfword = 0; // §911
         let mut delta: scaled = 0; // §911
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         x = self.clean_box((q).wrapping_add(1i32), self.cur_style);
         p = self.new_kern((3i32).wrapping_mul(self.font_info[crate::ix::U(((8i32).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U((((27696i32).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh()) as usize)])) as usize)].int()));
         __av_mem[crate::ix::U((x) as usize)].set_hh_rh(p);
@@ -6374,9 +6374,9 @@ impl Globals {
         let mut v: halfword = 0; // §912
         let mut delta: scaled = 0; // §912
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         v = __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().lh();
         if (__av_mem[crate::ix::U((v) as usize)].hh().b0() != vlist_node) {
             self.confusion(627i32);
@@ -6401,9 +6401,9 @@ impl Globals {
         let mut delta: scaled = 0; // §913
         let mut clr: scaled = 0; // §913
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         x = self.clean_box((q).wrapping_add(1i32), ((2i32).wrapping_mul((self.cur_style / 2i32))).wrapping_add(1i32));
         if (self.cur_style < text_style) {
             clr = (self.font_info[crate::ix::U(((8i32).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U((((27696i32).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh()) as usize)])) as usize)].int()).wrapping_add((((((self.font_info[crate::ix::U(((5i32).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U((((27695i32).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh()) as usize)])) as usize)].int()) as i64).abs()) / ((4i32) as i64)) as i32));
@@ -6442,7 +6442,7 @@ impl Globals {
         let mut delta: scaled = 0; // §914
         let mut w: scaled = 0; // §914
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.fetch((q).wrapping_add(4i32));
         if (self.cur_i.b0() > min_quarterword) {
             {
@@ -6579,9 +6579,9 @@ impl Globals {
         let mut shift_down: scaled = 0; // §919
         let mut clr: scaled = 0; // §919
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (__av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int() == default_code) {
             { let __v947 = self.font_info[crate::ix::U(((8i32).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U((((27696i32).wrapping_add(self.cur_size)) - 1) as usize)].hh().rh()) as usize)])) as usize)].int(); __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_int(__v947); }
         }
@@ -6707,9 +6707,9 @@ impl Globals {
         let mut shift_up: scaled = 0; // §925
         let mut shift_down: scaled = 0; // §925
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if ((__av_mem[crate::ix::U((q) as usize)].hh().b1() == normal) && (self.cur_style < text_style)) {
             __av_mem[crate::ix::U((q) as usize)].set_hh_b1(limits);
         }
@@ -6823,7 +6823,7 @@ impl Globals {
         let mut p: halfword = 0; // §928
         let mut r: halfword = 0; // §928
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // goto labels: restart, exit
         let mut __goto_1: i32 = 0;
         'l_dispatch_1: loop {
@@ -6954,9 +6954,9 @@ impl Globals {
         let mut clr: scaled = 0; // §932
         let mut t: small_number = 0; // §932
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int();
         if (p >= self.hi_mem_min) {
             {

@@ -66,7 +66,7 @@ impl<T> IndexMut<U> for Arr<T> {
     }
 }
 
-impl<T> Index<U> for ArrView<T> {
+impl<T, const N: usize> Index<U> for ArrView<T, N> {
     type Output = T;
     #[inline(always)]
     fn index(&self, i: U) -> &T {
@@ -79,7 +79,7 @@ impl<T> Index<U> for ArrView<T> {
     }
 }
 
-impl<T> IndexMut<U> for ArrView<T> {
+impl<T, const N: usize> IndexMut<U> for ArrView<T, N> {
     #[inline(always)]
     fn index_mut(&mut self, i: U) -> &mut T {
         self.get_mut(i.0)

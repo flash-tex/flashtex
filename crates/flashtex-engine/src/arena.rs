@@ -3845,35 +3845,61 @@ range_mut! {
 /// (views are made only of arrays created at their full length and never
 /// resized: web2c's fixed arrays, never `xmalloc_array`'d), and writes pass
 /// the same barrier as `Arr`'s.
-pub struct ArrView<T> {
+///
+/// The length is the const parameter `N`, the array's length as web2rust
+/// knows it when it writes the routine, and [`Arr::view`] checks it against
+/// the array's own. So every subscript is still checked against the array's
+/// length, but against a constant: the check needs no register and no load,
+/// and for a constant subscript (`eqtb`'s parameters, `mem`'s fixed heads)
+/// the compiler drops it, as its outcome is known when the code is compiled
+/// (lane PERF-COLD).
+pub struct ArrView<T, const N: usize> {
     ptr: *mut T,
-    len: usize,
     flags: *const u8,
     core: *mut Core,
 }
 
-impl<T> Clone for ArrView<T> {
+impl<T, const N: usize> Clone for ArrView<T, N> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Copy for ArrView<T> {}
+impl<T, const N: usize> Copy for ArrView<T, N> {}
+
+#[cold]
+#[inline(never)]
+fn view_len_mismatch(len: usize, n: usize) -> ! {
+    panic!("array view of length {n} made of an array of length {len}")
+}
 
 impl<T> Arr<T> {
-    /// This array's view (see [`ArrView`]). Only for an array whose length
-    /// never changes: a view keeps the length it was made with.
+    /// This array's view (see [`ArrView`]), of length `N`, which is the
+    /// array's length. Only for an array whose length never changes: a view
+    /// keeps the length it was made with.
+    ///
+    /// `N` is the array's length by construction: web2rust writes the same
+    /// expression as `N` and as the length `Globals::new` creates the array
+    /// with (`__arena.arr(__r_NAME, LEN)`), and it makes views only of an
+    /// array that is never (re)allocated (`--array-view`), whose length
+    /// nothing changes after (`alloc_len`, `resize_len` and the checkpoint's
+    /// `len_mut` serve only the growable arrays). So the check here is a
+    /// debug assertion, which every debug-built test runs at every view: in
+    /// a release build a check per routine call cost more than the constant
+    /// bound saved (PERF-COLD, PR #2411).
     #[inline(always)]
-    pub fn view(&self) -> ArrView<T> {
+    pub fn view<const N: usize>(&self) -> ArrView<T, N> {
+        if cfg!(debug_assertions) && self.len != N {
+            view_len_mismatch(self.len, N);
+        }
         ArrView {
             ptr: self.ptr,
-            len: self.len,
             flags: self.flags,
             core: self.core,
         }
     }
 }
 
-impl<T> ArrView<T> {
+impl<T, const N: usize> ArrView<T, N> {
     const SIZE: usize = std::mem::size_of::<T>();
     const STRADDLES: bool = !Self::SIZE.is_power_of_two();
 
@@ -3914,8 +3940,8 @@ impl<T> ArrView<T> {
     /// Element `i` for reading, bounds-checked.
     #[inline(always)]
     pub fn get(&self, i: usize) -> &T {
-        if i >= self.len {
-            out_of_bounds(i, self.len);
+        if i >= N {
+            out_of_bounds(i, N);
         }
         // SAFETY: in bounds; the elements live as long as the arena, which
         // outlives the routine holding the view.
@@ -3936,8 +3962,8 @@ impl<T> ArrView<T> {
     /// Element `i` for writing, bounds-checked and through the barrier.
     #[inline(always)]
     pub fn get_mut(&mut self, i: usize) -> &mut T {
-        if i >= self.len {
-            out_of_bounds(i, self.len);
+        if i >= N {
+            out_of_bounds(i, N);
         }
         self.touch(i);
         // SAFETY: in bounds; the generated code holds no other reference to
@@ -3946,7 +3972,7 @@ impl<T> ArrView<T> {
     }
 }
 
-impl<T> Index<usize> for ArrView<T> {
+impl<T, const N: usize> Index<usize> for ArrView<T, N> {
     type Output = T;
     #[inline(always)]
     fn index(&self, i: usize) -> &T {
@@ -3954,7 +3980,7 @@ impl<T> Index<usize> for ArrView<T> {
     }
 }
 
-impl<T> IndexMut<usize> for ArrView<T> {
+impl<T, const N: usize> IndexMut<usize> for ArrView<T, N> {
     #[inline(always)]
     fn index_mut(&mut self, i: usize) -> &mut T {
         self.get_mut(i)
