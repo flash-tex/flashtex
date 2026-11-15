@@ -618,6 +618,14 @@ struct DiagnosticRow: View {
                 } else {
                     MissingIncludeFixButton(diagnostic: d)
                 }
+                // A read an untrusted project's confined compile refused:
+                // trusting it (per project, remembered) restores pdfTeX's
+                // own rules and compiles again.
+                if d.code == EngineV3Session.untrustedReadCode {
+                    InlineActionButton(title: "Trust This Project") { model.engineV3.trustProject() }
+                        .help("Compile this project as pdflatex would, reading any file it names; remembered for this project")
+                        .accessibilityIdentifier("problems.trust-project")
+                }
                 // The compiler's missing-package diagnostic (`packages X are
                 // recognised but not implemented`, `no project file found:
                 // looked for X.sty`): write X.sty from the template next to

@@ -39,6 +39,8 @@ final class EngineV3ProblemsPipeline: @unchecked Sendable {
         var clearTeX: Bool
         /// The tool cycle's DIAGNOSTICs (bibtex, biber, makeindex).
         var tools: [DL3JSON]
+        /// An untrusted project's refused reads (`EngineV3Session.blockedReadProblems`), listed first.
+        var blocked: [RuntimeV1.Diagnostic] = []
         var documents: [String: String]
         var roots: [String]
         /// The texts of the compile the rows are of (`ShellModel.compiledDocuments`): their line labels.
@@ -99,7 +101,7 @@ final class EngineV3ProblemsPipeline: @unchecked Sendable {
         lock.lock()
         if job.clearTeX { texRows = [] }
         if let tex { texRows = tex }
-        let rows = texRows + tools
+        let rows = job.blocked + texRows + tools
         let previous = last
         lock.unlock()
         if previous.diagnostics == rows, previous.documentOrder == job.documentOrder, previous.texts == job.texts { return previous }

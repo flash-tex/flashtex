@@ -98,8 +98,10 @@ final class EngineV3PackagesTests: XCTestCase {
 
     // MARK: the copy (no host)
 
-    /// Delivered files are written into the copy's own `packages/` folder
-    /// (read-only), linked by name after the texinputs; a project file of the
+    /// Delivered files are written into the copy's own `src/.flashtex-packages/`
+    /// folder (read-only), inside the host's working directory, so a confined
+    /// host (Live Share, an untrusted project) may read them (#2026 review,
+    /// finding 3); linked by name after the texinputs; a project file of the
     /// same name wins; files no longer delivered go, links and all; a path
     /// that is not `packages/<name>/<file>` is never written.
     func testDeliveredFilesAreWrittenIntoTheCopyAndLinkedByName() throws {
@@ -119,15 +121,20 @@ final class EngineV3PackagesTests: XCTestCase {
         XCTAssertEqual(links.map(\.name), ["fx.sty", "fx.cfg", "own.sty"])
         mirror.linkTexInputs(links, except: ["main.tex"])
         let fm = FileManager.default
-        let pkgDir = mirror.base.appendingPathComponent("packages")
+        let pkgDir = mirror.packagesDirectory
         XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("fx.sty"), encoding: .utf8), "\\ProvidesPackage{fx}\n")
         XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: mirror.root.appendingPathComponent("fx.sty").path),
                        pkgDir.appendingPathComponent("fx/fx.sty").path)
+        // A confined host's roots include its working directory (the copy's
+        // `src/`): the link resolves inside it, as the engine checks it.
+        let real = mirror.root.appendingPathComponent("fx.sty").resolvingSymlinksInPath().path
+        XCTAssertTrue(real.hasPrefix(mirror.root.resolvingSymlinksInPath().path + "/"), real)
         let perms = try fm.attributesOfItem(atPath: pkgDir.appendingPathComponent("fx/fx.sty").path)[.posixPermissions] as? Int
         XCTAssertEqual(perms, 0o444, "the engine only reads it")
         XCTAssertEqual(try String(contentsOf: mirror.root.appendingPathComponent("own.sty"), encoding: .utf8), "% the project's own",
                        "a project file of the same name wins")
         XCTAssertFalse(fm.fileExists(atPath: mirror.base.appendingPathComponent("evil.sty").path))
+        XCTAssertFalse(fm.fileExists(atPath: mirror.root.appendingPathComponent("evil.sty").path))
         XCTAssertFalse(fm.fileExists(atPath: pkgDir.appendingPathComponent("elsewhere").path))
 
         // A new version replaces the text; fx.cfg is no longer delivered.

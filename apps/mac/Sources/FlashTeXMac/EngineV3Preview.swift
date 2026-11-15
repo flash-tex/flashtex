@@ -59,7 +59,7 @@ private struct PreviewV3StatusHUD: View {
                 // Owner decision 9A: a downloaded project runs no shell commands until trusted.
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.shield")
-                    Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off. Trust \(session.trustOtherCount > 0 ? "them" : "it") to allow restricted \\write18, as pdflatex does.")
+                    Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off and reads only its own folder, the TeX tree and the system fonts. Trust \(session.trustOtherCount > 0 ? "them" : "it") to compile as pdflatex does.")
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Trust This Project") { session.trustProject() }
                         .accessibilityIdentifier("engine-v3.trust")

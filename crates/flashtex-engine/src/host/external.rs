@@ -392,16 +392,21 @@ fn aux_chain(
     }
 }
 
-/// The data sources a `.bcf` names (`parse_bcf`).
-fn bcf_sources(d: &[u8]) -> Vec<String> {
+/// The data sources a `.bcf` names (`parse_bcf`): its local BibTeX files.
+/// `confined` (a confined host, `FLASHTEX_CONFINE_READS`; #2026 review):
+/// every data source, of every type (`file` or `url`, as biblatex writes
+/// for `location=remote`) and data type (`biblatexml`, `ris`, ...), so
+/// each must be found where confinement allows (`Job::find`) or biber does
+/// not run: a `.bltxml` named outside the roots, or a URL, is missing.
+fn bcf_sources(d: &[u8], confined: bool) -> Vec<String> {
     let t = String::from_utf8_lossy(d);
     let mut v = vec![];
     for l in t.lines() {
         let l = l.trim();
-        if !l.starts_with("<bcf:datasource") || !l.contains("type=\"file\"") {
+        if !l.starts_with("<bcf:datasource") {
             continue;
         }
-        if !l.contains("datatype=\"bibtex\"") {
+        if !confined && (!l.contains("type=\"file\"") || !l.contains("datatype=\"bibtex\"")) {
             continue;
         }
         let (Some(a), Some(b)) = (l.find('>'), l.rfind("</bcf:datasource>")) else {
@@ -442,7 +447,7 @@ pub fn snapshot(root: &Path, out: &Path, jobname: &str, journal: Option<&ReadLog
     let bcf = format!("{jobname}.bcf");
     if written.contains(&bcf) {
         if let Some(d) = read(&out.join(&bcf)) {
-            let bib = bcf_sources(&d);
+            let bib = bcf_sources(&d, crate::system::reads_are_confined());
             rules.push(Rule {
                 key: RuleKey {
                     tool: Tool::Biber,
@@ -578,7 +583,24 @@ impl Job {
     /// runs bibtex there with `BIBINPUTS` starting with the project), then
     /// kpathsea's path for `format`, through the engine's resolver (the
     /// bundle's without a TeX Live).
+    ///
+    /// A confined host (`FLASHTEX_CONFINE_READS`) finds only what read
+    /// confinement allows (`system::tool_input_ok`, #2057): a refused file is
+    /// missing, so it is neither read for the rule's state nor given to the
+    /// tool.
     fn find(&self, name: &str, ext: &str, format: &str) -> Option<PathBuf> {
+        let (p, searched) = self.find_any(name, ext, format)?;
+        self.confined_ok(name, &p, searched).then_some(p)
+    }
+
+    /// `system::tool_input_ok` with the project and the output directory
+    /// for roots.
+    fn confined_ok(&self, name: &str, p: &Path, searched: bool) -> bool {
+        crate::system::tool_input_ok(name, p, searched, &[&self.snap.root, &self.snap.out])
+    }
+
+    /// `find` before confinement; whether the answer is kpathsea's.
+    fn find_any(&self, name: &str, ext: &str, format: &str) -> Option<(PathBuf, bool)> {
         let with = if name.ends_with(&format!(".{ext}")) {
             name.to_string()
         } else {
@@ -586,12 +608,12 @@ impl Job {
         };
         let p = Path::new(&with);
         if p.is_absolute() {
-            return Some(p.to_path_buf()).filter(|p| p.is_file());
+            return Some((p.to_path_buf(), false)).filter(|(p, _)| p.is_file());
         }
         for d in [&self.snap.root, &self.snap.out] {
             let c = d.join(p);
             if c.is_file() {
-                return Some(c);
+                return Some((c, false));
             }
         }
         let key = (format.to_string(), with.clone());
@@ -603,7 +625,7 @@ impl Job {
             .get(&key)
         {
             if r.as_ref().is_none_or(|p| p.is_file()) {
-                return r.clone();
+                return r.clone().map(|p| (p, true));
             }
         }
         let fmt = match format {
@@ -619,7 +641,7 @@ impl Job {
             .unwrap_or_else(|e| e.into_inner())
             .found
             .insert(key, r.clone());
-        r
+        r.map(|p| (p, true))
     }
 
     /// The state of a rule's sources, and the `.bib` files that are
@@ -650,7 +672,7 @@ impl Job {
                     self.snap.root.join(p)
                 };
                 if c.is_file() {
-                    Some(c)
+                    Some(c).filter(|c| self.confined_ok(b, c, false))
                 } else {
                     self.find(b, "bib", "bib")
                 }
@@ -1388,7 +1410,32 @@ mod tests {
     <bcf:datasource type="file" datatype="bibtex" glob="false">sub/more.bib</bcf:datasource>
   </bcf:bibdata>
 "#;
-        assert_eq!(bcf_sources(bcf), vec!["refs.bib", "sub/more.bib"]);
+        assert_eq!(bcf_sources(bcf, false), vec!["refs.bib", "sub/more.bib"]);
+        assert_eq!(bcf_sources(bcf, true), vec!["refs.bib", "sub/more.bib"]);
+    }
+
+    /// A confined host counts every data source biber would read (#2026
+    /// review): the other data types and remote ones too. The negative
+    /// control: unconfined, only the local BibTeX files, as before.
+    #[test]
+    fn bcf_datasources_of_every_type_when_confined() {
+        let bcf = br#"  <bcf:bibdata section="0">
+    <bcf:datasource type="file" datatype="bibtex" glob="false">refs.bib</bcf:datasource>
+    <bcf:datasource type="file" datatype="biblatexml" glob="false">/outside/secret.bltxml</bcf:datasource>
+    <bcf:datasource type="file" datatype="ris" glob="false">more.ris</bcf:datasource>
+    <bcf:datasource type="url" datatype="bibtex">https://example.invalid/r.bib</bcf:datasource>
+  </bcf:bibdata>
+"#;
+        assert_eq!(bcf_sources(bcf, false), vec!["refs.bib"]);
+        assert_eq!(
+            bcf_sources(bcf, true),
+            vec![
+                "refs.bib",
+                "/outside/secret.bltxml",
+                "more.ris",
+                "https://example.invalid/r.bib"
+            ]
+        );
     }
 
     #[test]
