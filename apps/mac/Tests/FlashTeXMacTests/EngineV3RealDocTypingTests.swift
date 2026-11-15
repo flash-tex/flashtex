@@ -10,28 +10,36 @@ import XCTest
 ///   - `hard`, max(5 x budget, 500 ms): no key and no turn may cross it. The owner's freeze was
 ///     1.9 s on main (before #1890 and #1900), about 4 x over;
 ///   - `allowed`, an eighth of the phase's keys and at least 3 (5 of the 40): at most that many
-///     keys, and at most that many turns, over the soft budget. One VM pause late-delivers every
-///     key posted during it (run 41432961769: turns of 123, 124 and 470 ms back to back made 5
-///     keys late), while a regression that costs every key or every compile a long turn shows up
-///     about 40 times;
+///     keys over the soft budget. One VM pause late-delivers every key posted during it (run
+///     41432961769: turns of 123, 124 and 470 ms back to back made 5 keys late), while a
+///     regression that costs every key or every compile a long turn shows up about 40 times;
+///   - `allowedTurns`, a quarter of the phase's keys and at least 6 (10 of the 40): at most that
+///     many turns over the soft budget. It was `allowed` too (5), and of main's 15 runs after
+///     #2154 two failed on it alone, with every key in time or one late: the late phase of
+///     42729247445 had 8 turns of 108 to 216 ms (1.20 s in all), that of 42911360260 7 turns of
+///     101 to 178 ms (0.96 s). The other 13 had 0 to 4. Turns are counted until the late
+///     compile settles, keys only while they are typed, so a VM that runs at half speed while the
+///     results arrive makes turns late and no key. Ten is still a quarter of "about 40 times",
+///     and what bounds a freeze cut into turns is `totalMs`, as before;
 ///   - `totalMs`, 3 x `hard`: the turns over the soft budget may add up to at most that, so a
 ///     freeze cut into turns under `hard` (1.9 s as 5 x 380 ms) still fails. The worst VM noise
-///     measured adds up to 0.99 s.
+///     measured adds up to 1.20 s (42729247445; 0.99 s before it).
 struct RealDocStallLimits {
     var soft: Double
     var hard: Double
     var allowed: Int
+    var allowedTurns: Int
     var totalMs: Double
 
     static func of(budgetMs: Double, hosted: Bool, wanted: Int) -> RealDocStallLimits {
-        guard hosted else { return RealDocStallLimits(soft: budgetMs, hard: budgetMs, allowed: 0, totalMs: .infinity) }
+        guard hosted else { return RealDocStallLimits(soft: budgetMs, hard: budgetMs, allowed: 0, allowedTurns: 0, totalMs: .infinity) }
         let hard = max(5 * budgetMs, 500)
-        return RealDocStallLimits(soft: budgetMs, hard: hard, allowed: max(3, wanted / 8), totalMs: 3 * hard)
+        return RealDocStallLimits(soft: budgetMs, hard: hard, allowed: max(3, wanted / 8), allowedTurns: max(6, wanted / 4), totalMs: 3 * hard)
     }
 
     var text: String {
         allowed == 0 ? "budget \(soft) ms"
-            : "soft budget \(soft) ms, \(allowed) allowed over it, hard limit \(hard) ms, \(totalMs) ms in all"
+            : "soft budget \(soft) ms, \(allowed) keys and \(allowedTurns) turns allowed over it, hard limit \(hard) ms, \(totalMs) ms in all"
     }
 
     /// The misses of one phase: each key's way into the text storage (ms, in the order typed) and
@@ -50,7 +58,7 @@ struct RealDocStallLimits {
         let total = stalls.reduce(0.0) { $0 + $1.ms }
         if stalls.contains(where: { $0.ms > hard }) {
             out.append("\(name): a main run-loop turn over the hard limit (\(text)), longest " + stallText)
-        } else if stalls.count > allowed {
+        } else if stalls.count > allowedTurns {
             out.append("\(name): \(stalls.count) main run-loop turns over the budget (\(text)), longest " + stallText)
         } else if total > totalMs {
             out.append("\(name): main run-loop turns over the budget add up to \(String(format: "%.0f", total)) ms (\(text)): " + stallText)
@@ -161,7 +169,7 @@ final class EngineV3RealDocTypingTests: XCTestCase {
     /// the mac-app job): every hosted noise run passes, and the freeze fails however it comes.
     func testTheHostedLimitsPassTheMeasuredNoiseAndFailTheFreeze() {
         let hosted = RealDocStallLimits.of(budgetMs: 100, hosted: true, wanted: 40)
-        XCTAssertEqual([hosted.hard, Double(hosted.allowed), hosted.totalMs], [500, 5, 1500])
+        XCTAssertEqual([hosted.hard, Double(hosted.allowed), Double(hosted.allowedTurns), hosted.totalMs], [500, 5, 10, 1500])
         func keys(_ late: [Double]) -> [Double] { late + Array(repeating: 5, count: 40 - late.count) }
         func turns(_ ms: [Double]) -> [(ms: Double, atMs: Double)] { ms.enumerated().map { (ms: $0.element, atMs: Double($0.offset) * 100) } }
         // Every hosted phase that missed 100 ms in #2146's runs and main's 41510925330: the keys
@@ -183,6 +191,9 @@ final class EngineV3RealDocTypingTests: XCTestCase {
             ("41385296674/2 late", [142.9], [232.1, 113.6, 107.2]),
             ("41385296674/3 cold", [], [143.9]),
             ("41385296674/3 late", [106.7], [107.1]),
+            // main after #2154: the two runs that failed on the count of turns alone (5 allowed then)
+            ("42729247445 (main) late", [120.2], [215.5, 185.8, 163.3, 149.7, 140.7, 127.1, 113.9, 107.6]),
+            ("42911360260 (main) late", [], [178.2, 173.8, 154.3, 129.3, 115.9, 109.1, 100.7]),
         ]
         for (name, k, t) in noise {
             XCTAssertEqual(hosted.misses(name, keysMs: keys(k), turns: turns(t)), [], name)
@@ -196,6 +207,8 @@ final class EngineV3RealDocTypingTests: XCTestCase {
             ("1.9 s as 5 x 300 ms and 4 x 100 ms", Array(repeating: [300.0, 250, 200, 150], count: 5).flatMap { $0 },
              [300, 300, 300, 300, 300, 100, 100, 100, 100]),
             ("every compile costs main a 150 ms turn", [], Array(repeating: 150, count: 40)),
+            // over a quarter of the keys' number of long turns, under the total and with no key late: the count
+            ("eleven turns of 130 ms", [], Array(repeating: 130, count: 11)),
             ("every key 120 ms late", Array(repeating: 120, count: 40), []),
         ]
         for (name, k, t) in freezes {
