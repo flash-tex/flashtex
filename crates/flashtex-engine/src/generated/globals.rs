@@ -1298,6 +1298,8 @@ pub struct Globals {
     pub seg_ptr: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
+    /// The engine's state outside the word space (`--host-state`).
+    pub host: crate::csindex::Host,
 }
 
 /// Bytes of the scalar globals' region at the start of the word space.
@@ -2648,6 +2650,7 @@ impl Globals {
             seg_stack: __arena.arr(__r_seg_stack, 16384),
             seg_ptr: 0,
             arena: __arena,
+            host: Default::default(),
         })
     }
 
