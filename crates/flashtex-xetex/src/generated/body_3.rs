@@ -4464,10 +4464,20 @@ impl Globals {
                 self.print_int(self.cur_val);
             }
             uniform_deviate_code => {
-                { let __a359_0 = self.unif_rand(self.cur_val); self.print_int(__a359_0) };
+                {
+                    if self.intr_verify_on {
+                        self.flashtex_intr_op(19i32, 8i32, 0i32, 0i32);
+                    }
+                    { let __a359_0 = self.unif_rand(self.cur_val); self.print_int(__a359_0) };
+                }
             }
             normal_deviate_code => {
-                { let __a360_0 = self.norm_rand(); self.print_int(__a360_0) };
+                {
+                    if self.intr_verify_on {
+                        self.flashtex_intr_op(19i32, 8i32, 0i32, 0i32);
+                    }
+                    { let __a360_0 = self.norm_rand(); self.print_int(__a360_0) };
+                }
             }
             XeTeX_Uchar_code | XeTeX_Ucharcat_code => {
                 self.print_char(self.cur_val);

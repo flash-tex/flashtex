@@ -866,6 +866,9 @@ impl Globals {
     // §1213
     pub fn math_limit_switch(&mut self) {
         'l_exit_f: {
+            if self.intr_verify_on {
+                self.flashtex_intr_op(19i32, 7i32, 0i32, 0i32);
+            }
             if (self.cur_list.head_field != self.cur_list.tail_field) {
                 if (self.mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b0() == op_noad) {
                     {
@@ -1180,6 +1183,9 @@ impl Globals {
     pub fn sub_sup(&mut self) {
         let mut t: small_number = 0; // §1230
         let mut p: halfword = 0; // §1230
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 7i32, 0i32, 0i32);
+        }
         t = empty;
         p = (268435455i32).wrapping_neg();
         if (self.cur_list.tail_field != self.cur_list.head_field) {
@@ -1248,6 +1254,9 @@ impl Globals {
     // §1235
     pub fn math_fraction(&mut self) {
         let mut c: small_number = 0; // §1235
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 7i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         if (self.cur_list.aux_field.int() != (268435455i32).wrapping_neg()) {
             // §1237
@@ -2293,6 +2302,9 @@ impl Globals {
     // §1297
     pub fn alter_aux(&mut self) {
         let mut c: halfword = 0; // §1297
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 1i32, 0i32, 0i32);
+        }
         if (self.cur_chr != (self.cur_list.mode_field).wrapping_abs()) {
             self.report_illegal_case();
         } else {
@@ -2338,6 +2350,9 @@ impl Globals {
     // §1298
     pub fn alter_prev_graf(&mut self) {
         let mut p: i32 = 0; // §1298
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 2i32, 0i32, 0i32);
+        }
         { let __ix1655 = self.nest_ptr; let __v1656 = self.cur_list; self.nest[crate::ix::U((__ix1655) as usize)] = __v1656; }
         p = self.nest_ptr;
         while ((self.nest[crate::ix::U((p) as usize)].mode_field).wrapping_abs() != vmode) {
@@ -2376,6 +2391,9 @@ impl Globals {
     // §1299
     pub fn alter_page_so_far(&mut self) {
         let mut c: i32 = 0; // §1299
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 3i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_optional_equals();
         self.scan_dimen(false, false, false);
@@ -2386,6 +2404,9 @@ impl Globals {
     // §1300
     pub fn alter_integer(&mut self) {
         let mut c: small_number = 0; // §1300
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 3i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_optional_equals();
         self.scan_int();
@@ -2642,6 +2663,9 @@ impl Globals {
     /// @<Declare subprocedures for `prefixed_command`
     // §1319
     pub fn new_interaction(&mut self) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 4i32, 0i32, 0i32);
+        }
         self.print_ln();
         self.interaction = self.cur_chr;
         // §79
@@ -3583,6 +3607,9 @@ impl Globals {
                     assign_font_dimen => {
                         // §1307
                         {
+                            if self.intr_verify_on {
+                                self.flashtex_intr_op(19i32, 5i32, 0i32, 0i32);
+                            }
                             self.find_font_dimen(true);
                             k = self.cur_val;
                             self.scan_optional_equals();
@@ -3592,6 +3619,9 @@ impl Globals {
                     }
                     assign_font_int => {
                         {
+                            if self.intr_verify_on {
+                                self.flashtex_intr_op(19i32, 5i32, 0i32, 0i32);
+                            }
                             n = self.cur_chr;
                             self.scan_font_ident();
                             f = self.cur_val;
@@ -5409,12 +5439,18 @@ impl Globals {
             reset_timer_code => {
                 // §1414
                 {
+                    if self.intr_verify_on {
+                        self.flashtex_intr_op(19i32, 8i32, 0i32, 0i32);
+                    }
                     { let mut __f0 = ::core::mem::take(&mut self.epochseconds); let mut __f1 = ::core::mem::take(&mut self.microseconds); let __r = self.seconds_and_micros(&mut __f0, &mut __f1); self.epochseconds = __f0; self.microseconds = __f1; __r };
                 }
             }
             set_random_seed_code => {
                 // §1413
                 {
+                    if self.intr_verify_on {
+                        self.flashtex_intr_op(19i32, 8i32, 0i32, 0i32);
+                    }
                     self.scan_int();
                     if (self.cur_val < 0i32) {
                         self.cur_val = (self.cur_val).wrapping_neg();
