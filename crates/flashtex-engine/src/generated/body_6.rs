@@ -9324,9 +9324,6 @@ impl Globals {
                                 }
                             }
                         }
-                        if self.bm_rec_on {
-                            self.flashtex_bm_box_use(self.cur_val, 4i32);
-                        }
                         self.free_node(p, box_node_size);
                     }
                 }
