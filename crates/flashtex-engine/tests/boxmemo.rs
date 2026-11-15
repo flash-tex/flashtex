@@ -224,14 +224,17 @@ fn a_replay_keeps_the_normal_paths_capacity_errors() {
     assert_eq!(stat(&s, "Room"), 1, "{s}");
     // the save stack (save size=200000): the call saves 510 registers in
     // its group, 195 groups deep that each saved as many (1024 words a
-    // group, which leaves 313)
+    // group, which leaves 313). Each group sets them to 1 and back to 0:
+    // e-TeX saves nothing for a value assigned again, and the registers
+    // must be what they were where the call was recorded (its key)
     let s = check(
         "capacity-save",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
-         \\def\\setall{\\ifnum\\count255<255 \\count\\count255=0 \\dimen\\count255=0pt \\advance\\count255 1 \\expandafter\\setall\\fi}\n\
+         \\def\\setall{\\ifnum\\count255<255 \\count\\count255=1 \\dimen\\count255=1sp \\advance\\count255 1 \\expandafter\\setall\\fi}\n\
+         \\def\\zeroall{\\ifnum\\count255<255 \\count\\count255=0 \\dimen\\count255=0sp \\advance\\count255 1 \\expandafter\\zeroall\\fi}\n\
          \\def\\measure{\\begingroup\\count255=0 \\setall\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen255=\\wd0 \\endgroup}\n\
          \\measure\\measure\\measure\n\
-         \\def\\nest{\\begingroup\\count255=0 \\setall\\count255=0 \\ifnum\\currentgrouplevel<195 \\expandafter\\nest\\fi}\n\
+         \\def\\nest{\\begingroup\\count255=0 \\setall\\count255=0 \\zeroall\\count255=0 \\ifnum\\currentgrouplevel<195 \\expandafter\\nest\\fi}\n\
          \\nest\\measure\\message{[survived \\the\\currentgrouplevel]}\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
