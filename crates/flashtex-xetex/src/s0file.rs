@@ -60,7 +60,7 @@ use std::sync::Arc;
 
 // (v2: the key's stat signatures hold the change time, `StatSig::ctime_ns`;
 // v3: the pages a base holds are references to it)
-const MAGIC: &[u8] = b"flashtex xetex S0 v3";
+const MAGIC: &[u8] = b"flashtex xetex S0 v4";
 
 /// A base file (see the module documentation).
 const BASE_MAGIC: &[u8] = b"flashtex xetex S0 base v1";

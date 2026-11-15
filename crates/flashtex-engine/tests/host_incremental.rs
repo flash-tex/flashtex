@@ -4771,7 +4771,7 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
                 // the key's build, after the header length, the magic and
                 // the S₀ tag (`host::s1::Head`)
                 let mut d = std::fs::read(&s1_file).unwrap();
-                let at = 8 + 8 + b"flashtex S1 v1".len() + 16;
+                let at = 8 + 8 + b"flashtex S1 v2".len() + 16;
                 d[at] ^= 1;
                 std::fs::write(&s1_file, d).unwrap();
             }

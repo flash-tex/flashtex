@@ -1027,6 +1027,11 @@ kpathsea_init_db (kpathsea kpse)
 #endif
 
   while (db_files && *db_files) {
+    /* FlashTeX change (2026-11-08): the databases read, as the
+       configuration files are (cnf.c), for a key that must see them
+       change (the host's stored S0, crates/flashtex-engine/src/host).  */
+    if (kpse->record_input)
+      kpse->record_input (*db_files);
 #ifdef PACKED_DB
     if (packed_build (kpse, *db_files))
 #else
@@ -1058,6 +1063,8 @@ kpathsea_init_db (kpathsea kpse)
   kpse->alias_db = hash_create (ALIAS_HASH_SIZE);
 
   while (db_files && *db_files) {
+    if (kpse->record_input) /* FlashTeX change (2026-11-08): as above.  */
+      kpse->record_input (*db_files);
     if (alias_build (kpse, &(kpse->alias_db), *db_files))
       ok = true;
     free (*db_files);
