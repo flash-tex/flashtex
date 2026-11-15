@@ -100,7 +100,7 @@ use crate::generated::consts::{
     font_id_base, frozen_control_sequence, global_defs_code, glue_base, glue_ref, hash_base,
     if_case_code, if_cat_code, if_char_code, if_cs_code, if_def_code, if_false_code, if_int_code,
     if_odd_code, if_test, if_true_code, ifx_code, ignore_spaces, int_base, last_item, left_brace,
-    let_, lo_mem_stat_max, local_base, long_outer_call, mac_param, matching, math_given,
+    let_, level_one, lo_mem_stat_max, local_base, long_outer_call, mac_param, matching, math_given,
     max_non_prefixed_command, meaning_code, mem_bot, mmode, multiply, no_expand, null_cs,
     number_code, outer_call, pdf_strcmp_code, prefix, protected_token, register, relax,
     right_brace, roman_numeral_code, semi_simple_group, set_font, shape_ref, shorthand_def,
@@ -300,6 +300,14 @@ struct Ctx {
     align: Option<i32>,
     par_token: i32,
     scanner: i32,
+    /// The call starts at level one (`cur_level=level_one`). Whether a
+    /// local definition frees the value it replaces or saves it depends on
+    /// `eq_level`: after the run's own `\gdef` (level one), its next
+    /// `\def` at the call's own level frees the run's own list at level
+    /// one and saves it deeper, so the cells the run holds at once (the
+    /// one-word room, `Needs::one`) depend on this, and on nothing else of
+    /// the level (the run's own local levels are relative to its start).
+    level_one: bool,
 }
 
 impl Ctx {
@@ -308,6 +316,7 @@ impl Ctx {
         self.mode == now.mode
             && self.par_token == now.par_token
             && self.scanner == now.scanner
+            && self.level_one == now.level_one
             && self.align.is_none_or(|a| now.align == Some(a))
     }
 }
@@ -705,6 +714,7 @@ impl Globals {
             align: Some(self.align_state),
             par_token: self.par_token,
             scanner: self.scanner_status,
+            level_one: self.cur_level == level_one,
         }
     }
 
