@@ -1786,4 +1786,25 @@ mod tests {
         assert_eq!(g.arena.checkpoint_ids(), &[inner][..]);
         assert_eq!(n, 0);
     }
+
+    /// `nest` from `nest_ptr` on is dead (the top of the stack is
+    /// `cur_list`; `push_nest`, `alter_prev_graf` and reading `\prevgraf`
+    /// leave a copy at `nest[nest_ptr]`): a write there is not a
+    /// difference, a write below it is. (#2176's
+    /// `the_dead_top_of_the_nest_is_not_compared`, here as a unit test: a
+    /// call that reads `\prevgraf` is never admitted, `abandoned.Internal`.)
+    #[test]
+    fn the_dead_top_of_the_nest_is_not_compared() {
+        let mut g = Globals::new();
+        g.set_intrinsics(Mode::Verify);
+        g.nest_ptr = 1;
+        let p = g.intr_verify_begin(&[], vec![]);
+        g.nest[1].pg_field += 5;
+        assert!(g.intr_verify_end(p).is_ok());
+        assert_eq!(g.host.intrinsics.stats.identical, 1);
+        let p = g.intr_verify_begin(&[], vec![]);
+        g.nest[0].pg_field += 5;
+        let (classes, details) = g.intr_verify_end(p).expect_err("nest[0] is live");
+        assert_eq!(classes, ["nest"], "{details:?}");
+    }
 }
