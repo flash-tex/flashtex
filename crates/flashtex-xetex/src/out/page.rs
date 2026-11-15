@@ -415,10 +415,14 @@ impl<'a, M: Metrics> Builder<'a, M> {
         page.dl.height = clamp_i32(h.to_sp());
         b.streams.push(page);
         // The colour in effect (dvipdfmx's colour stack lasts across pages).
-        if let Some((f, s)) = b.doc.colors.last().cloned() {
+        if let Some((f, s)) = b.doc.color_current() {
             b.set_colors(Some(f), Some(s));
         }
         b.run(bytes)?;
+        // pdf_doc_end_page: the background in effect, under the page
+        if let Some(c) = b.doc.bgcolor.clone() {
+            b.fill_background(c);
+        }
         // An annotation still open at the end of the page breaks here and
         // continues on the next page.
         b.break_annot();
@@ -1084,6 +1088,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         } else {
             self.doc.tracking.as_ref().and_then(|t| t.goto.clone())
         };
+        // pdf_doc_break_annot: grown by `dvipdfmx:config g`
+        let (gx, gy) = self.doc.annot_grow;
+        let r = [r[0] - gx, r[1] - gy, r[2] + gx, r[3] + gy];
         self.add_annot(dict, r, name, goto);
     }
 
@@ -1203,9 +1210,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
     pub fn reset_color(&mut self) {
         let (f, s) = self
             .doc
-            .colors
-            .last()
-            .cloned()
+            .color_current()
             .unwrap_or((Col::black(), Col::black()));
         self.set_colors(Some(f), Some(s));
     }
@@ -1223,7 +1228,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
         f.dl.height = clamp_i32((bbox[3] - bbox[1]).to_sp());
         f.form_name = Some(name);
         f.form_origin = (ux, uy);
-        if let Some((fc, sc)) = self.doc.colors.last().cloned() {
+        if let Some((fc, sc)) = self.doc.color_current() {
             f.gs.fill = fc;
             f.gs.stroke = sc;
         }
@@ -1386,7 +1391,14 @@ fn strtol0(w: &[u8]) -> Option<i64> {
 /// page (dvipdfmx scans a page's specials for it before the page), else
 /// the size an earlier page set, else the default paper.
 fn page_size(doc: &mut Doc, bytes: &[u8]) -> (Fx, Fx) {
+    let first = !doc.config_read;
+    doc.config_read = true;
     for s in super::special::scan_specials(bytes) {
+        if first {
+            if let Some(g) = super::special::config_grow(&s) {
+                doc.annot_grow = g;
+            }
+        }
         if let Some(sz) = super::special::paper_of(&s) {
             match sz {
                 Some(sz) => doc.paper = Some(sz),
