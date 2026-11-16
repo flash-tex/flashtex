@@ -688,6 +688,27 @@ fn the_space_factor_at_a_draw_call_is_part_of_the_key() {
 }
 
 #[test]
+fn a_call_that_selects_a_loaded_font_leaves_no_file_name_to_compare() {
+    // (lane AUDIT-MATH) `cur_name` is scratch between commands: `\font` of
+    // a font loaded before sets it to that font's name, and a replay after
+    // an `\openin` of another name leaves that name. The full verifier
+    // reported "cur_name: 0x82c -> 0x82f" for such a replay
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "file-scratch",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\a=cmr10\n\
+         \\def\\measure{\\font\\x=cmr10 \\x}\n\
+         \\measure \\openin1=nofile \\closein1 \\measure \\openin1=otherfile \\closein1 \\measure\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
+#[test]
 fn hyphenation_exceptions_are_part_of_the_key() {
     // K5's `bm_hyph_version` (BOX-MEMO.md §3): a `\hyphenation` between
     // two calls that break the same paragraph gives the second call other
