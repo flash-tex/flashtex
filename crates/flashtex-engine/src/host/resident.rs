@@ -2259,25 +2259,33 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         }
         Ok(f)
     };
-    // The bytes of `f` (the file at `path`) now: the host's copy while the
-    // file is as it left it, else read. (The copy may be shared with
-    // `Doc::texts`.)
+    // The bytes of `f` (the file at `path`) now, with its signature taken
+    // before they were read or compared: the host's copy while the file is
+    // as it left it, else read. (The copy may be shared with `Doc::texts`.)
     let current = |f: &mut std::fs::File,
                    path: &Path,
                    written: &mut Written|
-     -> std::io::Result<Arc<Vec<u8>>> {
+     -> std::io::Result<(Arc<Vec<u8>>, Option<StatSig>)> {
+        let now = sig(f);
         if let Some((s, d)) = written.remove(path) {
-            // (the host's own last write, still in place: exact fields,
-            // racy or not -- the file is the host's copy of the editor's
-            // text, which nothing else writes, and a racy test here would
-            // read the typed file back at every keystroke)
-            if sig(f).is_some_and(|n| n.same_fields(&s)) {
-                return Ok(d);
+            // The host's own last write, still in place: the same fields.
+            // A signature taken within its file's time tick (`racy`: the
+            // host's own always is, taken just after its write) does not
+            // show a write in that tick to the same length, by another
+            // program or between the host's write and its signature
+            // (#1559), so then the bytes are compared too; a signature
+            // taken after the tick (the one returned, once the typing
+            // pauses) is enough from then on. (A file opened write-only
+            // cannot be compared: its fields are all there is, as before.)
+            if let Some(n) = now.filter(|n| n.same_fields(&s)) {
+                if !s.racy || same_content(f, &d).unwrap_or(true) {
+                    return Ok((d, Some(n)));
+                }
             }
         }
         let mut data = Vec::new();
         f.read_to_end(&mut data)?;
-        Ok(Arc::new(data))
+        Ok((Arc::new(data), now))
     };
     // Write `data` to `f` (the file at `path`), whose bytes before `from`
     // are already these and whose length is `old` (when known). The length
@@ -2351,11 +2359,10 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let path = target(p)?;
         let mut f = open(Path::new(p), true).map_err(|e| format!("{}: {e}", path.display()))?;
         match current(&mut f, &path, written) {
-            Ok(d) if d.as_slice() == text.as_bytes() => {
-                if let Some(s) = sig(&f) {
-                    written.insert(path, (s, d));
-                }
+            Ok((d, Some(s))) if d.as_slice() == text.as_bytes() => {
+                written.insert(path, (s, d));
             }
+            Ok((d, None)) if d.as_slice() == text.as_bytes() => {}
             _ => write_from(f, &path, text.as_bytes().to_vec(), 0, None, written)?,
         }
     }
@@ -2363,7 +2370,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let p = e.str_field("path").ok_or("an edit needs path")?;
         let path = target(p)?;
         let mut f = open(Path::new(p), false).map_err(|x| format!("{p}: {x}"))?;
-        let d = current(&mut f, &path, written).map_err(|x| format!("{p}: {x}"))?;
+        let (d, now) = current(&mut f, &path, written).map_err(|x| format!("{p}: {x}"))?;
         let at = e.int_field("offset").ok_or("an edit needs offset")?;
         let del = e.int_field("delete").unwrap_or(0);
         let ins = e.str_field("insert").unwrap_or("");
@@ -2374,7 +2381,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let old = d.len();
         if d[at..at + del] == *ins.as_bytes() {
             // nothing changes (the file is left alone, as before)
-            if let Some(s) = sig(&f) {
+            if let Some(s) = now {
                 written.insert(path, (s, d));
             }
             continue;
@@ -2420,6 +2427,31 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         });
     }
     Ok(())
+}
+
+/// Whether the file `f` holds exactly `d` (`apply_changes`' check of its
+/// copy under a racy signature, #1559): read in pieces from its start
+/// (`pread`: the descriptor's position stays where it is) and compared,
+/// with nothing kept. `None` where it cannot be read (opened write-only).
+#[cfg(unix)]
+fn same_content(f: &std::fs::File, d: &[u8]) -> Option<bool> {
+    use std::os::unix::fs::FileExt;
+    let mut buf = vec![0u8; 64 << 10];
+    let mut at = 0;
+    loop {
+        let n = match f.read_at(&mut buf, at as u64) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        };
+        if n == 0 {
+            return Some(at == d.len());
+        }
+        if d.get(at..at + n) != Some(&buf[..n]) {
+            return Some(false);
+        }
+        at += n;
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -2844,6 +2876,63 @@ mod tests {
             !under_root(&file, &root, None),
             "without the canonical root, as before"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #1559: another program's write within the file's time tick, to the
+    /// same length, after the host's (or between the host's write and its
+    /// signature) leaves the stat fields the host's copy was signed with.
+    /// The next edit applies to the file as it is, not to the stale copy;
+    /// and once the tick has passed, the copy is signed again without the
+    /// bytes being compared at every edit.
+    #[test]
+    fn an_edit_applies_to_another_program_s_write_within_the_tick() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        let dir = std::env::temp_dir().join(format!("ftx-apply-racy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("m.tex");
+        let edit = |at: i64, ins: &str| {
+            obj([(
+                "edits",
+                Json::Arr(vec![obj([
+                    ("path", js("m.tex")),
+                    ("offset", Json::Int(at)),
+                    ("delete", Json::Int(0)),
+                    ("insert", js(ins)),
+                ])]),
+            )])
+        };
+        std::fs::write(&path, "one two three\n").unwrap();
+        let mut written = super::Written::new();
+        super::apply_changes(&dir, &edit(3, "!"), &mut written).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"one! two three\n");
+        // Another program writes the same length; the signature the host
+        // took is put back over the file's (what a write within the tick
+        // leaves: the same fields, and racy).
+        std::fs::write(&path, "ONE! TWO THREE\n").unwrap();
+        let s = crate::system::StatSig::of(&path.to_string_lossy()).unwrap();
+        assert!(s.racy, "just written");
+        let (_, copy) = written.remove(&path).unwrap();
+        written.insert(path.clone(), (s, copy));
+        super::apply_changes(&dir, &edit(0, "<"), &mut written).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"<ONE! TWO THREE\n",
+            "the edit applied to the host's stale copy"
+        );
+        let (_, held) = written.get(&path).unwrap();
+        assert_eq!(held.as_slice(), b"<ONE! TWO THREE\n");
+        // Under a signature taken after the tick the bytes are not compared
+        // (the cost of an edit): a copy put in its place is used as it is,
+        // and only the edit's bytes are written.
+        let (mut s, copy) = written.remove(&path).unwrap();
+        s.racy = false;
+        let stale = b"<one! two three\n".to_vec();
+        assert_eq!(stale.len(), copy.len());
+        written.insert(path.clone(), (s, std::sync::Arc::new(stale)));
+        super::apply_changes(&dir, &edit(16, ">"), &mut written).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"<ONE! TWO THREE\n>");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
