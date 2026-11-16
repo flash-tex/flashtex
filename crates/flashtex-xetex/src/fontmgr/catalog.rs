@@ -109,7 +109,9 @@ pub fn read_names(records: &[NameRecord], ps_name: Option<String>) -> NameCollec
 /// decode. Membership is what the search compares; the order is
 /// fontconfig's (`FcFreeTypeQueryFaceInternal`: platforms Microsoft,
 /// Unicode, Macintosh; name ids 21, 16, 1 for families, 18, 4 for full
-/// names, 22, 17, 2 for styles; then encoding, language and table order),
+/// names, 22, 17, 2 for styles; English first (measured: `FreeSansOblique.otf`'s
+/// styles start `Oblique`, its 0x409 record, before 0x402's); then
+/// encoding, language and table order),
 /// which decides the spelling fontconfig keeps of two names equal but for
 /// case and blanks, and so [`super::fclist`]'s hash.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -132,11 +134,17 @@ pub fn pattern_names(records: &[NameRecord]) -> PatternNames {
         16 | 4 | 17 => 1,
         _ => 2,
     };
+    let is_english = |r: &NameRecord| match r.platform {
+        3 => r.language == 0x409,
+        1 => r.language == 0,
+        _ => false,
+    };
     let mut sorted: Vec<(usize, &NameRecord)> = records.iter().enumerate().collect();
     sorted.sort_by_key(|(k, r)| {
         (
             platform_rank(r.platform),
             id_rank(r.name_id),
+            !is_english(r),
             r.encoding,
             r.language,
             *k,

@@ -140,9 +140,11 @@ fn width_from_class(class: u16) -> Option<f64> {
     })
 }
 
-/// fontconfig's names with its de-duplication (`FcStringInPatternElement`:
-/// a name equal to an earlier one ignoring case and blanks is not added
-/// again).
+/// fontconfig's names: surrounding spaces trimmed, an empty name left out
+/// (measured: `LinLibertine_MBO.otf`'s family `Linux Libertine Mono O `
+/// is `fc-query`'s `Linux Libertine Mono O`), and a name equal to an
+/// earlier one ignoring case and blanks not added again
+/// (`FcStringInPatternElement`).
 fn dedup(names: &[String]) -> Vec<String> {
     let key = |s: &str| -> String {
         let mut k = String::new();
@@ -154,8 +156,9 @@ fn dedup(names: &[String]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     names
         .iter()
-        .filter(|s| seen.insert(key(s)))
-        .cloned()
+        .map(|s| s.trim_matches(' '))
+        .filter(|s| !s.is_empty() && seen.insert(key(s)))
+        .map(str::to_string)
         .collect()
 }
 
