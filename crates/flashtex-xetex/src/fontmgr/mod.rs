@@ -86,6 +86,7 @@
 //! yet; the native-fonts work wires it in.
 
 pub mod catalog;
+pub mod fclist;
 pub mod mgr;
 pub mod sfnt;
 

@@ -27,8 +27,9 @@
 use super::{CatalogFace, FontCatalog, NameCollection, PatternNames};
 use std::path::{Path, PathBuf};
 
-/// The file's first line; another version is ignored.
-const VERSION: &str = "flashtex-xetex font catalog 1";
+/// The file's first line; another version is ignored (2: a Linux catalog
+/// is kept in `FcFontList`'s order, #2545).
+const VERSION: &str = "flashtex-xetex font catalog 2";
 
 /// How close to the scan's start a recorded time may be.
 const RACY_NS: i128 = 2_000_000_000;
