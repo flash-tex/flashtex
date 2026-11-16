@@ -678,6 +678,14 @@ the board's own oracle is another one (the PC's is `909745461c89`, LaTeX
 1 accepts this for frozen v1, whose rates are far below the new engine's. It
 never changes a verdict at v1's 0/440 P-T2, but the board states it.
 
+**An oracle PDF that cannot be read.** When qpdf (or the parser) fails on the
+oracle's own PDF, P-T2 was not measured: the document is a **harness error**
+(`PT2OracleUnreadable`), unmeasured, and its tier reads partial. It is not the
+engine failing P-T2. It used to be counted as that: on the hosted board of
+2026-11-13 to 11-15 qpdf was refused every oracle PDF, 4110 documents "failed",
+the arXiv and T4 rows read "below bar", and the three tiers without a bar read
+"equal" to v1's 0 %. A PDF of the candidate's that cannot be read still fails.
+
 **P-T2's size cap.** The comparison reads a qdf copy of each PDF, in which
 every stream is decoded. T4's 2511.15561v1, a 12.7 MB PDF with large images,
 expanded to 3.0 GB, and loading it OOM-killed an 8 GB scope. Over

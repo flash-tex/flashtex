@@ -59,6 +59,20 @@ PT2_MAX_QDF_BYTES = int(float(os.environ.get("FLASHTEX_PT2_MAX_QDF_MB", "1024"))
 class PT2TooLarge(Exception):
     """A PDF whose P-T2 normalisation is over PT2_MAX_QDF_BYTES. Not a PdfError: compare_pt2
     lets it through, and parity.score_safe records the document as a harness error."""
+
+
+class PT2OracleUnreadable(Exception):
+    """The oracle's own PDF could not be normalised (qpdf) or read (pdftext): P-T2 was not
+    measured. Not a PdfError: compare_pt2 lets it through, and parity.score_safe records the
+    document as a harness error (unmeasured; its tier reads partial), never as the engine
+    failing P-T2. It used to read as that. On the hosted board of 2026-11-13 to 11-15 qpdf was
+    refused every oracle PDF (Ubuntu 26.04's AppArmor profile of qpdf, and a cache under
+    ~/.cache), and all 4110 documents "failed" P-T2 with "oracle PDF: qpdf exit 2: open ...:
+    Permission denied": the arXiv and T4 rows read "below bar", and the fixtures, templates
+    and packages rows, 0 % too, read "equal" to v1's 0 % (p5-scoreboard 43723688890). A PDF
+    of the candidate's that cannot be read is still the candidate failing."""
+
+
 TAG = re.compile(r"^[A-Z]{6}\+")
 SNIP = 200
 # What a run converts with \write18 (epstopdf.sty's `<name>-eps-converted-to.pdf`,
@@ -822,11 +836,12 @@ def signature(pdf, work, name):
 
 
 def compare_pt2(ref_pdf, cand_pdf, work):
-    """P-T2 on two PDFs; every sub-check is reported, `ok` only when all pass."""
+    """P-T2 on two PDFs; every sub-check is reported, `ok` only when all pass. Raises
+    PT2OracleUnreadable (and PT2TooLarge) where it cannot be measured."""
     try:
         rp, rf = signature(ref_pdf, work, "oracle")
     except (pdftext.PdfError, OSError, subprocess.SubprocessError) as e:
-        return {"ok": False, "why": f"oracle PDF: {e}"[:300]}
+        raise PT2OracleUnreadable(f"P-T2 not measured: the oracle's PDF could not be read: {e}"[:300]) from e
     try:
         cp, cf = signature(cand_pdf, work, "candidate")
     except (pdftext.PdfError, OSError, subprocess.SubprocessError) as e:
