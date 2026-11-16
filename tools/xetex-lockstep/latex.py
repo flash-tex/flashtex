@@ -138,18 +138,30 @@ def accept_unreadable_font_paths(a, b):
     two runs of one gave different bytes). Nothing can equal that; where the
     reference's ` -> ` line has no file name in it (empty, `^^` notation, or
     no `.`) and the candidate names an absolute path after the same request,
-    the candidate's line is taken as equal. Returns how many were (shown in
-    the report, not hidden)."""
+    the candidate's line is taken as equal. The bytes may hold the
+    document's `\\newlinechar`, so the reference's garbage may go on for a
+    line or two; such a line (again no file name in it) is dropped from the
+    reference when the lines after it match the candidate's again. Returns
+    how many were taken (shown in the report, not hidden)."""
+    def unreadable(t):
+        return t == "" or "^^" in t or "." not in t
+
     n = 0
-    for i in range(1, min(len(a), len(b))):
-        if a[i - 1] != b[i - 1] or not a[i - 1].startswith('Requested font "'):
-            continue
-        if not (a[i].startswith(" -> ") and b[i].startswith(" -> /")) or a[i] == b[i]:
-            continue
-        ref = a[i][4:]
-        if ref == "" or "^^" in ref or "." not in ref:
+    i = 1
+    while i < min(len(a), len(b)):
+        if (a[i - 1] == b[i - 1] and a[i - 1].startswith('Requested font "')
+                and a[i].startswith(" -> ") and b[i].startswith(" -> /") and a[i] != b[i]
+                and unreadable(a[i][4:])):
             b[i] = a[i]
             n += 1
+            # the garbage's own line breaks
+            k = 0
+            while (k < 3 and len(a) > len(b) and i + 1 < len(a) and i + 1 < len(b)
+                   and a[i + 1] != b[i + 1] and a[i + 1] != "" and unreadable(a[i + 1])
+                   and a[i + 2:i + 5] == b[i + 1:i + 4]):
+                del a[i + 1]
+                k += 1
+        i += 1
     return n
 
 

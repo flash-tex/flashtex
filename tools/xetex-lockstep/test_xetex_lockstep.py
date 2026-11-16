@@ -135,6 +135,18 @@ class UnreadableFontPaths(unittest.TestCase):
             self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1, ref)
             self.assertEqual(a, b)
 
+    def test_garbage_with_a_line_break(self):
+        # focusdemo: ` -> ^^/^^_` then `^^\udcdb^^O3` on a line of its own
+        a = ["x", self.REQ, " -> ^^/^^_", "^^\udcdb^^O3", "", "y", "z"]
+        b = ["x", self.REQ, self.PATH, "", "y", "z"]
+        self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1)
+        self.assertEqual(a, b)
+        # a real line after it is kept
+        a = ["x", self.REQ, " -> ^^/^^_", "\\foo.bar", "", "y", "z"]
+        b = ["x", self.REQ, self.PATH, "", "y", "z"]
+        self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1)
+        self.assertNotEqual(a, b)
+
     def test_real_differences_kept(self):
         cases = [
             # a file name on both sides
