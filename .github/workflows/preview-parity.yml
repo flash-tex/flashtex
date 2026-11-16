@@ -85,7 +85,12 @@ env:
 jobs:
   inputs:
     name: sweep inputs (display lists, PDFs; positions, P-T2)
-    runs-on: ubuntu-latest
+    # ubuntu-24.04, not ubuntu-latest: on the ubuntu-26.04 image (20261111)
+    # qpdf may not write under /Users/runner/work/_temp/dl3 (the path both
+    # runners share, above): "qpdf: open …/oracle.qdf.pdf: Permission
+    # denied" for every fixture (run 43747539888, job 132914053988). The last
+    # green inputs job (130170272972) ran on 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       # As ci.yml's engine-parity-hosted: texlive/texlive:latest-medium as of
