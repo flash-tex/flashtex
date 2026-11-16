@@ -270,11 +270,14 @@ class PostambleFonts(unittest.TestCase):
 class LatexCases(unittest.TestCase):
 
     def test_doc_arg(self):
-        self.assertEqual(latex.doc_arg("m", {}, False), "m.tex")
-        self.assertEqual(latex.doc_arg("m", {"firstline": "\\A"}, False), "\\A\\input{m.tex}")
-        self.assertEqual(latex.doc_arg("m", {}, True), latex.TRACE_PREFIX["full"] + "\\input{m}")
+        # every run starts with the pinned seed (DESIGN.md §4.5)
+        seed = "\\setrandomseed 1\\relax"
+        self.assertEqual(latex.SEED, seed)
+        self.assertEqual(latex.doc_arg("m", {}, False), seed + "\\input{m.tex}")
+        self.assertEqual(latex.doc_arg("m", {"firstline": "\\A"}, False), seed + "\\A\\input{m.tex}")
+        self.assertEqual(latex.doc_arg("m", {}, True), seed + latex.TRACE_PREFIX["full"] + "\\input{m}")
         self.assertEqual(latex.doc_arg("m", {"firstline": "\\A", "trace": "boxes"}, True),
-                         latex.TRACE_PREFIX["boxes"] + "\\A\\input{m}")
+                         seed + latex.TRACE_PREFIX["boxes"] + "\\A\\input{m}")
 
     def test_find_cases(self):
         with tempfile.TemporaryDirectory() as d:

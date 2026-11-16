@@ -91,15 +91,24 @@ def stage(src, name, d):
         shutil.copy(src, os.path.join(d, name + ".tex"))
 
 
+# DESIGN.md §4.5 pins the random seed, as tools/parity/capture.py's SEED does
+# for pdfTeX: XeTeX also seeds \\uniformdeviate (l3kernel's \\int_rand,
+# tagpdf's namespace id, pgf's random numbers) from the clock, under
+# SOURCE_DATE_EPOCH too, so such a document differed from itself between runs
+# (TeX Live's tagpdf examples, ltxtalk, xltabular and JeuxCartes documentation
+# in lane PARITY-HUNT's session F). Every run of both engines starts its first
+# line with this; XeTeX's name for pdfTeX's \\pdfsetrandomseed is \\setrandomseed.
+SEED = "\\setrandomseed 1\\relax"
+
+
 def doc_arg(name, meta, traced):
-    """The last argument of a run: the main file, after the case's first-line
-    code (the host's `preamble\\input{main.tex}`), traced or not."""
+    """The last argument of a run: the main file, after the random seed and
+    the case's first-line code (the host's `preamble\\input{main.tex}`),
+    traced or not."""
     first = meta.get("firstline", "")
     if traced:
-        return TRACE_PREFIX[meta.get("trace", "full")] + first + "\\input{%s}" % name
-    if first:
-        return first + "\\input{%s.tex}" % name
-    return name + ".tex"
+        return SEED + TRACE_PREFIX[meta.get("trace", "full")] + first + "\\input{%s}" % name
+    return SEED + first + "\\input{%s.tex}" % name
 
 
 def env_for(fmt_dir):
