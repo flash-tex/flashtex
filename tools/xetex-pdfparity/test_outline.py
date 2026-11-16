@@ -32,6 +32,23 @@ class OutlineTest(unittest.TestCase):
         self.assertFalse(same_outline(a, outline([(0, 0), (12 + 2 * OUTLINE_TOL, 7), (20, 0)])))
         self.assertFalse(same_outline(a, outline([(0, 0), (12, 7), (20, 0), (5, 5)])))
 
+    def test_empty_contour_is_no_outline(self):
+        # rsfs10's S (#2481): a last `rmoveto` before `endchar` is an empty
+        # contour, which fontTools ends with endPath in a Type 1 program
+        # and closePath in the Type 2 conversion
+        def drawn(end):
+            def draw(pen):
+                pen.moveTo((0, 0))
+                pen.lineTo((10, 0))
+                pen.lineTo((0, 10))
+                pen.closePath()
+                pen.moveTo((-300, -43))
+                getattr(pen, end)()
+            return _outline_digest(draw)
+        a, b = drawn("endPath"), drawn("closePath")
+        self.assertEqual(a, b)
+        self.assertEqual(a, outline([(0, 0), (10, 0), (0, 10)]))
+
     def test_equal_digests(self):
         a = outline([(0, 0), (1, 1)])
         self.assertTrue(same_outline(a, outline([(0, 0), (1, 1)])))
