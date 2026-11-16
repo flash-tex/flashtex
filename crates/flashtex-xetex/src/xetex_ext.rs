@@ -663,6 +663,7 @@ impl Globals {
         let Some(path) = self.find_input_file(s) else {
             return;
         };
+        flashtex_engine::system::recorder_record_input(&path);
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
@@ -688,6 +689,7 @@ impl Globals {
         let Some(path) = self.find_input_file(s) else {
             return;
         };
+        flashtex_engine::system::recorder_record_input(&path);
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
@@ -717,6 +719,8 @@ impl Globals {
         let Ok(data) = std::fs::read(&path) else {
             return;
         };
+        // (texmfmp.c: once the file is open)
+        flashtex_engine::system::recorder_record_input(&path);
         // the read journal: all of the file, read at once
         flashtex_engine::system::note_whole_read(&path);
         if offset < 0 {
@@ -740,6 +744,8 @@ impl Globals {
             let Ok(data) = std::fs::read(&path) else {
                 return;
             };
+            // (texmfmp.c: once the file is open)
+            flashtex_engine::system::recorder_record_input(&path);
             flashtex_engine::system::note_whole_read(&path);
             flashtex_engine::pdftex::md5::digest(&data)
         } else {
