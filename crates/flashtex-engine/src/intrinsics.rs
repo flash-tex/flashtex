@@ -206,10 +206,12 @@ const S_REC_INPUT: usize = 25;
 const S_REC_PARAM: usize = 26;
 const S_REC_SAVE: usize = 27;
 const S_REC_PEAK_LEVEL: usize = 28;
+// (`dyn_used` at the call: the main memory it takes, #2309)
+const S_REC_DYN: usize = 29;
 /// For the convergence test (`crate::incr`): the slot being recorded,
 /// and the scratch a recording sets at its start.
 pub(crate) const REC_SLOT: usize = S_REC_SLOT;
-pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_PEAK_LEVEL);
+pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_DYN);
 const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
@@ -288,6 +290,8 @@ const F_PEAK_PARAM: usize = 26;
 const F_PEAK_BUF: usize = 27;
 const F_PEAK_SAVE: usize = 28;
 const F_PEAK_NEST: usize = 29;
+// The main memory the call takes (#2309, `crate::capacity::Need::mem`).
+const F_NEED_MEM: usize = 30;
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -1174,7 +1178,8 @@ impl Globals {
         self.rec_marks_lower();
         // (the markers `cap_need` reads at the end; their places follow from
         // the pointers just kept)
-        self.cap_probe();
+        let probe = self.cap_probe();
+        self.set_st(S_REC_DYN, probe.dyn0());
         self.set_st(S_REC_VERIFY, verify as i32);
         self.set_st(S_REC_CATCODES, 0);
         let len = self.log_len();
@@ -1551,6 +1556,7 @@ impl Globals {
             self.st(S_REC_FIRST),
             self.st(S_REC_POOL_PTR),
             self.st(S_REC_STR_PTR),
+            self.st(S_REC_DYN),
         );
         let Some(need) = self.cap_need(&probe) else {
             return self.rec_abort(Why::Room);
@@ -1643,6 +1649,7 @@ impl Globals {
         self.set_sf(slot, F_NEED_BUF, need.buf);
         self.set_sf(slot, F_NEED_POOL, need.pool);
         self.set_sf(slot, F_NEED_STR, need.strings);
+        self.set_sf(slot, F_NEED_MEM, need.mem);
         self.set_sf(slot, F_ROOM_LEVEL, self.st(S_REC_PEAK_LEVEL));
         let ops = self.sf(slot, F_NOPS);
         self.set_sf(
@@ -1806,6 +1813,7 @@ impl Globals {
                 buf: self.sf(slot, F_NEED_BUF),
                 pool: self.sf(slot, F_NEED_POOL),
                 strings: self.sf(slot, F_NEED_STR),
+                mem: self.sf(slot, F_NEED_MEM),
             })
     }
 
@@ -1815,6 +1823,10 @@ impl Globals {
         // (inside a BOX-MEMO recording neither replay nor record: its
         // recorder must see every read, docs/design/engine-v2/BOX-MEMO.md §1)
         if self.intr_rec_on || self.bm_rec_on {
+            return false;
+        }
+        // (a run made again after `main memory size`: `crate::capacity`)
+        if crate::capacity::replays_off() {
             return false;
         }
         let cs = self.cur_cs;
@@ -1868,6 +1880,7 @@ impl Globals {
                         crate::intrinsics_verify::begin(self, s);
                         return false;
                     }
+                    crate::capacity::note_replay();
                     self.replay(s);
                     return true;
                 }

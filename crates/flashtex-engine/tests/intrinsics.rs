@@ -22,9 +22,18 @@ fn scratch(tag: &str) -> PathBuf {
     d
 }
 
+thread_local! {
+    /// More of the environment for this test's engines (each test runs on a
+    /// thread of its own).
+    static ENV: std::cell::RefCell<Vec<(&'static str, &'static str)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 struct Run {
     log: String,
     stats: String,
+    /// Standard error.
+    err: String,
 }
 
 /// Run `\input t` in INITEX with the intrinsics in `mode`.
@@ -57,6 +66,7 @@ fn run_line(dir: &Path, mode: &str, names: &str, etex: bool, line: &str) -> Run 
         .env("FLASHTEX_INTRINSICS", mode)
         .env("FLASHTEX_INTRINSIC_NAMES", names)
         .env("FLASHTEX_INTRINSICS_STATS", &stats)
+        .envs(ENV.with(|e| e.borrow().clone()))
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
@@ -69,6 +79,7 @@ fn run_line(dir: &Path, mode: &str, names: &str, etex: bool, line: &str) -> Run 
     Run {
         log: std::fs::read_to_string(dir.join("t.log")).unwrap(),
         stats: std::fs::read_to_string(&stats).unwrap_or_default(),
+        err: String::from_utf8_lossy(&out.stderr).into_owned(),
     }
 }
 
@@ -474,6 +485,62 @@ fn a_replay_raises_the_stack_statistics_as_its_normal_path() {
     assert_eq!(off.log, on.log, "level 0: log with intrinsics on differs");
     assert_eq!(off.log, verify.log, "level 0: log in verification mode");
     assert!(stat(&on.stats, "replays") >= 2, "{}", on.stats);
+}
+
+#[test]
+fn a_replay_keeps_main_memorys_overflow() {
+    // (#2309) a replay scans none of the call's tokens: a call whose
+    // `\pdfstrcmp` argument is 30,000 tokens long (`\romannumeral`'s `m`s,
+    // in a list and in the list `\pdfstrcmp` scans them into), recorded
+    // with room to spare, was replayed where about 18,000 words are left
+    // and its normal path stops with `main memory size`
+    // (the offer's own test, without the rule that would then start the run
+    // over because calls were replayed before: `src/capacity.rs`)
+    ENV.with(|e| e.borrow_mut().push(("FLASHTEX_MEM_RERUN", "0")));
+    let src = common::memory_case(
+        "hook",
+        "\\def\\hook{\\begingroup\\global\\count2=1 \\ifnum\\pdfstrcmp{\\romannumeral30000000}{}=0 \\fi\\endgroup}",
+        "",
+        497,
+    );
+    let d = scratch("capacity-mem");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "hook");
+    assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
+    let s = check("capacity-mem", &src);
+    assert!(stat(&s, "replays") >= 2, "{s}");
+}
+
+#[test]
+fn a_run_that_replayed_and_runs_out_of_main_memory_is_made_again() {
+    // (#2309, the ruling's second half) `\keep`'s 60,000 tokens take up
+    // the one-word nodes the first calls freed (a `\def`, whose body is
+    // stored as it is read, with no list beside it), so the fourth call's
+    // normal path lowers `hi_mem_min` by 60,000 words for its own and a
+    // replay does not. Those words are free again after the call, but only
+    // for one-word nodes: the boxes that follow, six copies of a box of
+    // 1,000 kerns each (24,000 words of variable-size memory), ran out of
+    // memory later with the intrinsics on. The engine now starts over
+    // without replays
+    let src = common::memory_drift_case(
+        "hook",
+        "\\def\\kloop{\\ifnum\\count3<1000 \\advance\\count3 1 \\kern0.1pt \\expandafter\\kloop\\fi}\n\
+         \\setbox0\\hbox{\\count3=0 \\kloop}\n\
+         \\def\\hook{\\begingroup\\global\\count2=1 \\ifnum\\pdfstrcmp{\\romannumeral30000000}{}=0 \\fi\\endgroup}",
+        &format!("\\def\\keep{{{}}}", "k".repeat(60_000)),
+        "\\global\\setbox\\count1=\\hbox{\\copy0\\copy0\\copy0\\copy0\\copy0\\copy0}",
+    );
+    let d = scratch("memory-drift");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let off = run(&d, "off", "hook");
+    assert!(off.log.contains(common::MEMORY_FULL), "{}", off.log);
+    assert!(!off.err.contains(common::MEMORY_AGAIN), "{}", off.err);
+    let on = run(&d, "on", "hook");
+    assert_eq!(off.log, on.log, "log with intrinsics on differs");
+    assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
+    // the second piece fired (the replaying run overflowed), not the third
+    assert!(on.err.contains(common::MEMORY_RAN_OUT), "{}", on.err);
+    assert!(!on.err.contains(common::MEMORY_NEARLY), "{}", on.err);
 }
 
 /// `\globaldefs<0` turns every global assignment local (tex.web §1214): a

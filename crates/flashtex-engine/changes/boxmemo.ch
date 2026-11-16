@@ -39,7 +39,65 @@
 %   font's parameters or the hyphenation exceptions change, so that a key
 %   naming a version names one state of those arrays.
 %
+% * |cap_dyn_peak|, |cap_var|, |cap_var_max|: how much main memory the
+%   code since a recording's start took (src/capacity.rs, #2309): the
+%   largest |dyn_used|, the words |get_node| gave out and the largest node
+%   it gave. A recording's start sets them and its end reads them; a
+%   replay runs none of the call's allocations, so an offer needs that
+%   much room between |lo_mem_max| and |hi_mem_min|. They are kept
+%   whether a recording is in progress or not (a test of a flag would
+%   cost what the update does), and nothing else reads them.
+% * |flashtex_cap_mem_full| before each |overflow("main memory size",...)|:
+%   where that overflow fires depends on whether calls were replayed, so
+%   a run that replayed is made again without replays (src/capacity.rs).
+%
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
+
+@x pdftex.web l.3126 - get_avail: a run that replayed and runs out of main memory is made again
+    begin runaway; {if memory is exhausted, display possible runaway text}
+    overflow("main memory size",mem_max+1-mem_min);
+@y
+    begin flashtex_cap_mem_full;
+    runaway; {if memory is exhausted, display possible runaway text}
+    overflow("main memory size",mem_max+1-mem_min);
+@z
+
+@x pdftex.web l.3134 (after changes/displaylist.ch) - get_avail: the largest |dyn_used| since a recording's start
+dl_new_node(p);
+get_avail:=p;
+@y
+dl_new_node(p);
+if dyn_used>cap_dyn_peak then cap_dyn_peak:=dyn_used;
+get_avail:=p;
+@z
+
+@x pdftex.web l.3154 (after changes/displaylist.ch) - ... and in fast_get_avail
+    @!stat incr(dyn_used);@+tats@/
+    dl_new_node(#);
+    end;
+@y
+    @!stat incr(dyn_used);@+tats@/
+    if dyn_used>cap_dyn_peak then cap_dyn_peak:=dyn_used;
+    dl_new_node(#);
+    end;
+@z
+
+@x pdftex.web l.3224 - get_node: ... and here
+overflow("main memory size",mem_max+1-mem_min);
+@y
+flashtex_cap_mem_full;
+overflow("main memory size",mem_max+1-mem_min);
+@z
+
+@x pdftex.web l.3227 (after changes/displaylist.ch) - get_node: the words given out since a recording's start
+dl_new_node(r);
+@!stat var_used:=var_used+s; {maintain usage statistics}
+@y
+dl_new_node(r);
+if cap_var<@'10000000000 then cap_var:=cap_var+s; {it stops counting at $2^{30}$}
+if s>cap_var_max then cap_var_max:=s;
+@!stat var_used:=var_used+s; {maintain usage statistics}
+@z
 
 @x pdftex.web l.4513 (after changes/lineshift.ch) - a list freed takes BOX-MEMO's meanings found equal to it
   begin ls_free(p); flush_list(p);
@@ -497,9 +555,13 @@ restore keeps them; the guard checks every value they depend on.
 @!bm_cand:array[0..eqtb_top] of boolean; {a registered macro}
 @!bm_font_version:integer; {names the state of the loaded fonts' parameters}
 @!bm_hyph_version:integer; {names the state of the hyphenation exceptions}
+@!cap_dyn_peak:integer; {the largest |dyn_used| since a recording's start}
+@!cap_var:integer; {the words |get_node| gave out since then, up to $2^{30}$}
+@!cap_var_max:integer; {the largest node it gave}
 
 @ @<Set init...@>=
 bm_rec_on:=false; bm_at_switch:=false; bm_font_version:=0; bm_hyph_version:=0;
+cap_dyn_peak:=0; cap_var:=0; cap_var_max:=0;
 bm_on:=flashtex_bm_enabled;
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
@@ -533,6 +595,7 @@ procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
+procedure flashtex_cap_mem_full; external;
 
 @* \[55] Index.
 @z

@@ -2147,6 +2147,12 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // name are compared themselves. Two runs that both changed a font
         // after the restart point hold different numbers for equal arrays.
         Some("bm_font_version" | "bm_hyph_version") => return true,
+        // changes/boxmemo.ch: the counts of main memory a recording's start
+        // sets and its end reads (src/capacity.rs), kept between recordings
+        // too and read by nothing else. They hold what the code since the
+        // last recording's start allocated, which two runs that recorded at
+        // different places do not share.
+        Some("cap_dyn_peak" | "cap_var" | "cap_var_max") => return true,
         // pdftex.web l. 9384: `macro_call` sets it from the macro's
         // `eq_type` when it starts to scan parameters ("Scan the parameters
         // and make link(r) point to the macro body"), and it is read only
@@ -3987,6 +3993,8 @@ impl Session {
         let t0 = Instant::now();
         let first_line = self.first_line.clone();
         let mut clock = self.clock;
+        // (whether the run that left S₀ or S₁ replayed is not known)
+        crate::capacity::unknown_history();
         let (g, s0, orep) = host::read_s0(path, &mut |key| {
             // The session's clock is the one S₀ was taken with.
             clock = key.clock;
@@ -4187,6 +4195,9 @@ impl Session {
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
+        if let Some(again) = self.mem_rerun(&rep, stop_at) {
+            return again;
+        }
         Ok(rep)
     }
 
@@ -4982,8 +4993,35 @@ impl Session {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
         }
+        if let Some(again) = self.mem_rerun(&rep, stop_at) {
+            return again;
+        }
         rep.cursor = self.cursor;
         Ok(rep)
+    }
+
+    /// After a compile's runs ended (`rep`): a run that replayed calls and
+    /// then stopped with `main memory size` did not stop where pdfTeX
+    /// does, since a replay takes less of main memory than the call
+    /// (`crate::capacity`, #2309); one that ended within an eighth of main
+    /// memory's end may not have stopped where pdfTeX does. The document is
+    /// compiled again from the format with replays off, and that compile is
+    /// the result. Replays come back with the first compile that ends below
+    /// 7/8 of main memory.
+    fn mem_rerun(
+        &mut self,
+        rep: &Report,
+        stop_at: Option<usize>,
+    ) -> Option<Result<Report, String>> {
+        if rep.paused || !crate::capacity::take_rerun() {
+            return None;
+        }
+        let why = crate::capacity::rerun_why();
+        if self.opts.debug {
+            eprintln!("[incr] {why}: again without replays");
+        }
+        self.force_cold = Some(format!("{why}: again without replays (#2309)"));
+        Some(self.compile(stop_at))
     }
 
     /// DESIGN.md §5.5: while the last pass changed a file it read (its
@@ -6936,6 +6974,7 @@ impl Session {
         system::guard_every_output(true);
         system::record_reads_into(Some(ReadLog::keeping_content()));
         system::set_command_line(vec![self.first_line.clone()]);
+        crate::capacity::new_run();
         let mut g = Globals::new();
         crate::boxmemo::record_window(false);
         g.arm_begin_document();
@@ -7753,6 +7792,9 @@ impl Session {
         }
         rep.pass_s.push(rep.total_s);
         self.more_passes(p.t0, &mut rep)?;
+        if let Some(again) = self.mem_rerun(&rep, None) {
+            return again;
+        }
         Ok(rep)
     }
 

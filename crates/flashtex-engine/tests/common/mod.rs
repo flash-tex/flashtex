@@ -143,3 +143,70 @@ pub fn capacity_cases(m: &str, body: &str, big: usize, fill: usize) -> Vec<(&'st
         ("! TeX capacity exceeded, sorry [pool size=", pool),
     ]
 }
+
+/// What the command-line engine says on standard error when it starts over
+/// without replays (`src/capacity.rs`, #2309).
+#[allow(dead_code)]
+pub const MEMORY_AGAIN: &str = "running again without replays";
+
+/// The rerun's reason when the run stopped with `main memory size` (#2309's
+/// second piece; `capacity::RAN_OUT`).
+#[allow(dead_code)]
+pub const MEMORY_RAN_OUT: &str = "main memory ran out after replayed calls";
+
+/// The rerun's reason when the run ended within an eighth of main memory's
+/// end without stopping (#2309's third piece; `capacity::NEARLY_RAN_OUT`).
+#[allow(dead_code)]
+pub const MEMORY_NEARLY: &str = "main memory nearly ran out (less than an eighth left)";
+
+/// An INITEX file whose `main memory size` overflow comes later when calls
+/// of the macro `m` were replayed (#2309): `defs` (which define `\m`),
+/// three calls, `after` (what takes up the memory those calls freed), one
+/// more call, which a replay makes without growing main memory as the call
+/// does, and then `step` (what takes memory of the other kind: `\T`'s
+/// 10,000 tokens in a macro after a call that makes nodes, a box of nodes
+/// after one that makes tokens) until memory runs out, each step with its
+/// number, `\count1`, in the log.
+#[allow(dead_code)]
+pub fn memory_drift_case(m: &str, defs: &str, after: &str, step: &str) -> String {
+    memory_drift_case_to(m, defs, after, step, 10_000)
+}
+
+/// [`memory_drift_case`] with its steps stopped after `steps` and
+/// `[survived]` in the log after them (#2309's `memdrift` probe).
+#[allow(dead_code)]
+pub fn memory_drift_case_to(m: &str, defs: &str, after: &str, step: &str, steps: usize) -> String {
+    format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\catcode`\\%=14 \\scrollmode\n\
+         {defs}\n\\{m}\\{m}\\{m}\n{after}\n\\{m}\n\
+         \\def\\T{{{}}}\n\
+         \\count1=0 \\def\\fill{{\\ifnum\\count1<{steps} \\advance\\count1 1 \\message{{\\the\\count1}}\
+         {step}\\expandafter\\fill\\fi}}\n\
+         \\fill\n\\message{{[survived]}}\n\\end\n",
+        "t".repeat(10_000)
+    )
+}
+
+/// The message [`memory_case`]'s file stops with.
+#[allow(dead_code)]
+pub const MEMORY_FULL: &str = "! TeX capacity exceeded, sorry [main memory size=5000000]";
+
+/// An INITEX file that runs out of main memory inside a call of the macro
+/// `m` (#2309), for BOX-MEMO's and D9's tests: `defs` (which define `\m`,
+/// a call that needs 30,000 words or more), three calls with room to
+/// spare, so it is recorded and replayed; `after` (what takes up the
+/// variable-size memory those calls freed); `fill` macros of 10,000 tokens
+/// (10,002 words each), which leave about 18,000 of the 5,000,000 words;
+/// and one more call.
+#[allow(dead_code)]
+pub fn memory_case(m: &str, defs: &str, after: &str, fill: usize) -> String {
+    format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\catcode`\\%=14 \\scrollmode\n\
+         {defs}\n\\{m}\\{m}\\{m}\n{after}\n\
+         \\def\\T{{{}}}\n\
+         \\count1=0 \\def\\fill{{\\ifnum\\count1<{fill} \\advance\\count1 1 \
+         \\expandafter\\edef\\csname m\\the\\count1\\endcsname{{\\T}}\\expandafter\\fill\\fi}}\n\
+         \\fill\n\\relax\\{m}\\message{{[survived]}}\n\\end\n",
+        "t".repeat(10_000)
+    )
+}

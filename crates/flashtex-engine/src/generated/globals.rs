@@ -1292,6 +1292,12 @@ pub struct Globals {
     pub bm_font_version: i32,
     // §1924
     pub bm_hyph_version: i32,
+    // §1924
+    pub cap_dyn_peak: i32,
+    // §1924
+    pub cap_var: i32,
+    // §1924
+    pub cap_var_max: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
     /// The engine's state outside the word space (`--host-state`).
@@ -1815,6 +1821,9 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>();
 
@@ -2641,6 +2650,9 @@ impl Globals {
             bm_cand: __arena.arr(__r_bm_cand, 630193),
             bm_font_version: 0,
             bm_hyph_version: 0,
+            cap_dyn_peak: 0,
+            cap_var: 0,
+            cap_var_max: 0,
             arena: __arena,
             host: Default::default(),
         })
@@ -3166,6 +3178,9 @@ impl Globals {
         v.pod(&mut self.bm_at_switch);
         v.pod(&mut self.bm_font_version);
         v.pod(&mut self.bm_hyph_version);
+        v.pod(&mut self.cap_dyn_peak);
+        v.pod(&mut self.cap_var);
+        v.pod(&mut self.cap_var_max);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

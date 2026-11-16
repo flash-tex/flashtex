@@ -3813,6 +3813,13 @@ pub fn final_end(g: &mut Globals) -> ! {
 /// -- so a run that stops early (`pdftex_fail`, `-halt-on-error`) leaves
 /// complete files behind.
 pub fn exit_process(g: &mut Globals, code: i32) -> ! {
+    // (#2309: a command-line run that replayed and ended near main
+    // memory's end starts over without replays, `crate::capacity`; a
+    // resident run's host does that, after `catch_exit`)
+    #[cfg(not(feature = "tex82"))]
+    if !RESIDENT.with(|r| r.get()) {
+        g.flashtex_cap_run_end();
+    }
     #[cfg(not(feature = "tex82"))]
     {
         g.flashtex_prof_finish();
@@ -4769,6 +4776,11 @@ pub struct EngineExit(pub i32);
 /// exiting the process.
 pub fn set_resident(on: bool) {
     RESIDENT.with(|r| r.set(on));
+}
+
+/// Whether the engine runs inside a host that outlives the run.
+pub fn is_resident() -> bool {
+    RESIDENT.with(|r| r.get())
 }
 
 /// Forget that a run was terminating (a new run in the same process).

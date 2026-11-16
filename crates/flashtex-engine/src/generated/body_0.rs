@@ -652,6 +652,9 @@ impl Globals {
         self.bm_at_switch = false;
         self.bm_font_version = 0i32;
         self.bm_hyph_version = 0i32;
+        self.cap_dyn_peak = 0i32;
+        self.cap_var = 0i32;
+        self.cap_var_max = 0i32;
         self.bm_on = self.flashtex_bm_enabled();
         // §8
         if self.ini_version() {
@@ -3706,6 +3709,7 @@ impl Globals {
                     p = self.hi_mem_min;
                     if (self.hi_mem_min <= self.lo_mem_max) {
                         {
+                            self.flashtex_cap_mem_full();
                             self.runaway();
                             self.overflow(304i32, ((mem_max).wrapping_add(1i32)).wrapping_sub(mem_min));
                         }
@@ -3716,6 +3720,9 @@ impl Globals {
         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(null);
         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
         self.dl_new_node(p);
+        if (self.dyn_used > self.cap_dyn_peak) {
+            self.cap_dyn_peak = self.dyn_used;
+        }
         get_avail = p;
         get_avail
     }
@@ -3841,11 +3848,18 @@ impl Globals {
                     }
                 }
                 // §143
+                self.flashtex_cap_mem_full();
                 self.overflow(304i32, ((mem_max).wrapping_add(1i32)).wrapping_sub(mem_min));
             }
             if __goto_1 <= 1 { // found
                 __av_mem[crate::ix::U((r) as usize)].set_hh_rh(null);
                 self.dl_new_node(r);
+                if (self.cap_var < 1073741824i32) {
+                    self.cap_var = (self.cap_var).wrapping_add(s);
+                }
+                if (s > self.cap_var_max) {
+                    self.cap_var_max = s;
+                }
                 self.var_used = (self.var_used).wrapping_add(s);
                 // §1891
                 if (s >= medium_node_size) {

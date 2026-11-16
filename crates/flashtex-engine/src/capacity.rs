@@ -46,12 +46,70 @@
 //!   that asks for more than is then written (`str_room(1)` before
 //!   `make_string`).
 //!
+//! **Main memory** (#2309). The call's nodes and tokens come out of `mem`,
+//! and what it needs depends on the free lists, which no key holds. So
+//! the bound is one that holds whatever they are: the room the call needs
+//! between `lo_mem_max` and `hi_mem_min` if it finds no free word at all.
+//! - One-word nodes (`get_avail`, tex.web §120): the call's own freed
+//!   words are taken again first (`avail` is a stack), so it lowers
+//!   `hi_mem_min` by at most the most it has in use at once above its
+//!   start: the peak of `dyn_used`, which changes/boxmemo.ch keeps
+//!   (`cap_dyn_peak`).
+//! - Variable-size nodes (`get_node`, §125): it grows `lo_mem_max` by
+//!   1000 words at a time, and only when no free run holds the node. Every
+//!   word of a grown block but its bottom remainder has been given out
+//!   since, and the remainder is smaller than the node that did not fit.
+//!   So the growth is at most twice the words `get_node` gave out
+//!   (`cap_var`), plus the largest node (`cap_var_max`), plus one block:
+//!   [`Need::mem`] adds a 128th and [`MEM_SLACK`] on top. (Below 1998
+//!   free words `get_node` grows by less than 1000; the slack keeps the
+//!   normal path out of there.)
+//!
+//! An offer replays only where `hi_mem_min - lo_mem_max` is at least that.
+//! Then the normal path cannot stop with `main memory size`, so leaving it
+//! out is exact.
+//!
+//! **A later `main memory size`** still depends on whether calls were
+//! replayed: the normal path grows `lo_mem_max` for good and a replay does
+//! not, so a run that replayed stops later than pdfTeX does. Such a run is
+//! thrown away and made again without replays (#2309's second half, the
+//! Commander's ruling), so a `main memory size` that reaches the log only
+//! ever comes from the normal path:
+//! - `get_avail` and `get_node` call [`Globals::flashtex_cap_mem_full`]
+//!   before `overflow("main memory size", ...)` (changes/boxmemo.ch).
+//! - The command-line engine starts over there: the same command line
+//!   with `FLASHTEX_BOXMEMO=off FLASHTEX_INTRINSICS=off` ([`rerun_process`]).
+//!   Its files are written again from their start. What the first attempt
+//!   printed on the terminal stays there.
+//! - A resident engine (the hosts) lets the run end and tells its host
+//!   ([`take_rerun`]), which runs the document again from the format with
+//!   replays switched off ([`set_replays_off`]) until a compile ends
+//!   without that overflow.
+//!
+//! **Near the limit** (#2309's third piece, the Commander's ruling of
+//! 2026-11-15). A document pdfTeX stops on with `main memory size` can fit
+//! here because replays left it the room: then nothing overflows and the
+//! rule above never fires. So a run that replayed is also made again
+//! without replays, the same way, when it ends using more than 7/8 of main
+//! memory: when `hi_mem_min - lo_mem_max`, the room neither kind of node
+//! has taken yet, is below `mem_max/8` ([`Globals::flashtex_cap_run_end`]).
+//! That room only shrinks during a run (`get_avail` lowers `hi_mem_min`,
+//! tex.web §120, `get_node` raises `lo_mem_max`, §125, and nothing else
+//! writes them after `undump`), so its value at the end is the run's
+//! peak. The rerun's own result is shipped whatever it is, and replays stay
+//! off until a compile ends below 7/8 (a host), so a document that stays
+//! near the limit is compiled once per edit, without replays.
+//!
+//! Not covered (the residual the ruling accepts, BOX-MEMO.md K8 and §18): a
+//! document pdfTeX stops on only because the normal path's drift took more
+//! than an eighth of main memory, while the replaying run stays below 7/8.
+//!
 //! Where a test would fail, or the bound is not tight enough to tell, the
 //! call runs for real, which is always right. A recording that wrote an
 //! array's last place, or came within the slack of the pool's or the string
 //! table's top, may have been cut short there, so it is abandoned.
 
-use crate::generated::consts::{buf_size, max_strings, pool_size};
+use crate::generated::consts::{buf_size, max_strings, mem_max, pool_size};
 use crate::generated::Globals;
 
 /// Never a character code (`buffer`, `str_pool`) or a pool position
@@ -65,12 +123,21 @@ const POOL_SLACK: i32 = 64;
 /// asks for three whatever it then makes.
 const STR_SLACK: i32 = 3;
 
-/// Where a recording started: `first`, `pool_ptr`, `str_ptr`.
+/// Room between `lo_mem_max` and `hi_mem_min` on top of what the call
+/// needs: one block `get_node` grows by, and the 1998 words below which
+/// it grows by less.
+const MEM_SLACK: i64 = 4096;
+/// Where `cap_var` stops counting (changes/boxmemo.ch).
+const VAR_TOP: i32 = 1 << 30;
+
+/// Where a recording started: `first`, `pool_ptr`, `str_ptr`, and
+/// `dyn_used`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Probe {
     first: i32,
     pool: i32,
     str_ptr: i32,
+    dyn0: i32,
 }
 
 /// How far above each pointer a call goes, at most: the places of the
@@ -81,6 +148,9 @@ pub struct Need {
     pub buf: i32,
     pub pool: i32,
     pub strings: i32,
+    /// The words of main memory between `lo_mem_max` and `hi_mem_min`
+    /// (module documentation, "Main memory").
+    pub mem: i32,
 }
 
 /// The marked places of an array whose first free place is `lo` and whose
@@ -93,16 +163,166 @@ fn marks(lo: i32, top: i32) -> impl Iterator<Item = i32> {
         .chain((span >= 0).then_some(span))
 }
 
+thread_local! {
+    /// A run of this thread stopped with `main memory size`, or ended within
+    /// an eighth of it ([`Globals::flashtex_cap_run_end`]).
+    static MEM_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// [`MEM_FULL`] was set by the end check alone (the third piece, "Near
+    /// the limit"), not by an overflow.
+    static MEM_NEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The last rerun [`take_rerun`] asked for was the third piece's
+    /// ([`rerun_why`]).
+    static RERUN_NEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Calls replayed (BOX-MEMO and D9, not their verify modes) by the
+    /// engines of this thread since [`new_run`]. Never restored with a
+    /// checkpoint: it counts the replays of abandoned runs too, and a state
+    /// opened from disk counts as one ([`unknown_history`]), which only
+    /// errs towards running again.
+    static REPLAYS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Replays and recordings are switched off (`set_replays_off`).
+    static OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A call was replayed.
+pub(crate) fn note_replay() {
+    REPLAYS.with(|r| r.set(r.get() + 1));
+}
+
+/// A run from the format begins: no state it leaves has a replay behind it
+/// yet.
+pub fn new_run() {
+    REPLAYS.with(|r| r.set(0));
+    MEM_FULL.with(|f| f.set(false));
+    MEM_NEAR.with(|f| f.set(false));
+}
+
+/// Why a run is made again without replays, in its message: the second
+/// piece (it stopped with `main memory size`) or the third (it ended within
+/// an eighth of main memory's end without stopping), so that a test can
+/// tell which one fired.
+pub const RAN_OUT: &str = "main memory ran out after replayed calls";
+/// See [`RAN_OUT`].
+pub const NEARLY_RAN_OUT: &str =
+    "main memory nearly ran out (less than an eighth left) after replayed calls";
+
+/// A host's report mode for the rerun: `cold-after-memory` (second
+/// piece) or `cold-after-memory-near` (third).
+pub fn rerun_mode() -> &'static str {
+    if RERUN_NEAR.with(|n| n.get()) {
+        "cold-after-memory-near"
+    } else {
+        "cold-after-memory"
+    }
+}
+
+/// Which of [`RAN_OUT`] and [`NEARLY_RAN_OUT`] the last rerun
+/// [`take_rerun`] asked for was for.
+pub fn rerun_why() -> &'static str {
+    if RERUN_NEAR.with(|n| n.get()) {
+        NEARLY_RAN_OUT
+    } else {
+        RAN_OUT
+    }
+}
+
+/// The engine goes on from a state another process left (S₀, S₁): whether
+/// a replay is behind it is not known.
+pub fn unknown_history() {
+    note_replay();
+}
+
+/// Whether offers are refused: BOX-MEMO and D9 neither replay nor record.
+pub fn replays_off() -> bool {
+    OFF.with(|o| o.get())
+}
+
+/// Switch replays and recordings off or back on, for every engine of this
+/// thread. Only between runs.
+pub fn set_replays_off(off: bool) {
+    OFF.with(|o| o.set(off));
+}
+
+/// Whether the rule is on (`FLASHTEX_MEM_RERUN=0` turns it off, to see the
+/// run it replaces).
+fn rerun_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLASHTEX_MEM_RERUN").map_or(true, |v| v != "0"))
+}
+
+/// What a host does after a run of its engine ended (not one it stopped):
+/// `true` when the run stopped with `main memory size`, or ended within an
+/// eighth of it, after replays, and replays are now off: the host runs the
+/// document again from the format. A run that ended below that switches
+/// replays back on.
+pub fn take_rerun() -> bool {
+    let full = MEM_FULL.with(|f| f.replace(false));
+    let near = MEM_NEAR.with(|f| f.replace(false));
+    if !rerun_enabled() {
+        return false;
+    }
+    if !full {
+        set_replays_off(false);
+        return false;
+    }
+    if replays_off() || REPLAYS.with(|r| r.get()) == 0 {
+        // (the normal path's own overflow: pdfTeX's)
+        return false;
+    }
+    set_replays_off(true);
+    RERUN_NEAR.with(|n| n.set(near));
+    true
+}
+
+/// The command-line engine starts over without replays (module
+/// documentation). Returns only if it could not.
+fn rerun_process(why: &str) {
+    use std::io::Write;
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut args = std::env::args_os();
+    let arg0 = args.next();
+    eprintln!("flashtex: {why}; running again without replays");
+    let _ = std::io::stdout().flush();
+    let mut c = std::process::Command::new(exe);
+    c.args(args)
+        .env("FLASHTEX_BOXMEMO", "off")
+        .env("FLASHTEX_INTRINSICS", "off");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // (the name it was called by chooses the format: `pdflatex`)
+        if let Some(a) = arg0 {
+            c.arg0(a);
+        }
+        let e = c.exec();
+        eprintln!("flashtex: could not run again: {e}");
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = arg0;
+        if let Ok(st) = c.status() {
+            std::process::exit(st.code().unwrap_or(1));
+        }
+    }
+}
+
 impl Probe {
     /// The probe of a recording that started with these pointers (D9 keeps
     /// them in the word space, so that a restore inside a recording finds
     /// its markers again).
-    pub(crate) fn at(first: i32, pool_ptr: i32, str_ptr: i32) -> Probe {
+    pub(crate) fn at(first: i32, pool_ptr: i32, str_ptr: i32, dyn_used: i32) -> Probe {
         Probe {
             first,
             pool: pool_ptr,
             str_ptr,
+            dyn0: dyn_used,
         }
+    }
+
+    /// `dyn_used` at the start (D9 keeps it in the word space).
+    pub(crate) fn dyn0(&self) -> i32 {
+        self.dyn0
     }
 
     /// (lo, top) of the buffer, the pool and `str_start`: `make_string`
@@ -118,6 +338,35 @@ impl Probe {
 }
 
 impl Globals {
+    /// `get_avail` and `get_node`, about to stop with `main memory size`
+    /// (changes/boxmemo.ch; module documentation, "A later `main memory
+    /// size`").
+    /// A run ended, or stopped (`exit_process` for the command-line engine,
+    /// `catch_exit` for a resident one, not a run its host paused): if it
+    /// came within an eighth of main memory's end, it is treated as one that
+    /// ran out (module documentation, "Near the limit").
+    pub fn flashtex_cap_run_end(&mut self) {
+        if self.hi_mem_min - self.lo_mem_max < mem_max / 8 {
+            self.cap_mem_full(true);
+        }
+    }
+
+    pub fn flashtex_cap_mem_full(&mut self) {
+        self.cap_mem_full(false);
+    }
+
+    /// `near`: the end check, not an overflow (an overflow already noted
+    /// keeps its reason).
+    fn cap_mem_full(&mut self, near: bool) {
+        if crate::system::is_resident() {
+            if !MEM_FULL.with(|f| f.replace(true)) {
+                MEM_NEAR.with(|f| f.set(near));
+            }
+        } else if rerun_enabled() && !replays_off() && REPLAYS.with(|r| r.get()) > 0 {
+            rerun_process(if near { NEARLY_RAN_OUT } else { RAN_OUT });
+        }
+    }
+
     fn cap_at(&self, a: usize, i: i32) -> i32 {
         let i = i as usize;
         match a {
@@ -136,9 +385,13 @@ impl Globals {
         }
     }
 
-    /// Start measuring (a recording's start): put the markers.
+    /// Start measuring (a recording's start): put the markers, and start
+    /// the counts of main memory.
     pub(crate) fn cap_probe(&mut self) -> Probe {
-        let p = Probe::at(self.first, self.pool_ptr, self.str_ptr);
+        let p = Probe::at(self.first, self.pool_ptr, self.str_ptr, self.dyn_used);
+        self.cap_dyn_peak = self.dyn_used;
+        self.cap_var = 0;
+        self.cap_var_max = 0;
         for (a, (lo, top)) in p.spans().into_iter().enumerate() {
             for o in marks(lo, top) {
                 self.cap_mark(a, lo + o);
@@ -159,10 +412,20 @@ impl Globals {
             // (the first marker still there: the call wrote below it only)
             n[a] = marks(lo, top).find(|&o| self.cap_at(a, lo + o) == MARK)?;
         }
+        // (main memory: `cap_var` stopped counting at its top)
+        if self.cap_var >= VAR_TOP {
+            return None;
+        }
+        let (var, dynp) = (
+            self.cap_var as i64,
+            (self.cap_dyn_peak - p.dyn0).max(0) as i64,
+        );
+        let mem = dynp + 2 * var + var / 128 + self.cap_var_max as i64 + MEM_SLACK;
         let need = Need {
             buf: n[0],
             pool: n[1],
             strings: n[2],
+            mem: mem.min(i32::MAX as i64) as i32,
         };
         if p.pool + need.pool + POOL_SLACK > pool_size
             || p.str_ptr + need.strings + STR_SLACK > max_strings
@@ -178,5 +441,6 @@ impl Globals {
         (n.buf == 0 || self.first + n.buf < buf_size)
             && self.pool_ptr + n.pool + POOL_SLACK <= pool_size
             && self.str_ptr + n.strings + STR_SLACK <= max_strings
+            && self.hi_mem_min - self.lo_mem_max >= n.mem
     }
 }
