@@ -372,22 +372,41 @@ class Host:
             pass
 
 
+class Snapshot(dict):
+    """Every file under a directory, by relative path: its bytes, and in
+    `times` its modification time in nanoseconds."""
+    times = None
+
+
 def snapshot(d):
-    """Every file under d, by relative path."""
-    out = {}
+    """Every file under d, by relative path (a Snapshot)."""
+    out, times = {}, {}
     for dp, _, fs in os.walk(d):
         for n in fs:
             p = os.path.join(dp, n)
-            out[os.path.relpath(p, d)] = open(p, 'rb').read()
-    return dict(sorted(out.items()))
+            rel = os.path.relpath(p, d)
+            out[rel] = open(p, 'rb').read()
+            times[rel] = os.stat(p).st_mtime_ns
+    snap = Snapshot(sorted(out.items()))
+    snap.times = times
+    return snap
 
 
 def restore(d, snap):
+    """The files of `snap` in d, with the times they had: the reference
+    compiles the measured directory's files as they were, and a host reads
+    a file's modification time (an image's key is its path, size and time,
+    crates/flashtex-xetex/src/out/images.rs, so a picture written anew
+    would be another image in the display list)."""
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     for n, b in snap.items():
-        os.makedirs(os.path.dirname(os.path.join(d, n)), exist_ok=True)
-        open(os.path.join(d, n), 'wb').write(b)
+        p = os.path.join(d, n)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, 'wb').write(b)
+        t = (getattr(snap, 'times', None) or {}).get(n)
+        if t is not None:
+            os.utime(p, ns=(t, t))
 
 
 def as_work(b):
