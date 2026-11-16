@@ -286,6 +286,13 @@ begin last_badness:=0; if bm_rec_on then flashtex_bm_packed;
 r:=get_node(box_node_size); type(r):=vlist_node;
 @z
 
+@x pdftex.web l.28112 - a recording notes that it built the page (every caller: \.{\\par}, \.{\\penalty}, a box, an insertion)
+begin if (link(contrib_head)=null)or output_active then return;
+@y
+begin if bm_rec_on then flashtex_bm_build_page;
+if (link(contrib_head)=null)or output_active then return;
+@z
+
 @x pdftex.web l.28752 (after changes/intrinsics.ch) - |big_switch| ends recordings, marks its own expansions, and checks every command a recording runs
 big_switch: if ckpt_request<>0 then flashtex_checkpoint_hook;
 if intr_on then
@@ -531,6 +538,7 @@ procedure flashtex_bm_font_changed; external;
 procedure flashtex_bm_font_set(@!n:integer;@!a:integer;@!b:integer;@!v:integer); external;
 procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
+procedure flashtex_bm_build_page; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
 

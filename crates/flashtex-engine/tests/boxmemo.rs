@@ -311,6 +311,25 @@ fn a_par_over_waiting_contributions_is_not_the_one_over_none() {
     assert_eq!(stat(&s, "hits"), 1, "{s}");
 }
 
+#[test]
+fn a_penalty_over_waiting_contributions_is_not_the_one_over_none() {
+    // (REVIEW-4 on #2544) `\\penalty` in the main vertical list builds the
+    // page too (tex.web §1103), as do a box and an insertion: the key follows
+    // `build_page` itself, not `\\par`. A call recorded over nothing waiting
+    // replayed as nothing over a waiting `\\vskip`: on printed [0.0pt]
+    // [0.0pt] [10.0pt] where off and TL2026 `pdftex -ini -etex` print
+    // [0.0pt] [10.0pt] [30.0pt]
+    check(
+        "pen-contrib",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\vsize=100pt \\maxdepth=2pt \\output={\\global\\setbox9\\box255 \\deadcycles=0 }\n\
+         \\def\\measure{\\penalty0 }\n\
+         \\prevdepth=0pt \\measure\\message{[\\the\\pagetotal]}\n\
+         \\hbox{}\\vskip10pt\\relax\\measure\\message{[\\the\\pagetotal]}\n\
+         \\hbox{}\\vskip20pt\\relax\\measure\\message{[\\the\\pagetotal]}\\end\n",
+    );
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
