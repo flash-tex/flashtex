@@ -4327,4 +4327,151 @@ mod tests {
         ];
         assert_eq!(png_soft_mask(&rows, 4, 7, 5, &[0, 0x80, 0xff, 0x40]), want);
     }
+
+    /// The page of #2361's measured case written by `write`: destinations
+    /// a, b, c, z; links to b (GoTo), c (`/Dest`) and nowhere; outline
+    /// entries to a (`/Dest`) and b (GoTo), in that order; with `config`
+    /// first if given.
+    fn goto_case(config: Option<&str>) -> Vec<u8> {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let mut body = Vec::new();
+        if let Some(c) = config {
+            body.extend(special(c));
+        }
+        for (n, x) in [("a", 1), ("b", 3), ("c", 5), ("z", 7)] {
+            body.extend(special(&format!(
+                "pdf:dest ({n}) [@thispage /XYZ {x} {} null]",
+                x + 1
+            )));
+        }
+        let ann =
+            |d: &str| format!("pdf:ann width 10bp height 10bp depth 0bp <</Subtype /Link {d}>>");
+        body.extend(special(&ann("/A <</S /GoTo /D (b)>>")));
+        body.extend(special("pdf:outline 1 <</Title (A) /Dest (a)>>"));
+        body.extend(special(&ann("/Dest (c)")));
+        body.extend(special(&ann("/A <</S /GoTo /D (nowhere)>>")));
+        body.extend(special(
+            "pdf:outline 1 <</Title (B) /A <</S /GoTo /D (b)>> >>",
+        ));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        write(&doc, &opts).unwrap().0
+    }
+
+    /// The destination names of `pdf`: the `/Dests` tree's keys, each
+    /// link's and each outline entry's target, in order.
+    fn goto_names_of(pdf: &PdfFile) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let s = |o: Option<&Obj>| match o.map(|o| pdf.resolve(o)) {
+            Some(Obj::String(b)) => String::from_utf8_lossy(b).into_owned(),
+            _ => "?".into(),
+        };
+        let target = |d: &std::collections::BTreeMap<String, Obj>| match d.get("A") {
+            Some(a) => s(pdf.resolve(a).as_dict().and_then(|a| a.get("D"))),
+            None => s(d.get("Dest")),
+        };
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        let tree = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
+        let keys = tree
+            .get("Names")
+            .and_then(Obj::as_array)
+            .unwrap()
+            .iter()
+            .step_by(2)
+            .map(|k| s(Some(k)))
+            .collect();
+        let page = pdf.pages().unwrap()[0];
+        let links = pdf
+            .page_attr(page, "Annots")
+            .and_then(Obj::as_array)
+            .unwrap()
+            .iter()
+            .map(|a| target(pdf.resolve(a).as_dict().unwrap()))
+            .collect();
+        let root = pdf.resolve(cat.get("Outlines").unwrap()).as_dict().unwrap();
+        let mut outline = Vec::new();
+        let mut it = root.get("First").map(|o| pdf.resolve(o));
+        while let Some(e) = it.and_then(Obj::as_dict) {
+            outline.push(target(e));
+            it = e.get("Next").map(|o| pdf.resolve(o));
+        }
+        (keys, links, outline)
+    }
+
+    /// Without `dvipdfmx:config C 0x0010`, xdvipdfmx (TeX Live 2026)
+    /// renames the destinations GoTos use in the order it meets them and
+    /// drops the others (#2361, measured): b 0, a 1, c 2, nowhere 3; z is
+    /// gone and nowhere was never defined.
+    #[test]
+    fn goto_destinations_are_renamed_as_xdvipdfmx_renames_them() {
+        let pdf = PdfFile::parse(&goto_case(None)).unwrap();
+        let (keys, links, outline) = goto_names_of(&pdf);
+        assert_eq!(keys, ["0", "1", "2"]);
+        assert_eq!(links, ["0", "2", "3"]);
+        assert_eq!(outline, ["1", "0"]);
+        // with `C 0x0010` (hyperref's), every name stays
+        for c in ["dvipdfmx:config C 0x0010", "dvipdfmx:config C 16"] {
+            let pdf = PdfFile::parse(&goto_case(Some(c))).unwrap();
+            let (keys, links, outline) = goto_names_of(&pdf);
+            assert_eq!(keys, ["a", "b", "c", "z"]);
+            assert_eq!(links, ["b", "c", "nowhere"]);
+            assert_eq!(outline, ["a", "b"]);
+        }
+    }
+
+    /// A GoTo action given by reference (`/A @act`) is renamed in its own
+    /// object, as `pdf_doc_add_goto` changes the object it dereferences
+    /// (measured, xdvipdfmx TeX Live 2026): with links to y (inline) then
+    /// `@act` (x), the names are y 0, x 1 and `@act`'s `/D` is `(1)`. An
+    /// action two entries share is renamed twice: its `/D` becomes `(1)`
+    /// while `/Dests` holds only `(0)`, as in dvipdfmx.
+    #[test]
+    fn goto_actions_given_by_reference_are_renamed_in_place() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let case = |shared: bool| {
+            let mut doc = Doc::new();
+            let mut body = Vec::new();
+            body.extend(special("pdf:dest (x) [@thispage /XYZ 1 2 null]"));
+            body.extend(special("pdf:dest (y) [@thispage /XYZ 3 4 null]"));
+            body.extend(special("pdf:obj @act <</S /GoTo /D (x)>>"));
+            let ann = |d: &str| {
+                format!("pdf:ann width 10bp height 10bp depth 0bp <</Subtype /Link {d}>>")
+            };
+            if !shared {
+                body.extend(special(&ann("/A <</S /GoTo /D (y)>>")));
+            }
+            body.extend(special(&ann("/A @act")));
+            body.extend(special(if shared {
+                "pdf:outline 1 <</Title (T) /A @act>>"
+            } else {
+                "pdf:outline 1 <</Title (T) /Dest (y)>>"
+            }));
+            let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+            doc.pages.push(std::sync::Arc::new(built));
+            let opts = Options {
+                producer: "test".into(),
+                date: None,
+                compress: false,
+            };
+            let bytes = write(&doc, &opts).unwrap().0;
+            let pdf = PdfFile::parse(&bytes).unwrap();
+            goto_names_of(&pdf)
+        };
+        let (keys, links, outline) = case(false);
+        assert_eq!(keys, ["0", "1"]);
+        assert_eq!(links, ["0", "1"]);
+        assert_eq!(outline, ["0"]);
+        let (keys, links, outline) = case(true);
+        assert_eq!(keys, ["0"]);
+        assert_eq!(links, ["1"]);
+        assert_eq!(outline, ["1"]);
+    }
 }
