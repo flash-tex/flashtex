@@ -3557,7 +3557,13 @@ impl Globals {
             false
         } else if c == k::leader_ship {
             chr != k::a_leaders - 1
-        } else if c == k::remove_item || c == k::set_aux {
+        } else if c == k::remove_item || c == k::set_aux || c == k::above {
+            // `\over`, `\atop`, `\above` and the `\...withdelims` forms
+            // (`math_fraction`, tex.web §1181) at the call's own level set
+            // `incompleat_noad` and move the list so far into the
+            // numerator: on an empty list `tail = head` before and after,
+            // so `bm_finish` sees no change, and a replay drops the
+            // fraction (#2556)
             self.nest_ptr > outer
         } else if c == k::make_box {
             if chr == k::vsplit_code {
