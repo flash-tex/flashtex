@@ -130,6 +130,29 @@ def build_format(binary, d):
     return time.time() - t, r.returncode, log
 
 
+def accept_unreadable_font_paths(a, b):
+    """TeX Live's xetex sometimes prints freed memory as the file of a font
+    it found by name (`\\XeTeXtracingfonts`): `Requested font "Fira Math
+    Regular/OT" at 10.94997pt` and then ` -> ^^/^^_^^M-V^^^`, other bytes on
+    every run (measured on x86_64-linux, 2026-11-16: five TeX Live documents,
+    two runs of one gave different bytes). Nothing can equal that; where the
+    reference's ` -> ` line has no file name in it (empty, `^^` notation, or
+    no `.`) and the candidate names an absolute path after the same request,
+    the candidate's line is taken as equal. Returns how many were (shown in
+    the report, not hidden)."""
+    n = 0
+    for i in range(1, min(len(a), len(b))):
+        if a[i - 1] != b[i - 1] or not a[i - 1].startswith('Requested font "'):
+            continue
+        if not (a[i].startswith(" -> ") and b[i].startswith(" -> /")) or a[i] == b[i]:
+            continue
+        ref = a[i][4:]
+        if ref == "" or "^^" in ref or "." not in ref:
+            b[i] = a[i]
+            n += 1
+    return n
+
+
 def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     src = src or os.path.join(CASES, name + ".tex")
     meta = case_meta(src)
@@ -178,6 +201,10 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     if cpanic:
         msgs.append("the candidate panicked: %s" % cpanic[0][:300])
         notes.extend("  " + ln[:300] for ln in cpanic[1:])
+    unreadable = accept_unreadable_font_paths(a, b)
+    if unreadable:
+        notes.append("reference's font path unreadable (freed memory) at %d line(s): taken as equal"
+                     % unreadable)
     if a != b:
         i = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]),
                  min(len(a), len(b)))

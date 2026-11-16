@@ -121,6 +121,37 @@ class ReportLines(unittest.TestCase):
         self.assertTrue(raw.getvalue().endswith(b"  reference:  -> ^^\\udcce)^^A\n"))
 
 
+class UnreadableFontPaths(unittest.TestCase):
+    """TeX Live's freed-memory font path (beamertheme-focus's demo, 2026-11-16)
+    is taken as equal to the candidate's path; nothing else is."""
+
+    REQ = 'Requested font "Fira Math Regular/OT" at 10.94997pt'
+    PATH = " -> /tl/fonts/opentype/public/firamath/FiraMath-Regular.otf"
+
+    def test_garbage_accepted(self):
+        garbage = b" -> ^^/^^_\xd6^^^".decode("utf-8", "surrogateescape")
+        for ref in (garbage, " -> ", " -> ^^S^^^^F", " -> J=X)"):
+            a, b = ["x", self.REQ, ref, "y"], ["x", self.REQ, self.PATH, "y"]
+            self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1, ref)
+            self.assertEqual(a, b)
+
+    def test_real_differences_kept(self):
+        cases = [
+            # a file name on both sides
+            (["x", self.REQ, " -> /other/FiraMath-Regular.otf"], ["x", self.REQ, self.PATH]),
+            # another request before it
+            (["x", 'Requested font "Other" at 10.0pt', " -> "], ["x", self.REQ, self.PATH]),
+            # the candidate prints no path
+            (["x", self.REQ, " -> ^^S"], ["x", self.REQ, " -> ^^T"]),
+            # not after a request
+            (["x", "y", " -> "], ["x", "y", self.PATH]),
+        ]
+        for a, b in cases:
+            b0 = list(b)
+            self.assertEqual(latex.accept_unreadable_font_paths(a, b), 0, a)
+            self.assertEqual(b, b0)
+
+
 class XetexTestSteps(unittest.TestCase):
 
     def test_known_tests(self):
