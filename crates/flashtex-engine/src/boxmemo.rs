@@ -865,6 +865,13 @@ thread_local! {
     /// by its number (`font_name_number`; `Globals::flashtex_bm_font_named`).
     /// An entry is never replaced: a version in which no font made at `f`
     /// was named otherwise says that `f`, if it is there, has this name.
+    ///
+    /// Nor is the table cleared (`flashtex_bm_loaded` included): the
+    /// versions (`next_version`'s table) and the store outlive a document,
+    /// so a second document on this thread whose first font at `f` gets
+    /// another name must count that as a rename, or one version would name
+    /// two states. That costs such a document a miss, never a wrong replay,
+    /// and the table holds at most one entry per font number (`font_max`).
     static FONT_NAMED_FIRST: RefCell<std::collections::HashMap<i32, i32>> =
         RefCell::new(std::collections::HashMap::new());
 }
@@ -2505,6 +2512,15 @@ impl Globals {
             return;
         }
         self.bm_font_version = next_version(self.bm_font_version, [-4, f, id, 0]);
+        // A replay redoes a call's `eqtb` defines but not `font_id_text(f)`
+        // nor this move of the version (REVIEW-4 of #2518): a call that
+        // renames a font is not recorded, nor is an intrinsic hook's run.
+        if self.bm_rec_on {
+            self.bm_abort("FontName");
+        }
+        if self.intr_rec_on {
+            self.flashtex_intr_abort(6);
+        }
     }
 
     /// The characters of string `t` (none for a number that names no

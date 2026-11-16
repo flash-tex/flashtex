@@ -441,6 +441,35 @@ fn a_font_identifiers_name_is_part_of_the_key() {
     assert_eq!(stat(&s, "recordings"), 3, "{s}");
 }
 
+/// A call that renames a font loaded before (`\font\x=cmr10` when the
+/// font is `\a`'s) is not recorded: a replay redoes the call's `eqtb`
+/// defines but not `font_id_text`, nor the move of the fonts' version, so
+/// in the host a replay at the recorded version (an edit's restore to
+/// before the call) would leave the identifier named `\a` where pdfTeX has
+/// `\x` (REVIEW-4 of #2518). The same name again is no rename, and a call
+/// that makes it is recorded and replayed.
+#[test]
+fn a_call_that_renames_a_font_is_not_recorded() {
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "fontname-in-call",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\a=cmr10 \\a\n\
+         \\def\\measure{\\begingroup\\font\\x=cmr10 \\setbox0\\hbox{x}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\show{\\message{[\\expandafter\\meaning\\the\\font|\\the\\dimen1]}}\n\
+         \\measure\\show\\font\\a=cmr10 \\relax\\measure\\show\\font\\a=cmr10 \\relax\\measure\\show\n\
+         \\measure\\show\\measure\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    // the first three calls find the font named \a and rename it: none is kept
+    assert_eq!(stat(&s, "FontName"), 3, "{s}");
+    // the fourth finds \x already, is recorded, and the fifth replays it
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+}
+
 /// `\\toks0` (and `\\toks4`): `\\kern.1pt` (`0 `) doubled 15 (16) times,
 /// lists longer than the key's `MAX_LIST` (65,536 tokens).
 const LONG_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
