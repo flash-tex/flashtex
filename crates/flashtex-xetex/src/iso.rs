@@ -1522,6 +1522,15 @@ const DEAD_SCALARS: &[&str] = &[
     // tex.web §494: set by `pass_text` when skipping begins, read only by
     // the "Incomplete \if" message of that skip
     "skip_line",
+    // the file name just scanned (tex.web §512): every reader runs after a
+    // `scan_file_name` or an explicit setting in the same command
+    // (`start_input`, `new_font`, `\openin`, `\openout` and `write_out`,
+    // `prompt_file_name`, `\XeTeXpicfile`). `new_font` reusing a loaded font
+    // sets `cur_name` to that font's name, which a run that did not select
+    // it there does not (the pdfTeX engine's #2552, lane AUDIT-MATH)
+    "cur_name",
+    "cur_area",
+    "cur_ext",
     // §305, §389, §473: set by `macro_call` and `scan_toks` before the scan
     // whose runaway message prints it
     "warning_index",
@@ -1976,9 +1985,20 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                     p += 1;
                     1
                 }
-                DISC_GROUP | MATH_CHOICE_GROUP | INSERT_GROUP => {
+                DISC_GROUP | MATH_CHOICE_GROUP => {
                     p += 1;
                     1
+                }
+                // `begin_insert_or_adjust` saves two words, the insertion
+                // number and `\vadjust pre`'s flag (xetex.web `save_ptr :=
+                // save_ptr + 2`, and `- 2` at the group's end;
+                // `show_save_groups` still reads TeX's one). With one, the
+                // number was read as the enclosing group's restore entry,
+                // and its stale high half as an entry's type (the pdfTeX
+                // engine's #2534, lane AUDIT-MATH)
+                INSERT_GROUP => {
+                    p += 1;
+                    2
                 }
                 VCENTER_GROUP => 2,
                 MATH_SHIFT_GROUP => {
@@ -2734,4 +2754,68 @@ pub fn who_points(g: &Globals, slots: &[ScalarSlot], targets: &[i32], max: usize
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generated::types::memory_word;
+
+    /// Walk the live state's save stack against itself (`Iso::save_stack`).
+    fn walk_save_stack(g: &mut Globals) -> Option<String> {
+        g.spill_scalars();
+        let slots = crate::statediff::scalar_layout(g);
+        let g: &Globals = g;
+        let l = Layout::new(g, &slots);
+        let live = Live {
+            bytes: g.arena.bytes(),
+        };
+        let st = || St {
+            sp: &live,
+            l: &l,
+            hi_mem_min: g.hi_mem_min,
+        };
+        let mut w = Iso::new(st(), st());
+        w.save_stack();
+        w.err
+    }
+
+    fn word(b0: i32, b1: i32, rh: i32) -> memory_word {
+        memory_word::from_bits(((b0 as u64) << 48) | ((b1 as u64) << 32) | rh as u32 as u64)
+    }
+
+    #[test]
+    fn an_insert_group_saves_two_words() {
+        // `{\insert100{` (lane AUDIT-MATH, the pdfTeX engine's #2534): a
+        // simple group's boundary at 0, the insert's two words (the number,
+        // `\vadjust pre`'s flag) at 1 and 2, its boundary at 3. `set_int`
+        // writes the low half only: the number's word keeps the high half
+        // of what was there before, here an earlier group's boundary. Read
+        // as one word, the number was the simple group's restore entry, of
+        // type `level_boundary`
+        let mut g = Globals::new();
+        g.save_stack[0] = word(LEVEL_BOUNDARY, BOTTOM_LEVEL, 0);
+        g.save_stack[1] = word(LEVEL_BOUNDARY, SIMPLE_GROUP, 0);
+        g.save_stack[1].set_int(100);
+        g.save_stack[2] = memory_word::default();
+        g.save_stack[3] = word(LEVEL_BOUNDARY, SIMPLE_GROUP, 0);
+        g.save_ptr = 4;
+        g.cur_boundary = 3;
+        g.cur_group = INSERT_GROUP as _;
+        g.cur_level = 2;
+        assert_eq!(walk_save_stack(&mut g), None);
+    }
+
+    #[test]
+    fn the_last_scanned_file_name_is_not_compared() {
+        // (lane AUDIT-MATH, the pdfTeX engine's #2552) `cur_name`,
+        // `cur_area` and `cur_ext` are scratch between commands: `\font` of
+        // a font loaded before sets `cur_name` to that font's name, so two
+        // runs that last scanned different names differ there though
+        // nothing reads it before setting it again; the convergence test
+        // left such a word unexplained and found the states different
+        for n in ["cur_name", "cur_area", "cur_ext"] {
+            assert!(dead_scalar(n) && scalar_covered(n), "{n}");
+        }
+    }
 }
