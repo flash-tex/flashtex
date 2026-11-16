@@ -873,8 +873,10 @@ pub fn set_no_pdf(g: &mut Globals, on: bool) {
 /// XeTeX's `BANNER` (xetexextra.h), the same text as xetex.web's banner.
 pub const BANNER: &str = "This is XeTeX, Version 3.141592653-2.6-0.999998";
 
-/// `-help` (texmfmp-help.h's XETEXHELP), as TeX Live 2026's `xetex --help`
-/// prints it.
+/// `-help`: texmfmp-help.h's XETEXHELP as TeX Live 2026's `xetex --help`
+/// prints it, as the pdfTeX engine's `HELP` is pdfTeX's: without the options
+/// this engine refuses, which its last line names instead of the address
+/// for bug reports.
 pub const HELP: &str = r#"Usage: xetex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
    or: xetex [OPTION]... \FIRST-LINE
    or: xetex [OPTION]... &FMT ARGS
@@ -903,10 +905,6 @@ pub const HELP: &str = r#"Usage: xetex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
 -interaction=STRING     set interaction mode (STRING=batchmode/nonstopmode/
                           scrollmode/errorstopmode)
 -jobname=STRING         set the job name to STRING
--kpathsea-debug=NUMBER  set path searching debugging flags according to
-                          the bits of NUMBER
-[-no]-mktex=FMT         disable/enable mktexFMT generation (FMT=tex/tfm)
--mltex                  enable MLTeX extensions such as \charsubdef
 -output-comment=STRING  use STRING for XDV file comment instead of date
 -output-directory=DIR   use existing DIR as the directory to write files in
 -output-driver=CMD      use CMD as the XDV-to-PDF driver instead of xdvipdfmx
@@ -917,18 +915,13 @@ pub const HELP: &str = r#"Usage: xetex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
 -recorder               enable filename recorder
 [-no]-shell-escape      disable/enable \write18{SHELL COMMAND}
 -shell-restricted       enable restricted \write18
--src-specials           insert source specials into the XDV file
--src-specials=WHERE     insert source specials in certain places of
-                          the XDV file. WHERE is a comma-separated value
-                          list: cr display hbox math par parend vbox
--synctex=NUMBER         generate SyncTeX data for previewers according to
-                          bits of NUMBER (`man synctex' for details)
 -translate-file=TCXNAME (ignored)
 -8bit                   make all characters printable, don't use ^^X sequences
 -help                   display this help and exit
 -version                output version information and exit
 
-Email bug reports to xetex@tug.org (https://lists.tug.org/xetex).
+Not implemented by this engine yet: -kpathsea-debug, -mktex, -no-mktex,
+-mltex, -src-specials, -synctex.
 "#;
 
 /// XeTeX's command line for the pdfTeX engine's parser
