@@ -2555,8 +2555,13 @@ fn files_outside_the_document_are_watched_and_their_changes_seen() {
     }
     let dir = std::env::temp_dir().join(format!("flashtex-host-fswatch-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    // the file outside the document, its time in the past (a signature taken
-    // within its file's time tick is racy: compared by content, not kept)
+    // the file outside the document, its modification time in the past (a
+    // signature taken within its file's time tick is racy: compared by
+    // content, not kept). Its change time is now, though, and counts too
+    // (`statsig::racy_at`): where the first two compiles take less than the
+    // 2 s window (the NixOS PC: 0.3 s for the three, #2541) every check
+    // found it racy and nothing was kept, so the host runs with no window
+    // (`FLASHTEX_RACY_MS=0`).
     let ext = dir.join("ext").join("ext.tex");
     std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
     let write_ext = |word: &str, ago: u64| {
@@ -2576,7 +2581,11 @@ fn files_outside_the_document_are_watched_and_their_changes_seen() {
     };
     let (proj, out) = project(&dir, &doc("One"));
     let err = dir.join("host.err");
-    let h = start_with(&dir, &[("FLASHTEX_FSWATCH_DEBUG", "1")], &err);
+    let h = start_with(
+        &dir,
+        &[("FLASHTEX_FSWATCH_DEBUG", "1"), ("FLASHTEX_RACY_MS", "0")],
+        &err,
+    );
     let mut c = Client::connect(&h.sock).unwrap();
     let log = || std::fs::read_to_string(Path::new(&out).join("main.log")).unwrap();
     let compile = |c: &mut Client, id: i64, text: String| {
