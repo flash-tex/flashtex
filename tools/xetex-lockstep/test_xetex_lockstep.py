@@ -164,6 +164,23 @@ class UnreadableFontPaths(unittest.TestCase):
             self.assertEqual(b, b0)
 
 
+class ReadLog(unittest.TestCase):
+    """A log over the limit is not read (luwiantype's 16 GB log OOM-killed a
+    run, 2026-11-16); its size is returned instead."""
+
+    def test_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "t.log")
+            self.assertEqual(latex.read_log(p), ("", None))
+            with open(p, "wb") as f:
+                f.write(b"line \xce\n" * 10)
+            text, big = latex.read_log(p, limit=100)
+            self.assertIsNone(big)
+            self.assertEqual(text, b"line \xce\n".decode("utf-8", "surrogateescape") * 10)
+            self.assertEqual(latex.read_log(p, limit=50), ("", 70))
+            self.assertEqual(latex.MAX_LOG_BYTES, 1 << 30)
+
+
 class XetexTestSteps(unittest.TestCase):
 
     def test_known_tests(self):

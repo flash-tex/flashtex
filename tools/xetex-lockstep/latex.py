@@ -165,11 +165,31 @@ def accept_unreadable_font_paths(a, b):
     return n
 
 
+# A log is read whole; one larger than this is not read (a document that
+# loops on errors under xelatex writes gigabytes before the timeout: TeX
+# Live's luwiantype documentation, a LuaLaTeX document, wrote 16 GB in nine
+# minutes, and reading it killed the run's memory scope).
+MAX_LOG_BYTES = 1 << 30
+
+
+def read_log(path, limit=None):
+    """(text, None): the log at `path`, empty if there is none; (empty,
+    size) when it is larger than `limit` (default MAX_LOG_BYTES)."""
+    limit = MAX_LOG_BYTES if limit is None else limit
+    if not os.path.exists(path):
+        return "", None
+    size = os.path.getsize(path)
+    if size > limit:
+        return "", size
+    return open(path, encoding="utf-8", errors="surrogateescape").read(), None
+
+
 def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     src = src or os.path.join(CASES, name + ".tex")
     meta = case_meta(src)
     res = {}
     secs = {}
+    big = {}
     for who in ("reference", "candidate"):
         d = os.path.join(tmp, name, who)
         stage(src, name, d)
@@ -187,8 +207,7 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
         except subprocess.TimeoutExpired:
             code = "timeout"
         logp = os.path.join(d, name + ".log")
-        log = open(logp, encoding="utf-8", errors="surrogateescape").read() \
-            if os.path.exists(logp) else ""
+        log, big[who] = read_log(logp)
         # the first TeX error, and an engine's panic, for the report
         first_error = next((ln for ln in log.split("\n") if ln.startswith("! ")), None)
         stderr = open(errp, encoding="utf-8", errors="replace").read()
@@ -205,6 +224,9 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     (rc, a, rxdv, rerr, _), (cc, b, cxdv, cerr, cpanic) = res["reference"], res["candidate"]
     if rc != cc:
         msgs.append("exit status reference=%s candidate=%s" % (rc, cc))
+    for who in ("reference", "candidate"):
+        if big[who]:
+            msgs.append("%s's log not compared: %d bytes (over %d)" % (who, big[who], MAX_LOG_BYTES))
     notes = []  # shown, not failures: the oracle decides what a document does
     if rc != 0 and rerr:
         notes.append("reference's first error: %s" % rerr[:200])
