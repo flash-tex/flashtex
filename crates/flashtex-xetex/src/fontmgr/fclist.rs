@@ -328,6 +328,48 @@ mod tests {
         assert!(by_bucket[0].file.ends_with("FreeSerif.ttf"));
     }
 
+    /// #2545 end to end over TeX Live's own files, where installed (the PC's
+    /// `~/texlive/2026`, MacTeX's `/usr/local/texlive/2026`): read from the
+    /// files and given in directory order, `FreeSerif` resolves to the
+    /// `.ttf`, as `fc-list` lists it first at both places.
+    #[test]
+    fn freeserif_resolves_to_the_ttf_over_texlives_files() {
+        use super::super::{FontCatalog, FontMgr};
+        let roots = [
+            std::env::var("HOME").unwrap_or_default() + "/texlive/2026",
+            "/usr/local/texlive/2026".to_string(),
+        ];
+        let Some(root) = roots.iter().find(|r| {
+            Path::new(&format!(
+                "{r}/texmf-dist/fonts/truetype/public/gnu-freefont/FreeSerif.ttf"
+            ))
+            .exists()
+        }) else {
+            eprintln!("skipped: no TeX Live 2026 gnu-freefont");
+            return;
+        };
+        let file = |kind: &str, ext: &str| {
+            std::path::PathBuf::from(format!(
+                "{root}/texmf-dist/fonts/{kind}/public/gnu-freefont/FreeSerif.{ext}"
+            ))
+        };
+        let catalog = FontCatalog::from_files(vec![
+            (file("opentype", "otf"), 0),
+            (file("truetype", "ttf"), 0),
+        ])
+        .fc_list_ordered();
+        let mut m = FontMgr::new(std::sync::Arc::new(catalog));
+        let l = m
+            .locate_with("FreeSerif", 10 << 16, &mut |_, _| None)
+            .unwrap();
+        assert!(
+            l.path
+                .ends_with("truetype/public/gnu-freefont/FreeSerif.ttf"),
+            "{}",
+            l.path
+        );
+    }
+
     /// fontconfig keeps the first of two names equal but for case and
     /// blanks, in its own order (typographic family before family): TeX
     /// Live's `TeXGyreScholaX-Bold.otf` is family `TeX Gyre ScholaX`
