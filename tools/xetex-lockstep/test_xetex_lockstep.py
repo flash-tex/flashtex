@@ -178,7 +178,58 @@ class ReadLog(unittest.TestCase):
             self.assertIsNone(big)
             self.assertEqual(text, b"line \xce\n".decode("utf-8", "surrogateescape") * 10)
             self.assertEqual(latex.read_log(p, limit=50), ("", 70))
-            self.assertEqual(latex.MAX_LOG_BYTES, 1 << 30)
+            # REVIEW-5 #2546: a 1 GiB log read as text costs several GiB
+            self.assertLessEqual(latex.MAX_LOG_BYTES, 256 << 20)
+            self.assertLessEqual(latex.MAX_LOG_DISK_BYTES, latex.MAX_LOG_BYTES)
+
+
+class RunWatched(unittest.TestCase):
+    """REVIEW-5 #2546: an engine whose log grows without bound is stopped
+    (luwiantype wrote 16 GB to tmp/ before the timeout)."""
+
+    def _run(self, code, timeout=30, limit=1 << 16):
+        with tempfile.TemporaryDirectory() as d:
+            logp = os.path.join(d, "t.log")
+            return latex.run_watched([sys.executable, "-c", code, logp], logp, timeout,
+                                     limit=limit, poll=0.05, cwd=d), logp
+
+    def test_runaway_log_is_stopped(self):
+        code = ("import sys,time\nf=open(sys.argv[1],'w')\n"
+                "while True:\n f.write('x'*4096+'\\n'); f.flush(); time.sleep(0.001)")
+        t = latex.time.time()
+        got, _ = self._run(code)
+        self.assertEqual(got, latex.RUNAWAY)
+        self.assertLess(latex.time.time() - t, 20)
+
+    def test_timeout(self):
+        got, _ = self._run("import time; time.sleep(30)", timeout=0.3)
+        self.assertEqual(got, "timeout")
+
+    def test_exit_status(self):
+        got, _ = self._run("import sys; open(sys.argv[1],'w').write('ok\\n'); sys.exit(3)")
+        self.assertEqual(got, 3)
+
+    def test_runaway_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "t.tex")
+            open(src, "w").close()
+            calls = []
+
+            def fake(cmd, logp, timeout, **kw):
+                calls.append(cmd)
+                return latex.RUNAWAY if "reference" in kw["cwd"] else 0
+            with mock.patch.object(latex, "run_watched", fake), \
+                    mock.patch.object(latex, "stage", lambda *a: os.makedirs(a[2], exist_ok=True)), \
+                    mock.patch.object(latex, "link", lambda *a: "xelatex"), \
+                    mock.patch.object(latex, "env_for", lambda *a: {}), \
+                    mock.patch.object(latex.X, "compare_xdv", lambda *a: None):
+                _, ok, msgs, _, _ = latex.run_case("t", {"reference": "r", "candidate": "c"},
+                                                  {"reference": "", "candidate": ""}, tmp, 5, src)
+            self.assertFalse(ok)
+            self.assertIn("reference: runaway log, stopped past %d bytes" % latex.MAX_LOG_DISK_BYTES,
+                          msgs)
+            # the reference's traced pass is not run after a runaway first pass
+            self.assertEqual(len(calls), 3)
 
 
 class XetexTestSteps(unittest.TestCase):

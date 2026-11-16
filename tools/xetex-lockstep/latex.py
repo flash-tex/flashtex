@@ -35,6 +35,7 @@ import fnmatch
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -177,8 +178,47 @@ def accept_unreadable_font_paths(a, b):
 # A log is read whole; one larger than this is not read (a document that
 # loops on errors under xelatex writes gigabytes before the timeout: TeX
 # Live's luwiantype documentation, a LuaLaTeX document, wrote 16 GB in nine
-# minutes, and reading it killed the run's memory scope).
-MAX_LOG_BYTES = 1 << 30
+# minutes, and reading it killed the run's memory scope). Read as str and
+# split into lines, a log costs several times its size, and two are held at
+# once: 256 MiB keeps a case well inside the PC's 10G scope (REVIEW-5 #2546).
+MAX_LOG_BYTES = 256 << 20
+
+# An engine whose log grows past this is stopped and its case marked
+# "runaway log": no larger log is compared, so the rest is only disk (the
+# 16-22 GB written to tmp/ before the timeout).
+MAX_LOG_DISK_BYTES = MAX_LOG_BYTES
+RUNAWAY = "runaway log"
+
+
+def run_watched(cmd, logp, timeout, limit=None, poll=0.5, **kw):
+    """Run `cmd` (subprocess.Popen keyword arguments in `kw`) like
+    subprocess.run: its exit status, "timeout" when it runs past `timeout`
+    seconds, or RUNAWAY when the file at `logp` grows past `limit` bytes
+    (default MAX_LOG_DISK_BYTES). A stopped engine is killed with its
+    process group."""
+    limit = MAX_LOG_DISK_BYTES if limit is None else limit
+    proc = subprocess.Popen(cmd, start_new_session=True, **kw)
+    end = time.time() + timeout
+    why = None
+    while True:
+        try:
+            return proc.wait(timeout=poll)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            if os.path.getsize(logp) > limit:
+                why = RUNAWAY
+        except OSError:
+            pass
+        if why is None and time.time() > end:
+            why = "timeout"
+        if why:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            return why
 
 
 def read_log(path, limit=None):
@@ -206,16 +246,14 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
         env = env_for(fmts[who])
         t = time.time()
         errp = os.path.join(d, ".stderr")
-        try:
-            with open(errp, "wb") as err:
-                subprocess.run([exe] + RUN_ARGS + [doc_arg(name, meta, False)], cwd=d, env=env,
-                               stdout=subprocess.DEVNULL, stderr=err, timeout=timeout)
-                r = subprocess.run([exe] + RUN_ARGS + [doc_arg(name, meta, True)], cwd=d, env=env,
-                                   stdout=subprocess.DEVNULL, stderr=err, timeout=timeout)
-            code = r.returncode
-        except subprocess.TimeoutExpired:
-            code = "timeout"
         logp = os.path.join(d, name + ".log")
+        with open(errp, "wb") as err:
+            code = None
+            for traced in (False, True):
+                code = run_watched([exe] + RUN_ARGS + [doc_arg(name, meta, traced)], logp, timeout,
+                                   cwd=d, env=env, stdout=subprocess.DEVNULL, stderr=err)
+                if not isinstance(code, int):
+                    break
         log, big[who] = read_log(logp)
         # the first TeX error, and an engine's panic, for the report
         first_error = next((ln for ln in log.split("\n") if ln.startswith("! ")), None)
@@ -236,6 +274,9 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     for who in ("reference", "candidate"):
         if big[who]:
             msgs.append("%s's log not compared: %d bytes (over %d)" % (who, big[who], MAX_LOG_BYTES))
+    for who, c in (("reference", rc), ("candidate", cc)):
+        if c == RUNAWAY:
+            msgs.append("%s: runaway log, stopped past %d bytes" % (who, MAX_LOG_DISK_BYTES))
     notes = []  # shown, not failures: the oracle decides what a document does
     if rc != 0 and rerr:
         notes.append("reference's first error: %s" % rerr[:200])
