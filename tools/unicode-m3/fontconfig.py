@@ -60,28 +60,40 @@ def fontconfig_dirs():
     try:
         out = subprocess.run(["fc-list", "-f", "%{file}\n"], env=env, capture_output=True,
                              text=True, timeout=120).stdout
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as e:
+        print("fontconfig.py: warning: fc-list failed (%s); only the port's own system "
+              "directories are checked for duplicates" % e, file=sys.stderr)
         return []
     return sorted({os.path.dirname(f) for f in out.splitlines() if os.path.isabs(f)})
 
 
 def outside(dirs, roots):
-    """The directories of `dirs` under none of `roots`."""
+    """The directories of `dirs` under none of `roots` (compared both as given
+    and with symbolic links resolved)."""
     def under(d, r):
         return d == r or d.startswith(r.rstrip("/") + "/")
-    return [d for d in dirs if not any(under(d, r) for r in roots)]
+
+    def forms(p):
+        return {p, os.path.realpath(p)}
+    return [d for d in dirs
+            if not any(under(a, b) for r in roots for a in forms(d) for b in forms(r))]
 
 
-def system_dirs():
+def system_dirs(tl_dirs=()):
     """Every system font directory xelatex can see: the port's own and
-    fontconfig's."""
-    return port_dirs() + outside(fontconfig_dirs(), port_dirs())
+    fontconfig's. A system fontconfig may already include TeX Live's own font
+    tree (TeX Live's 09-texlive-fonts.conf set-up); those directories are TeX
+    Live's, not the system's, and are left out (REVIEW-5 on #2526)."""
+    return port_dirs() + outside(outside(fontconfig_dirs(), port_dirs()), list(tl_dirs))
 
 
 def config(tl_dirs, cache_dir, sys_dirs):
     tl_names = {os.path.basename(f) for d in tl_dirs for f in files_under(d)}
+    # TeX Live's own files are never rejected, even when a system directory
+    # given here is TeX Live's tree or contains it.
     rejected = [f for d in sys_dirs for f in files_under(d)
-                if os.path.basename(f) in tl_names]
+                if os.path.basename(f) in tl_names
+                and outside([os.path.dirname(f)], tl_dirs)]
     lines = ['<?xml version="1.0"?>',
              '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
              "<fontconfig>",
@@ -130,7 +142,7 @@ def main(argv=None):
         ap.error("--texlive and --out are required")
     tl_dirs = [os.path.join(a.texlive, "texmf-dist", "fonts", x) for x in ("opentype", "truetype")]
     os.makedirs(a.out, exist_ok=True)
-    sys_dirs = system_dirs()
+    sys_dirs = system_dirs(tl_dirs)
     text, rejected = config(tl_dirs, os.path.join(a.out, "fc-cache"), sys_dirs)
     path = os.path.join(a.out, "fonts.conf")
     with open(path, "w") as f:

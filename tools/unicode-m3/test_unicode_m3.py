@@ -170,6 +170,33 @@ class FontconfigSystemDirs(unittest.TestCase):
             _, rejected = fontconfig.config([tl], "/c", [nix])
             self.assertEqual(rejected, [os.path.join(nix, "texgyretermes-regular.otf")])
 
+    def test_texlives_own_dirs_listed_by_fontconfig_are_kept(self):
+        # REVIEW-5 on #2526: a system fontconfig that already includes TeX
+        # Live's font tree lists TeX Live's directories; they must not become
+        # "system" directories whose files are rejected as duplicates.
+        with tempfile.TemporaryDirectory() as tmp:
+            tl = os.path.join(tmp, "texmf-dist", "fonts", "opentype")
+            tl_sub = os.path.join(tl, "public", "tex-gyre")
+            nix = os.path.join(tmp, "nix")
+            for d in (tl_sub, nix):
+                os.makedirs(d)
+                _w(os.path.join(d, "texgyretermes-regular.otf"), "")
+            link = os.path.join(tmp, "fonts-link")
+            os.symlink(tl, link)
+            listed = [tl_sub, os.path.join(link, "public", "tex-gyre"), nix]
+            saved = fontconfig.fontconfig_dirs
+            fontconfig.fontconfig_dirs = lambda: listed
+            try:
+                got = fontconfig.system_dirs([tl])
+            finally:
+                fontconfig.fontconfig_dirs = saved
+            self.assertEqual(got, fontconfig.port_dirs() + [nix])
+            _, rejected = fontconfig.config([tl], "/c", got)
+            self.assertEqual(rejected, [os.path.join(nix, "texgyretermes-regular.otf")])
+            # config() keeps TeX Live's files even if handed TeX Live's tree.
+            _, rejected = fontconfig.config([tl], "/c", [tmp])
+            self.assertEqual(rejected, [os.path.join(nix, "texgyretermes-regular.otf")])
+
 
 class SummarizeLoad(unittest.TestCase):
 
