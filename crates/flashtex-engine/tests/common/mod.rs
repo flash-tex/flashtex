@@ -149,6 +149,16 @@ pub fn capacity_cases(m: &str, body: &str, big: usize, fill: usize) -> Vec<(&'st
 #[allow(dead_code)]
 pub const MEMORY_AGAIN: &str = "running again without replays";
 
+/// The rerun's reason when the run stopped with `main memory size` (#2309's
+/// second piece; `capacity::RAN_OUT`).
+#[allow(dead_code)]
+pub const MEMORY_RAN_OUT: &str = "main memory ran out after replayed calls";
+
+/// The rerun's reason when the run ended within an eighth of main memory's
+/// end without stopping (#2309's third piece; `capacity::NEARLY_RAN_OUT`).
+#[allow(dead_code)]
+pub const MEMORY_NEARLY: &str = "main memory nearly ran out (less than an eighth left)";
+
 /// An INITEX file whose `main memory size` overflow comes later when calls
 /// of the macro `m` were replayed (#2309): `defs` (which define `\m`),
 /// three calls, `after` (what takes up the memory those calls freed), one

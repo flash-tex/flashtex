@@ -5016,13 +5016,11 @@ impl Session {
         if rep.paused || !crate::capacity::take_rerun() {
             return None;
         }
+        let why = crate::capacity::rerun_why();
         if self.opts.debug {
-            eprintln!("[incr] main memory ran out, or nearly, after replayed calls: again without replays");
+            eprintln!("[incr] {why}: again without replays");
         }
-        self.force_cold = Some(
-            "main memory ran out, or nearly, after replayed calls: again without replays (#2309)"
-                .into(),
-        );
+        self.force_cold = Some(format!("{why}: again without replays (#2309)"));
         Some(self.compile(stop_at))
     }
 

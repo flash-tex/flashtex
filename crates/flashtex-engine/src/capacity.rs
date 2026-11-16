@@ -167,6 +167,12 @@ thread_local! {
     /// A run of this thread stopped with `main memory size`, or ended within
     /// an eighth of it ([`Globals::flashtex_cap_run_end`]).
     static MEM_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// [`MEM_FULL`] was set by the end check alone (the third piece, "Near
+    /// the limit"), not by an overflow.
+    static MEM_NEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The last rerun [`take_rerun`] asked for was the third piece's
+    /// ([`rerun_why`]).
+    static RERUN_NEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Calls replayed (BOX-MEMO and D9, not their verify modes) by the
     /// engines of this thread since [`new_run`]. Never restored with a
     /// checkpoint: it counts the replays of abandoned runs too, and a state
@@ -187,6 +193,36 @@ pub(crate) fn note_replay() {
 pub fn new_run() {
     REPLAYS.with(|r| r.set(0));
     MEM_FULL.with(|f| f.set(false));
+    MEM_NEAR.with(|f| f.set(false));
+}
+
+/// Why a run is made again without replays, in its message: the second
+/// piece (it stopped with `main memory size`) or the third (it ended within
+/// an eighth of main memory's end without stopping), so that a test can
+/// tell which one fired.
+pub const RAN_OUT: &str = "main memory ran out after replayed calls";
+/// See [`RAN_OUT`].
+pub const NEARLY_RAN_OUT: &str =
+    "main memory nearly ran out (less than an eighth left) after replayed calls";
+
+/// A host's report mode for the rerun: `cold-after-memory` (second
+/// piece) or `cold-after-memory-near` (third).
+pub fn rerun_mode() -> &'static str {
+    if RERUN_NEAR.with(|n| n.get()) {
+        "cold-after-memory-near"
+    } else {
+        "cold-after-memory"
+    }
+}
+
+/// Which of [`RAN_OUT`] and [`NEARLY_RAN_OUT`] the last rerun
+/// [`take_rerun`] asked for was for.
+pub fn rerun_why() -> &'static str {
+    if RERUN_NEAR.with(|n| n.get()) {
+        NEARLY_RAN_OUT
+    } else {
+        RAN_OUT
+    }
 }
 
 /// The engine goes on from a state another process left (S₀, S₁): whether
@@ -220,6 +256,7 @@ fn rerun_enabled() -> bool {
 /// replays back on.
 pub fn take_rerun() -> bool {
     let full = MEM_FULL.with(|f| f.replace(false));
+    let near = MEM_NEAR.with(|f| f.replace(false));
     if !rerun_enabled() {
         return false;
     }
@@ -232,21 +269,20 @@ pub fn take_rerun() -> bool {
         return false;
     }
     set_replays_off(true);
+    RERUN_NEAR.with(|n| n.set(near));
     true
 }
 
 /// The command-line engine starts over without replays (module
 /// documentation). Returns only if it could not.
-fn rerun_process() {
+fn rerun_process(why: &str) {
     use std::io::Write;
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
     let mut args = std::env::args_os();
     let arg0 = args.next();
-    eprintln!(
-        "flashtex: main memory ran out, or nearly, after replayed calls; running again without replays"
-    );
+    eprintln!("flashtex: {why}; running again without replays");
     let _ = std::io::stdout().flush();
     let mut c = std::process::Command::new(exe);
     c.args(args)
@@ -311,15 +347,23 @@ impl Globals {
     /// ran out (module documentation, "Near the limit").
     pub fn flashtex_cap_run_end(&mut self) {
         if self.hi_mem_min - self.lo_mem_max < mem_max / 8 {
-            self.flashtex_cap_mem_full();
+            self.cap_mem_full(true);
         }
     }
 
     pub fn flashtex_cap_mem_full(&mut self) {
+        self.cap_mem_full(false);
+    }
+
+    /// `near`: the end check, not an overflow (an overflow already noted
+    /// keeps its reason).
+    fn cap_mem_full(&mut self, near: bool) {
         if crate::system::is_resident() {
-            MEM_FULL.with(|f| f.set(true));
+            if !MEM_FULL.with(|f| f.replace(true)) {
+                MEM_NEAR.with(|f| f.set(near));
+            }
         } else if rerun_enabled() && !replays_off() && REPLAYS.with(|r| r.get()) > 0 {
-            rerun_process();
+            rerun_process(if near { NEARLY_RAN_OUT } else { RAN_OUT });
         }
     }
 

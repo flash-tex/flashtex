@@ -520,7 +520,7 @@ impl Session {
                     // from the format, without replays (`crate::capacity`)
                     if crate::capacity::take_rerun() {
                         let mut r = self.cold()?;
-                        r.mode = "cold-after-memory".into();
+                        r.mode = crate::capacity::rerun_mode().into();
                         r.total_s = t0.elapsed().as_secs_f64();
                         return Ok(r);
                     }
@@ -578,7 +578,7 @@ impl Session {
         if crate::capacity::take_rerun() {
             drop(g);
             let mut r = self.cold()?;
-            r.mode = "cold-after-memory".into();
+            r.mode = crate::capacity::rerun_mode().into();
             r.total_s = t0.elapsed().as_secs_f64();
             return Ok(r);
         }

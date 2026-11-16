@@ -538,6 +538,9 @@ fn a_run_that_replayed_and_runs_out_of_main_memory_is_made_again() {
     let on = run(&d, "on", "hook");
     assert_eq!(off.log, on.log, "log with intrinsics on differs");
     assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
+    // the second piece fired (the replaying run overflowed), not the third
+    assert!(on.err.contains(common::MEMORY_RAN_OUT), "{}", on.err);
+    assert!(!on.err.contains(common::MEMORY_NEARLY), "{}", on.err);
 }
 
 /// `\globaldefs<0` turns every global assignment local (tex.web §1214): a

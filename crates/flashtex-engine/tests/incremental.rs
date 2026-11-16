@@ -2457,6 +2457,9 @@ fn a_run_that_replayed_and_runs_out_of_main_memory_is_compiled_again() {
         "the edit",
     );
     assert!(r.contains("again without replays"), "{r}");
+    // the second piece (the replaying run overflowed), not the third
+    assert!(r.contains(common::MEMORY_RAN_OUT), "{r}");
+    assert!(!r.contains(common::MEMORY_NEARLY), "{r}");
     // the next one runs without replays (the last run ended in that
     // overflow), and is right too
     let r = compile_and_check(
@@ -2560,6 +2563,10 @@ fn a_run_that_replayed_and_ends_near_main_memorys_end_is_compiled_again() {
         "the edit",
     );
     assert!(r.contains("again without replays"), "{r}");
+    // the third piece: the replaying run ended without overflowing (its
+    // drift is more than five steps), so it is not the second piece again
+    assert!(r.contains(common::MEMORY_NEARLY), "{r}");
+    assert!(!r.contains(common::MEMORY_RAN_OUT), "{r}");
     let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
     assert!(log.contains(full), "{log}");
     // far from the limit again: no second compile, and replays back

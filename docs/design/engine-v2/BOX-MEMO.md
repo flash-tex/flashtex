@@ -1101,8 +1101,20 @@ the format with replays and recordings off, by piece 2's path, and that run is s
   `jump_out` and of `-halt-on-error` (not of the few that exit at once, a broken image say), and
   starts over as for piece 2; a resident engine checks
   in `catch_exit` after `run_to_end`/`resume_to_end` (not for a run its host paused), and the host
-  runs the document again (`capacity::take_rerun`; the report's `cold_reason` says "main memory ran
-  out, or nearly, after replayed calls").
+  runs the document again (`capacity::take_rerun`).
+- Which piece fired is visible: piece 2's rerun says "main memory ran out after replayed calls",
+  piece 3's "main memory nearly ran out (less than an eighth left) after replayed calls"
+  (`capacity::RAN_OUT`, `NEARLY_RAN_OUT`), on standard error for the command-line engine, in the
+  report's `cold_reason` for `incr`, and in `host`'s report mode (`cold-after-memory`,
+  `cold-after-memory-near`). The tests assert the reason, so a near-limit test cannot pass on
+  piece 2 by accident (REVIEW-6 on #2502).
+- Not settled: an incremental compile that converges early (the host stops the run and keeps the
+  previous run's tail) does not reach `catch_exit`'s end check. The structural comparison does not
+  require `lo_mem_max` and `hi_mem_min` to be equal (`iso::scalar_covered` counts them as the
+  allocator's bookkeeping), so the converged run's room is not shown to equal the previous run's
+  checked end. A compile carrying replays that converges with less room than the previous run had
+  is therefore not checked; whether that can put it within an eighth when the previous run was not
+  is open (#2502's review, item 4).
 - Replays stay off until a compile ends below 7/8 of main memory (as after piece 2's overflow), so a
   document that stays near the limit is compiled once per edit, without replays, not twice.
 - Cost: one extra compile from the format, once, for a document that uses more than 7/8 of main

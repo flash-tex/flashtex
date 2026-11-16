@@ -733,6 +733,9 @@ fn a_run_that_replayed_and_runs_out_of_main_memory_is_made_again() {
     let on = run(&d, "on", "measure");
     assert_eq!(off.log, on.log, "log with BOX-MEMO on differs");
     assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
+    // the second piece fired (the replaying run overflowed), not the third
+    assert!(on.err.contains(common::MEMORY_RAN_OUT), "{}", on.err);
+    assert!(!on.err.contains(common::MEMORY_NEARLY), "{}", on.err);
 }
 
 #[test]
@@ -764,6 +767,9 @@ fn a_run_that_replayed_and_ends_near_main_memorys_end_is_made_again() {
     assert_eq!(off.log, on.log, "log with BOX-MEMO on differs");
     assert_eq!(on.code, Some(1), "{}", on.err);
     assert!(on.err.contains(common::MEMORY_AGAIN), "{}", on.err);
+    // the third piece fired (the replaying run survived), not the second
+    assert!(on.err.contains(common::MEMORY_NEARLY), "{}", on.err);
+    assert!(!on.err.contains(common::MEMORY_RAN_OUT), "{}", on.err);
 }
 
 #[test]
