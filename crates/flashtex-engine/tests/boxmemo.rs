@@ -791,14 +791,15 @@ fn a_fraction_at_the_calls_level_never_replays() {
         );
         let s = check(tag, &src);
         assert_eq!(stat(&s, "hits"), 0, "{tag}: {s}");
+        assert!(stat(&s, "Command") >= 1, "{tag}: {s}");
     }
-    // a fraction in the call's own math group is the call's: it still replays
+    // a fraction in a math list the call made is the call's: it still
+    // replays
     let s = check(
-        "over-in-group",
+        "over-in-own-list",
         &format!(
-            "{head}\\def\\measure{{{{\\x\\over\\x}}}}\n\
-             \\setbox1\\hbox{{$\\measure$}}\\showbox1 \\setbox1\\hbox{{$\\measure$}}\\showbox1 \
-             \\setbox1\\hbox{{$\\measure$}}\\showbox1 \\end\n"
+            "{head}\\def\\measure{{\\setbox1\\hbox{{$\\x\\over\\x$}}}}\n\
+             \\measure\\showbox1 \\measure\\showbox1 \\measure\\showbox1 \\end\n"
         ),
     );
     assert!(stat(&s, "hits") >= 1, "{s}");
