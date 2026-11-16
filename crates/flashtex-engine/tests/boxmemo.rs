@@ -688,6 +688,32 @@ fn the_space_factor_at_a_draw_call_is_part_of_the_key() {
 }
 
 #[test]
+fn a_call_that_typesets_math_leaves_no_style_to_compare() {
+    // (lane AUDIT-MATH) `mlist_to_hlist`'s implicit parameters are scratch
+    // between commands: a call that typesets a formula (amsmath's
+    // `\@mathmeasure`) leaves `cur_style` at text style, and its replay
+    // after a `\scriptstyle` formula leaves it at script style. The full
+    // verifier reported "cur_style: 0x2 -> 0x4" for every such replay
+    // (cmr10 stands in for families 2 and 3, its parameters extended)
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "mlist-scratch",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\$=3 \\scrollmode\n\
+         \\font\\sy=cmr10 scaled 1001 \\fontdimen22\\sy=0pt\n\
+         \\font\\ex=cmr10 scaled 1002 \\fontdimen13\\ex=0pt\n\
+         \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy\n\
+         \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex\n\
+         \\def\\measure{\\setbox0\\hbox{$\\relax$}}\n\
+         \\measure \\setbox1\\hbox{$\\scriptstyle$}\\measure \\setbox1\\hbox{$\\scriptstyle$}\\measure\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn hyphenation_exceptions_are_part_of_the_key() {
     // K5's `bm_hyph_version` (BOX-MEMO.md §3): a `\hyphenation` between
     // two calls that break the same paragraph gives the second call other

@@ -2067,6 +2067,18 @@ const DEAD_SCALARS: &[&str] = &[
     "def_ref",
     "cur_box",
     "cur_mlist",
+    // `mlist_to_hlist`'s other implicit parameters and what it derives from
+    // them: `after_math` and `clean_box`, its only callers outside itself,
+    // set `cur_style` and `mlist_penalties` before each call, and it sets
+    // up `cur_size` and `cur_mu` from `cur_style` before it reads them
+    // (pdftex.web "Set up the values of |cur_size| and |cur_mu|"); nothing
+    // outside it and its subroutines reads any of the four. A call that
+    // typesets math (amsmath's `\@mathmeasure`) leaves them as its last
+    // formula did, and its replay leaves them as they were (lane AUDIT-MATH)
+    "cur_style",
+    "cur_size",
+    "cur_mu",
+    "mlist_penalties",
     "just_box",
     "passive",
     "printed_node",
