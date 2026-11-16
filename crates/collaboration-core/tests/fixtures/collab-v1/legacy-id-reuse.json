@@ -1,7 +1,7 @@
 {
   "format": "collab-v1-fixture/1",
   "name": "legacy-id-reuse",
-  "description": "id_reuse_divergence.rs in collab-v1: ids reused with different content (scalar, delete target, insert vs delete, file op, file id) are refused, identical replays are duplicates; forward orders only",
+  "description": "id_reuse_divergence.rs in collab-v1: ids reused with different content (scalar, delete target, insert vs delete, file op) are refused, identical replays are duplicates, and a second create of a file id is merged; forward orders only",
   "generator": "rust oracle (crates/collaboration-core)",
   "frames": [
     "2300000005010100011d00011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d0100086d61696e2e746578",
@@ -19,12 +19,12 @@
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8]
   ],
   "expected": {
-    "project_digest": "ad83fd93819284ec",
-    "filemap_digest": "2b8fa0958edfda51",
+    "project_digest": "3355fd316ee0577e",
+    "filemap_digest": "78ca102fa95f93bf",
     "files": [
       {
         "file": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
-        "path": "main.tex",
+        "path": "other.tex",
         "kind": "text",
         "text": "a",
         "digest": "df56dba9285f7563"
@@ -34,12 +34,6 @@
       {
         "doc": "files",
         "replica": "000000000000001d",
-        "counter": 0,
-        "kind": "id_conflict"
-      },
-      {
-        "doc": "files",
-        "replica": "000000000000001e",
         "counter": 0,
         "kind": "id_conflict"
       },
