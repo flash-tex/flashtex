@@ -355,6 +355,9 @@ mod tests {
     /// index fullname weight width slant fontformat` over the directories in
     /// `FCLIST_DIRS` (`:`-separated). Prints, over the faces both list, the
     /// pairs of faces sharing a full name that are listed in another order.
+    /// A face fontconfig lists twice (a variable font's default instance and
+    /// its variable pattern, both index 0) counts at its first position, the
+    /// one `addToMaps` keeps.
     #[test]
     #[ignore]
     fn against_fc_list() {
@@ -363,15 +366,13 @@ mod tests {
             return;
         };
         let text = std::fs::read_to_string(oracle).unwrap();
-        let pos: std::collections::HashMap<(String, u32), usize> = text
-            .lines()
-            .enumerate()
-            .filter_map(|(n, l)| {
-                let mut it = l.split('\t');
-                let (f, i) = (it.next()?, it.next()?);
-                Some(((f.to_string(), i.parse().ok()?), n))
-            })
-            .collect();
+        let mut pos: std::collections::HashMap<(String, u32), usize> = Default::default();
+        for (n, l) in text.lines().enumerate() {
+            let mut it = l.split('\t');
+            if let (Some(f), Some(Ok(i))) = (it.next(), it.next().map(str::parse)) {
+                pos.entry((f.to_string(), i)).or_insert(n);
+            }
+        }
         let dirs: Vec<std::path::PathBuf> = dirs.split(':').map(Into::into).collect();
         let cat = if std::env::var_os("FCLIST_UNORDERED").is_some() {
             super::super::FontCatalog::from_files(
