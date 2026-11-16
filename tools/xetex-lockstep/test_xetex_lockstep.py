@@ -101,6 +101,26 @@ class FontFiles(unittest.TestCase):
         self.assertEqual(run.native_font_files(pre() + bytes([252])), [])
 
 
+class ReportLines(unittest.TestCase):
+    """A report line that quotes a log line with bytes that are not UTF-8
+    (read with `surrogateescape`, as run_case reads logs) is printed with
+    escapes, not lost to UnicodeEncodeError (session F, 2026-11-15:
+    `print("  " + m)` stopped a 467-document run at its 260th)."""
+
+    def test_non_utf8_log_line(self):
+        import io
+        line = b" -> ^^\xce\x29^^A".decode("utf-8", "surrogateescape")
+        strict = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")  # as stdout is
+        with self.assertRaises(UnicodeEncodeError):
+            print("  reference: " + line, file=strict)
+            strict.flush()
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding="utf-8")
+        latex.say("  reference: " + line, out)
+        out.flush()
+        self.assertTrue(raw.getvalue().endswith(b"  reference:  -> ^^\\udcce)^^A\n"))
+
+
 class XetexTestSteps(unittest.TestCase):
 
     def test_known_tests(self):

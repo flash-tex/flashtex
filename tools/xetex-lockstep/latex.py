@@ -207,6 +207,18 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     return name, not msgs, msgs + notes, len(a), info
 
 
+def say(text, stream=None):
+    """Print one report line. The logs are read with `surrogateescape`, so
+    a line quoted from one may hold bytes that are not UTF-8 (TeX Live's
+    xetex writes some: `Requested font ... -> ` followed by freed memory);
+    they are shown as `\\udcXX` escapes instead of stopping the run with
+    UnicodeEncodeError (session F of lane PARITY-HUNT lost 207 documents'
+    results so)."""
+    stream = stream or sys.stdout
+    enc = getattr(stream, "encoding", None) or "utf-8"
+    stream.write(text.encode(enc, "backslashreplace").decode(enc) + "\n")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--engine", required=True, help="candidate engine binary")
@@ -255,7 +267,7 @@ def main(argv=None):
     # It is shown, not hidden.
     fa, fb = logs["reference"], logs["candidate"]
     fdiff = [(x, y) for x, y in zip(fa, fb) if x != y]
-    print("format logs: %d lines, %d differ%s" % (
+    say("format logs: %d lines, %d differ%s" % (
         len(fa), len(fdiff) + abs(len(fa) - len(fb)),
         "".join("\n  ref:  %s\n  cand: %s" % p for p in fdiff[:5])))
     ok = 0
@@ -265,11 +277,11 @@ def main(argv=None):
                 lambda n: run_case(n, engines, fmts, tmp, a.timeout, srcs[n], a.keep), names):
             ok += good
             infos.append(info)
-            print("%s %s (%d log lines%s)" % ("PASS" if good else "FAIL", name, n,
-                                               ", box dumps only" if info["trace"] == "boxes" else ""),
-                  flush=True)
+            say("%s %s (%d log lines%s)" % ("PASS" if good else "FAIL", name, n,
+                                             ", box dumps only" if info["trace"] == "boxes" else ""))
             for m in msgs:
-                print("  " + m)
+                say("  " + m)
+            sys.stdout.flush()
     print("%d cases, %d equal, %d differ" % (len(names), ok, len(names) - ok))
     if a.json:
         with open(a.json, "w") as f:
