@@ -192,32 +192,16 @@ final class PdfTeXXObjectParityTests: XCTestCase {
         return diffs(prepared(mine, placements), reference)
     }
 
-    /// The 4cm and 1.1cm copies (7.1 and 1.95 bp per sample): drawn as the
-    /// PDF draws them, edges antialiased (with hard edges: up to 1,703 px
-    /// apart, Δ 252; run 43750699156).
+    /// The 4cm, 1.1cm and 0.35cm copies (7.1, 1.95 and 0.62 bp per
+    /// sample), drawn as the PDF draws them: edges antialiased and sampled
+    /// at high quality. In the U1 experiment the same case was, with hard
+    /// edges, 521/852/1,703 px apart at 1x/2x/4x (run 43750699156); at the
+    /// default quality the minified copy was 117 px apart at 1x (run
+    /// 43755355440).
     func testAOneBitGreyImage() throws {
-        for d in try Self.oneBitGreyDiffs(Array(Self.imagePlacements.prefix(2))) {
+        for d in try Self.oneBitGreyDiffs(Self.imagePlacements) {
             XCTAssertEqual(d.pixels, 0, "gray1.png at \(d.scale)x: \(d.pixels) px differ (max Δ \(d.maxDelta))")
         }
-    }
-
-    /// The 0.35cm copy (0.62 bp per sample) is drawn minified at 1x, where
-    /// Core Graphics' PDF path differs (117 px): the page falls back to the
-    /// PDF; the larger copies do not make it.
-    func testAOneBitImageDrawnSmallFallsBack() throws {
-        let image = try Self.oneBitGreyImage()
-        let m = Self.imagePlacements.map { let t = Self.ctm($0); return DL3Matrix(a: t.a, b: t.b, c: t.c, d: t.d, e: t.tx, f: t.ty) }
-        XCTAssertFalse(DL3Renderer.oneBitDrawnTooSmall(image, m[0]))
-        XCTAssertFalse(DL3Renderer.oneBitDrawnTooSmall(image, m[1]))
-        XCTAssertTrue(DL3Renderer.oneBitDrawnTooSmall(image, m[2]))
-        var bindings = DL3Bindings()
-        bindings.images[1] = .success(image)
-        var page = DL3Page(kind: .page, index: 0)
-        page.matrices = [m[1]]
-        page.items = [.image(id: 1, matrix: 1)]
-        XCTAssertFalse(bindings.prepare(page).needsPDFFallback)
-        page.matrices = [m[2]]
-        XCTAssertTrue(bindings.prepare(page).needsPDFFallback)
     }
 
     /// pv-images p11: a 16-bit RGBA PNG's SMask holds only the alpha's high
