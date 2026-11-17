@@ -223,6 +223,39 @@ class LatexCases(unittest.TestCase):
             latex.stage(c, "c", os.path.join(d, "out2"))
             self.assertEqual(sorted(os.listdir(os.path.join(d, "out2"))), ["c.tex", "extra.sty"])
 
+    def test_read_log_matches_whole_normalise(self):
+        """read_log (a piece at a time, #2540) gives exactly the lines and
+        first error that normalising the whole log gives, at any chunk and
+        piece size: paths, banner, dates, the timer mask across pieces, CR
+        bytes, invalid UTF-8, CJK text and the final newline."""
+        with tempfile.TemporaryDirectory() as d:
+            body = "\n".join([
+                "This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026)",
+                "**%s/.bin/xetex was here, then %s/x.tex" % (d, d),
+                "%s/.lockstep-bin-0123456789ab/pdftex: warning" % d,
+                " 16 NOV 2026 03:10", "! First error.", "! Second error.",
+                "{into \\pdf@elapsedtime=\\pdfelapsedtime}",
+                "~.\\stamp ->\\edef \\st {\\the \\pdf@elapsedtime }",
+                "{\\edef}", "{changing \\st=undefined}", "{into \\st=macro:->1234}",
+                "~.\\st ->1234", "{\\count255}", "{changing \\count255=92}",
+                "{into \\count255=93}", "CR\r", "", "中文 \\XeTeXcharclass",
+            ] * 5)
+            logp = os.path.join(d, "n.log")
+            for tail in (b"", b"\n", b"\xe4\xb8\n\xff"):
+                data = body.encode() + tail
+                with open(logp, "wb") as f:
+                    f.write(data)
+                whole = data.decode("utf-8", "surrogateescape")
+                want = run.normalise(whole, d).split("\n")
+                self.assertIn("<HASH>", "\n".join(want))
+                self.assertIn("<XETEX>", "\n".join(want))
+                for chunk, piece in ((1, 1), (7, 16), (64, 200), (1 << 22, 1 << 20)):
+                    err, got = latex.read_log(logp, d, chunk=chunk, piece=piece)
+                    self.assertEqual(got, want, (tail, chunk, piece))
+                    self.assertEqual(err, "! First error.")
+            self.assertEqual(latex.read_log(os.path.join(d, "missing.log"), d),
+                             (None, run.normalise("", d).split("\n")))
+
 
 if __name__ == "__main__":
     unittest.main()

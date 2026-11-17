@@ -34,6 +34,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -130,6 +131,67 @@ def build_format(binary, d):
     return time.time() - t, r.returncode, log
 
 
+def read_log(logp, tmpdir, chunk=1 << 22, piece=1 << 20):
+    """(first TeX error, normalised log lines) of the log at `logp`.
+
+    The same lines as `X.normalise(<whole log>, tmpdir).split("\\n")`,
+    read a chunk at a time: traced xeCJK logs run to 9 million lines, and
+    the whole text plus its copies (decoded, rewritten, joined, masked,
+    split) took this script past 7.7 GB (#2540). Each step of the
+    normalisation is line-local, except the banner (line 1) and
+    `ElapsedMask`, whose state carries from piece to piece. The log is
+    split on b"\\n" only and each line decoded on its own, which gives the
+    same strings as decoding the whole file (a "\\n" byte is never inside
+    a UTF-8 sequence), so CR bytes and the final newline stay compared.
+    `test_read_log_matches_whole_normalise` checks it against
+    `X.normalise`.
+    """
+    xetex = os.path.join(tmpdir, ".bin", "xetex")
+    bin_re = re.compile(re.escape(tmpdir) + r"/\.lockstep-bin-[0-9a-f]{12}/pdftex\b")
+    bin_to = tmpdir + "/.lockstep-bin-<HASH>/pdftex"
+    mask = LS.ElapsedMask()
+    first_error = None
+    out, batch, size = [], [], 0
+
+    # a traced log repeats most of its lines (`{\relax}`, the same macro
+    # expansions): each distinct line is kept once
+    pool = {}
+
+    def flush():
+        out.extend(pool.setdefault(ln, ln) for ln in mask.text("\n".join(batch)).split("\n"))
+        batch.clear()
+
+    def add(raw):
+        nonlocal first_error, size
+        ln = raw.decode("utf-8", "surrogateescape")
+        if first_error is None and ln.startswith("! "):
+            first_error = ln
+        ln = bin_re.sub(lambda m: bin_to, ln.replace(xetex, "<XETEX>")).replace(tmpdir, "<TMP>")
+        if not out and not batch and ln.startswith("This is "):
+            ln = "BANNER"
+        batch.append(LS.DATE_RE.sub("<DATE>", ln))
+        size += len(ln) + 1
+        if size >= piece:
+            flush()
+            size = 0
+
+    rest = b""
+    if os.path.exists(logp):
+        with open(logp, "rb") as f:
+            while True:
+                data = f.read(chunk)
+                if not data:
+                    break
+                parts = (rest + data).split(b"\n")
+                rest = parts.pop()
+                for raw in parts:
+                    add(raw)
+    add(rest)
+    if batch:
+        flush()
+    return first_error, out
+
+
 def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     src = src or os.path.join(CASES, name + ".tex")
     meta = case_meta(src)
@@ -151,18 +213,16 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
             code = r.returncode
         except subprocess.TimeoutExpired:
             code = "timeout"
-        logp = os.path.join(d, name + ".log")
-        log = open(logp, encoding="utf-8", errors="surrogateescape").read() \
-            if os.path.exists(logp) else ""
-        # the first TeX error, and an engine's panic, for the report
-        first_error = next((ln for ln in log.split("\n") if ln.startswith("! ")), None)
+        # the first TeX error, and the normalised log (read a piece at a time)
+        first_error, log = read_log(os.path.join(d, name + ".log"), d)
+        # an engine's panic, for the report
         stderr = open(errp, encoding="utf-8", errors="replace").read()
         # a panic's location, its message and (with RUST_BACKTRACE) the frames
         el = stderr.split("\n")
         at = next((k for k, ln in enumerate(el) if "panicked" in ln), None)
         panic = [] if at is None else [ln for ln in el[at:at + 40] if ln.strip()][:40]
         # only the compared lines are kept (traced logs run to millions of lines)
-        lines, _ = LS.split_accounting(X.normalise(log, d).split("\n"))
+        lines, _ = LS.split_accounting(log)
         del log
         res[who] = (code, lines, os.path.join(d, name + ".xdv"), first_error, panic)
         secs[who] = round(time.time() - t, 2)
