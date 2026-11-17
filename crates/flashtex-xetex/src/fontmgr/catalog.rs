@@ -106,7 +106,14 @@ pub fn read_names(records: &[NameRecord], ps_name: Option<String>) -> NameCollec
 /// `cacheFamilyMembers` compare a requested name with. Modelled on
 /// fontconfig's sfnt query: full names from ids 4 and 18, families from
 /// 1, 16 and 21, styles from 2, 17 and 22, every record readNames would
-/// decode (only membership matters to the search, not order).
+/// decode. Membership is what the search compares; the order is
+/// fontconfig's (`FcFreeTypeQueryFaceInternal`: platforms Microsoft,
+/// Unicode, Macintosh; name ids 21, 16, 1 for families, 18, 4 for full
+/// names, 22, 17, 2 for styles; English first (measured: `FreeSansOblique.otf`'s
+/// styles start `Oblique`, its 0x409 record, before 0x402's); then
+/// encoding, language and table order),
+/// which decides the spelling fontconfig keeps of two names equal but for
+/// case and blanks, and so [`super::fclist`]'s hash.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PatternNames {
     pub full_names: Vec<String>,
@@ -116,7 +123,34 @@ pub struct PatternNames {
 
 pub fn pattern_names(records: &[NameRecord]) -> PatternNames {
     let mut p = PatternNames::default();
-    for r in records {
+    let platform_rank = |pl: u16| match pl {
+        3 => 0,
+        0 => 1,
+        1 => 2,
+        _ => 3,
+    };
+    let id_rank = |id: u16| match id {
+        21 | 18 | 22 => 0,
+        16 | 4 | 17 => 1,
+        _ => 2,
+    };
+    let is_english = |r: &NameRecord| match r.platform {
+        3 => r.language == 0x409,
+        1 => r.language == 0,
+        _ => false,
+    };
+    let mut sorted: Vec<(usize, &NameRecord)> = records.iter().enumerate().collect();
+    sorted.sort_by_key(|(k, r)| {
+        (
+            platform_rank(r.platform),
+            id_rank(r.name_id),
+            !is_english(r),
+            r.encoding,
+            r.language,
+            *k,
+        )
+    });
+    for (_, r) in sorted {
         let list = match r.name_id {
             4 | 18 => &mut p.full_names,
             1 | 16 | 21 => &mut p.families,
@@ -351,7 +385,7 @@ impl FontCatalog {
             }
             faces.extend(CatalogFace::read(&path, index));
         }
-        FontCatalog { faces }
+        FontCatalog { faces }.host_order()
     }
 
     /// [`FontCatalog::from_files`] with the names of each face taken from
@@ -384,7 +418,26 @@ impl FontCatalog {
                 faces.push(face);
             }
         }
+        FontCatalog { faces }.host_order()
+    }
+
+    /// This catalog in `FcFontList`'s order ([`super::fclist`], #2545):
+    /// the order TeX Live's Linux XeTeX walks the installed faces in, so a
+    /// name two faces share selects the one fontconfig lists first.
+    pub fn fc_list_ordered(self) -> FontCatalog {
+        let faces =
+            super::fclist::fc_list_order(self.faces, |f| (f.path.as_path(), f.index, &f.pattern));
         FontCatalog { faces }
+    }
+
+    /// The installed faces in the order TeX Live's XeTeX on this platform
+    /// walks them: `FcFontList`'s on Linux (fontconfig), the scan order
+    /// elsewhere (TeX Live's macOS build asks Core Text instead).
+    fn host_order(self) -> FontCatalog {
+        #[cfg(target_os = "linux")]
+        return self.fc_list_ordered();
+        #[cfg(not(target_os = "linux"))]
+        self
     }
 
     /// [`FontCatalog::system`] through the name cache at
@@ -432,7 +485,7 @@ impl FontCatalog {
 
     /// The catalog of the fonts in `dirs`, in `font-discovery`'s scan order
     /// (directories in the order given, entries sorted, `.otf`, `.ttf` and
-    /// `.ttc` only).
+    /// `.ttc` only), on Linux then in `FcFontList`'s order.
     pub fn scan(dirs: &[PathBuf]) -> FontCatalog {
         let index = flashtex_font_discovery::FontIndex::scan(dirs);
         FontCatalog::from_files(index.files().iter().map(|f| (f.path.clone(), f.face_index)))
@@ -555,7 +608,7 @@ struct Entry {
 }
 
 /// The format of the cache file; another version is ignored.
-const NAME_CACHE_VERSION: &str = "flashtex-xetex font names 1";
+const NAME_CACHE_VERSION: &str = "flashtex-xetex font names 2";
 
 impl NameCache {
     /// `$FLASHTEX_CACHE_DIR`, else the user's cache directory
