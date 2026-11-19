@@ -805,3 +805,48 @@ fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
     // this the test passes with nothing replayed
     assert_eq!(stat(&s, "hits"), 2, "{s}");
 }
+
+#[test]
+fn a_fraction_at_the_calls_level_never_replays() {
+    // (#2556, REVIEW-4 on #2523) `\over`, `\atop`, `\above` and the
+    // `\...withdelims` forms (`math_fraction`, tex.web §1181) at the call's
+    // own math level set `incompleat_noad` and move the list made so far into
+    // the numerator: on an empty list `tail = head` before and after, so the
+    // finished recording saw no change, and a replay (which restores `aux`
+    // only with a fragment) dropped the fraction. The log with BOX-MEMO on
+    // showed `\mathon\hbox\mathoff` where off shows the fraction
+    let head = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+        \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0 \\fontdimen22\\nullfont=1pt\n\
+        \\def\\x{\\hbox{}}";
+    for (tag, body, before) in [
+        ("over-empty", "\\over", ""),
+        ("atop-empty", "\\atop", ""),
+        ("above-empty", "\\above 1pt", ""),
+        (
+            "overwithdelims-empty",
+            "\\overwithdelims\\delimiter0 \\delimiter0 ",
+            "",
+        ),
+        ("over-after-list", "\\over", "\\x"),
+    ] {
+        let src = format!(
+            "{head}\\def\\measure{{{body}}}\n\
+             \\setbox1\\hbox{{${before}\\measure\\x$}}\\showbox1 \
+             \\setbox1\\hbox{{${before}\\measure\\x$}}\\showbox1 \
+             \\setbox1\\hbox{{${before}\\measure\\x$}}\\showbox1 \\end\n"
+        );
+        let s = check(tag, &src);
+        assert_eq!(stat(&s, "hits"), 0, "{tag}: {s}");
+        assert!(stat(&s, "Command") >= 1, "{tag}: {s}");
+    }
+    // a fraction in a math list the call made is the call's: it still
+    // replays
+    let s = check(
+        "over-in-own-list",
+        &format!(
+            "{head}\\def\\measure{{\\setbox1\\hbox{{$\\x\\over\\x$}}}}\n\
+             \\measure\\showbox1 \\measure\\showbox1 \\measure\\showbox1 \\end\n"
+        ),
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
