@@ -1192,6 +1192,45 @@ impl Globals {
             self.dl_side[i] = crate::generated::types::memory_word(v);
         }
     }
+
+    /// BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §17): node `p`'s
+    /// source position by what it names, the file and line of its span and
+    /// its column, so that a replay can give a rebuilt node the position the
+    /// normal path gave it (a span's nodes are made at many places of its
+    /// file). A span id is the live span of a (file, line) when it is made,
+    /// and an edit replaces it: the line is what stays.
+    pub(crate) fn dl_side_pos(&self, p: i32) -> SidePos {
+        let v = self.side_get(p);
+        let s = loc_span(v);
+        if s == 0 {
+            return SidePos::Raw(v);
+        }
+        match with(|st| st.spans.get(s as usize - 1).copied()).flatten() {
+            Some((f, l)) => SidePos::At(f, l, loc_col(v)),
+            None => SidePos::Raw(v),
+        }
+    }
+
+    /// Give node `p` the position `v` names now ([`Globals::dl_side_pos`]).
+    pub(crate) fn dl_side_put(&mut self, p: i32, v: SidePos) {
+        let loc = match v {
+            SidePos::Raw(x) => x,
+            SidePos::At(f, l, c) => {
+                let s = with(|st| st.span_id(f, l)).unwrap_or(0);
+                loc_pack(s, c)
+            }
+        };
+        self.side_set(p, loc);
+    }
+}
+
+/// A node's source position kept outside the word space
+/// ([`Globals::dl_side_pos`]): the packed value when it names no span, else
+/// the span's file and line and the column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidePos {
+    Raw(u64),
+    At(u32, u32, u16),
 }
 
 impl Globals {

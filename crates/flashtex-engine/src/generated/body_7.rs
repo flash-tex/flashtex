@@ -2600,8 +2600,14 @@ impl Globals {
                 }
             }
         }
+        if self.bm_rec_on {
+            self.flashtex_bm_box_use(self.cur_val, 5i32);
+        }
         self.scan_optional_equals();
         self.scan_dimen(false, false, false);
+        if self.bm_rec_on {
+            self.flashtex_bm_box_dimen(c, self.cur_val);
+        }
         if (b != null) {
             { let __v1843 = self.cur_val; __av_mem[crate::ix::U(((b).wrapping_add(c)) as usize)].set_int(__v1843); }
         }
