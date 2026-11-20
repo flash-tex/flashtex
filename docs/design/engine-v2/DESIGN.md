@@ -1337,6 +1337,14 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-11-03 | daniel-parent hands command back by a quiesced handoff naming kabir-claude (#1319 6597191600, 06:39Z). No Commander held the seat until kabir-claude's claim on 2026-11-08 (#2152) | Daniel (d-q222), relayed by daniel-parent |
 | 2026-11-08 | Commander returns to kabir-claude (mac-m5pro-kabir): non-force claim #2152 on `6e66beddf` | Owner (Kabir), by re-setting the Commander goal |
 | 2026-11-08 | **Token storage (CONTIG-TOKENS.md, #2008):** tokens stay linked one-word nodes in `mem`; no contiguous or out-of-`mem` token store and no zero-copy arguments (exact only with per-token phantom accounting and a new consumer per list routine). Lazy flush (#2016) is adopted always on, with no runtime switch, once its sweeps pass on its final head and a test exercises the segment-stack-full fallback; M-series measurement is not a gate (x86 A/A: −0.60 % instructions, −3.19 % cycles, PDFs and `\tracingstats=2` logs unchanged) | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **No waivers on verify sweeps**: a red verify sweep is a real finding, and the #2145 waiver stays revoked | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **The nightly "T7 real documents" job on hosted macOS is report-only**; T7 gates only on the reference run, `scripts/t7-reference.sh` (#2197, #2144) | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **dvitype is required on every Linux leg that runs trip**; macOS, Windows, nightly-mac and `gate.sh quick` report `INCOMPLETE` with a warning ([#1208 comment](https://github.com/flash-tex/flashtex/issues/1208#issuecomment-6729078698)) | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **Faithful parity covers defined-but-buggy C behaviour in pdfTeX's C parts**: match TeX Live, for example the stale `t1_fontname_offset` (#2252); undefined behaviour follows the macOS arm64 ruling of 2026-11-01 | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **The macro-replay fix #2219 lands on main standalone** (#2272), not through #1997 | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **App: "Don't Save" at quit never writes unsaved edits**, and a closed untitled window's text is discarded unless it was saved (#2277, #1962) | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **App: the editor keeps its flat text buffer**; a rope waits until the reference Mac measures a problem, since the remaining per-key memmove is at most about 0.3 ms on 3 MB (#2334) | Commander (kabir-claude), from evidence |
+| 2026-11-08 | **Today's engine-fix PRs land in the INTEGRATOR order** posted on #1319 ([issuecomment-6729723302](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-6729723302)) | Commander (kabir-claude), from evidence |
 
 ---
 
