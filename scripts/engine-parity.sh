@@ -13,6 +13,10 @@
 #   tests     cargo test --release -p flashtex-engine with
 #             FLASHTEX_REQUIRE_TEXLIVE=1, so a test that would skip for want
 #             of TeX Live fails instead
+#   replay    BOX-MEMO and D9 replay: tools/fuzz-replay's fixed seeds run off,
+#             on and verify under each system and must agree, and its D9
+#             fault injection must be seen (under 30 s; not in the default
+#             set: CI's lockstep shard runs it). Needs `build` first
 #
 # and three nightly steps (nightly.yml), not in the default set:
 #
@@ -64,7 +68,7 @@ while [[ $# -gt 0 ]]; do
     --work) WORK="${2:?--work needs a directory}"; shift 2 ;;
     --shard) SHARD="${2:?--shard needs K/N}"; shift 2 ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
-    build|lockstep|parity|tests|t2|soundness|fuzz) STEPS+=("$1"); shift ;;
+    build|lockstep|parity|tests|replay|t2|soundness|fuzz) STEPS+=("$1"); shift ;;
     *) echo "engine-parity.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -231,6 +235,11 @@ step_t2() {
   grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-reference.txt" | sed 's/^/reference: /' || true
   grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-engine.txt" | sed 's/^/engine:    /' || true
   python3 tools/latex-suites/compare_failures.py "$WORK/t2-reference.txt" "$WORK/t2-engine.txt"
+}
+
+step_replay() {
+  [[ -x "$INITEX" ]] || die "no engine in $WORK: run the build step first"
+  FUZZ_REPLAY_ENGINE="$INITEX" python3 -m unittest discover -s tools/fuzz-replay -p 'test_*.py' -v
 }
 
 step_soundness() {

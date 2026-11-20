@@ -1,0 +1,53 @@
+{
+ "about": "Replay holes this fuzzer found or met, by signature (fuzz_replay.signature). A run marks a known signature with its issue; a signature not here is NEW. Each repro is minimal, for INITEX with FLASHTEX_BOXMEMO_NAMES=measure (or FLASHTEX_INTRINSIC_NAMES=measure).",
+ "findings": [
+  {
+   "signature": "bm:verify-diff+verify-exit3:box_dimension_differs",
+   "issue": 2264,
+   "what": "verify only: a \\vadjust leaves link(adjust_head) dangling, and the structural comparison walked it",
+   "repro": "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\\hsize=100pt \\tolerance=10000 \\parfillskip=0pt plus 1fil\n\\def\\measure#1{\\setbox0\\vbox{\\noindent\\vadjust{\\kern3pt}\\par}\\setbox0\\hbox{}\\global\\dimen1=\\wd0 }\n\\measure{1}\\measure{1}\\measure{1}\\end\n"
+  },
+  {
+   "signature": "bm:verify-diff+verify-exit3:node_subtype_differs",
+   "issue": 2264,
+   "what": "the same dangling link, met at another node",
+   "repro": "as above"
+  },
+  {
+   "signature": "bm:verify-diff+verify-exit3:impure_Error",
+   "issue": 2294,
+   "what": "a paragraph in a call resets error_count (end_graf), which the key did not hold: a replay after an error leaves the count, and the run can stop at 100 errors",
+   "repro": "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\\hsize=100pt \\parfillskip=0pt plus 1fil\n\\def\\measure#1{\\setbox0\\vbox{\\noindent\\vrule\\par}\\global\\dimen1=\\ht0 \\setbox0\\hbox{}}\n\\def\\e#1{\\ifnum#1>0 \\errmessage{e}\\expandafter\\e\\expandafter{\\number\\numexpr#1-1\\relax}\\fi}\n\\errmessage{s}\\noindent\\par\n\\measure{1}\\measure{1}\\errmessage{a}\\measure{1}\\e{99}\\message{[done]}\\end\n"
+  },
+  {
+   "signature": "bm:verify-diff+verify-exit3:impure_Level",
+   "issue": 2198,
+   "what": "a caller's macro parameter read past the call (fixed by #2209)",
+   "repro": "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\\def\\measure{\\global\\count1=\\count2}\\def\\qcaller#1{\\measure#1}\n\\setbox4\\hbox{\\measure }\\qcaller{8\\relax}\\qcaller{8\\relax}\\qcaller{9\\relax}\\count28=5 \\qcaller{8\\relax}\\message{[\\the\\count1]}\\end\n"
+  },
+  {
+   "signature": "bm:on-log+verify-diff+verify-exit3:param_ptr",
+   "issue": 2198,
+   "what": "the same read, seen as a wrong replay (fixed by #2209)",
+   "repro": "as above"
+  },
+  {
+   "signature": "d9:on-log+verify-diff:scalar_dorm_level",
+   "issue": 2198,
+   "what": "D9's side of the same read: seed 5 of grammar 3 on main ca202f597 (clean with #2209)",
+   "repro": "gen.py seed 5"
+  },
+  {
+   "signature": "bm:on-log+on-out+verify-diff+verify-exit3:input_ptr",
+   "issue": 2198,
+   "what": "a \\qcaller parameter read past the call, seen at input_ptr: seed 333 of grammar 3 on main ca202f597 (clean with #2209)",
+   "repro": "gen.py seed 333"
+  },
+  {
+   "signature": "bm:on-log+verify-diff+verify-exit3:input_ptr",
+   "issue": 2199,
+   "what": "the end of \\input u read past the call with \\everyeof set: seed 209 of grammar 3 on main ca202f597 (clean with #2217)",
+   "repro": "gen.py seed 209"
+  }
+ ]
+}
