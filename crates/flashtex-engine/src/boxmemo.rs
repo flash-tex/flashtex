@@ -526,9 +526,34 @@ struct Entry {
     /// packs none leaves it as it was, which a replay must then do too (it
     /// is the state's, not the call's).
     last_badness: Option<i32>,
+    /// How far above the call's start its normal path takes each of TeX's
+    /// stacks (`Room`): an offer replays only where the normal path would
+    /// not overflow one (#2265).
+    room: Room,
     last_used: u64,
     hits: u64,
     bytes: usize,
+}
+
+/// How far above its start a call takes TeX's stacks, as their overflow
+/// tests check them: the deepest group level at which it opens a group
+/// (`new_save_level`, tex.web §274), and `save_ptr` (§273), `input_ptr`
+/// (§321), `param_ptr` (§390) and `nest_ptr` (§216) where their tests
+/// look. Each but the first is bounded by the high-water mark the
+/// statistics keep (`max_save_stack` & co. at the call's end, less the
+/// pointer at its start): exact when the call raised it, more than enough
+/// when it did not. A replay pushes none of them, and the key holds no
+/// stack position, so a call recorded with room to spare would replay where
+/// its normal path stops with `TeX capacity exceeded`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Room {
+    /// The deepest `cur_level` a group opens at, above the start's; -1 if
+    /// the call opens no group.
+    level: i32,
+    save: i32,
+    input: i32,
+    param: i32,
+    nest: i32,
 }
 
 /// The state a recording compares at its end with its start.
@@ -611,6 +636,11 @@ struct Rec {
     created: Vec<i32>,
     /// The call packed a box (`hpack`, `vpackage`), so it set `last_badness`.
     packed: bool,
+    /// The deepest `cur_level` above the start's at which the call opened a
+    /// group (`flashtex_bm_group`), -1 for none; and `param_ptr` at the
+    /// start ([`Room`]).
+    peak_level: i32,
+    param0: i32,
     /// Verifying the entry of this index (of `store[cs]`).
     verify: Option<usize>,
 }
@@ -2513,16 +2543,17 @@ impl Globals {
                 s.index.insert(cs, ix);
             }
         });
-        let (found, partial) = ST.with(|s| {
+        let (found, partial, no_room) = ST.with(|s| {
             let s = s.borrow();
             let (Some(v), Some(ix)) = (
                 s.store.get(&cs),
                 s.index.get(&cs).and_then(|ix| ix.get(&hash)),
             ) else {
-                return (None, None);
+                return (None, None, false);
             };
             let mut best: Option<(u64, usize)> = None;
             let mut partial = None;
+            let mut no_room = false;
             let mut k2_seen: Vec<(*const i32, bool)> = vec![];
             for (i, e) in ix.iter().map(|&i| (i, &v[i])) {
                 if best.is_some_and(|(u, _)| u >= e.last_used) {
@@ -2534,6 +2565,10 @@ impl Globals {
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
                 {
+                    continue;
+                }
+                if !self.bm_room_ok(&e.room) {
+                    no_room = true;
                     continue;
                 }
                 // (K2 in place, once per kept K2)
@@ -2573,9 +2608,12 @@ impl Globals {
                     partial = Some((e.last_used, i));
                 }
             }
-            (best.map(|b| b.1), partial.map(|p| p.1))
+            (best.map(|b| b.1), partial.map(|p| p.1), no_room)
         });
-        let mut why = "NotRecorded";
+        // (an entry kept back only by its room on the stacks is its own
+        // reason, `Room`: the call runs for real, and is recorded again
+        // with the room it takes from here)
+        let mut why = if no_room { "Room" } else { "NotRecorded" };
         let doomed = found
             .is_some_and(|i| ST.with(|s| s.borrow().store.get(&cs).is_some_and(|v| v[i].doomed)));
         if doomed {
@@ -2640,7 +2678,7 @@ impl Globals {
             }
         }
         self.bm_miss(why);
-        if debug() && why == "NotRecorded" {
+        if debug() && matches!(why, "NotRecorded" | "Room") {
             let now = self.bm_key_by_loc();
             let diff: Vec<String> = LAST_KEY.with(|l| {
                 l.borrow().get(&cs).map_or(vec![], |old| {
@@ -2719,6 +2757,8 @@ impl Globals {
             ops: vec![],
             created: vec![],
             packed: false,
+            peak_level: -1,
+            param0: self.param_ptr,
             verify,
         };
         // the macro's own meaning is part of K1; mark it seen
@@ -2834,6 +2874,11 @@ impl Globals {
                     rs_locs: vec![],
                     ops: vec![],
                     last_badness: None,
+                    // (expanded for real: needs no room)
+                    room: Room {
+                        level: -1,
+                        ..Room::default()
+                    },
                     last_used: now,
                     hits: 0,
                     bytes,
@@ -2978,7 +3023,10 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_group(&mut self, c: i32) {
+        let level = self.cur_level;
         self.bm_with_rec(|r| {
+            // (`new_save_level` tests `cur_level` before it raises it)
+            r.peak_level = r.peak_level.max(level - r.start.cur_level);
             r.box_stack.push(r.boxes.clone());
             r.ops.push(Op::Begin(c));
         });
@@ -3805,6 +3853,44 @@ impl Globals {
         Ok(())
     }
 
+    /// The room a finished recording took on TeX's stacks ([`Room`]). What
+    /// a local assignment saves depends on its location's level and on
+    /// whether it holds that very value already, which the key does not
+    /// hold (`eq_define`, tex.web §277, `eq_save`, §276, and e-TeX's
+    /// "reassigning"): nothing where the location's level is the current
+    /// one, the call is at level one, or the same pointer is assigned
+    /// again (`\\let\\a\\b` twice); one word for a location at
+    /// `level_zero` (a control sequence never defined); two otherwise. So
+    /// each local assignment, at the call's own level or in a group of its
+    /// own, may take up to two more words on another path.
+    fn bm_room_of(&self, rec: &Rec) -> Room {
+        let more = 2 * rec
+            .ops
+            .iter()
+            .filter(|o| matches!(o, Op::Def { kind, .. } | Op::Sa { kind, .. } if *kind < 2))
+            .count() as i32;
+        let s = &rec.start;
+        Room {
+            level: rec.peak_level,
+            save: (self.max_save_stack - s.save_ptr).max(0) + more,
+            input: (self.max_in_stack - rec.base).max(0),
+            param: (self.max_param_stack - rec.param0).max(0),
+            nest: (self.max_nest_stack - s.nest_ptr).max(0),
+        }
+    }
+
+    /// Whether a call with this room, made now, stays within every one of
+    /// TeX's stacks, as its normal path's overflow tests decide
+    /// (`new_save_level` and `check_full_save_stack`, `push_input`,
+    /// `macro_call`, `push_nest`).
+    fn bm_room_ok(&self, r: &Room) -> bool {
+        (r.level < 0 || self.cur_level + r.level < k::max_quarterword)
+            && self.save_ptr + r.save <= k::save_size - 7
+            && self.input_ptr + r.input < k::stack_size
+            && self.param_ptr + r.param <= k::param_size
+            && self.nest_ptr + r.nest < k::nest_size
+    }
+
     /// Abandon a recording already taken out of the state (its end check).
     fn bm_abort_taken(&mut self, rec: Rec, why: &str) {
         ST.with(|s| s.borrow_mut().rec = Some(rec));
@@ -3821,6 +3907,7 @@ impl Globals {
         trailer: Option<i32>,
     ) {
         let line = self.line;
+        let room = self.bm_room_of(&rec);
         let mut bytes = 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
             // (a macro's tokens are shared: `intern_tokens` counts them once)
             + 16 * rec.k3.len()
@@ -3944,6 +4031,7 @@ impl Globals {
                 rs_locs,
                 ops: rec.ops,
                 last_badness,
+                room,
                 last_used: now,
                 hits: 0,
                 bytes,

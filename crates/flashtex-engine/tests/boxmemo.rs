@@ -176,6 +176,72 @@ fn the_key_falls_back() {
 }
 
 #[test]
+fn a_replay_keeps_the_normal_paths_capacity_errors() {
+    // (lane AUDIT-GROUPS, #2265) a replay pushes none of TeX's stacks, and
+    // the key holds no stack position: a call recorded with room to spare
+    // was replayed where its normal path stops with `TeX capacity
+    // exceeded` -- here six groups 250 levels deep (grouping levels=255),
+    // and four macro levels 9993 deep (input stack size=10000). On main the
+    // replay went on (`[survived 250]`). The parameter and save stacks
+    // follow
+    let s = check(
+        "capacity-levels",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\\begingroup\
+         \\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 \\endgroup\\endgroup\\endgroup\\endgroup\\endgroup\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\nest{\\begingroup\\ifnum\\currentgrouplevel<250 \\expandafter\\nest\\fi}\n\
+         \\nest\\measure\\message{[survived \\the\\currentgrouplevel]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    // (the offer 250 levels deep is a miss of its own kind)
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+    let s = check(
+        "capacity-input",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\ia{\\ib\\relax}\\def\\ib{\\ic\\relax}\\def\\ic{\\id\\relax}\\def\\id{\\ie\\relax}\n\
+         \\def\\ie{\\if\\relax\\relax\\global\\dimen1=2pt\\fi\\relax}\n\
+         \\def\\measure{\\begingroup\\ia\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\r{\\ifnum\\count1<9993 \\advance\\count1 1 \\expandafter\\r\\else\\count1=0 \\expandafter\\measure\\fi\\relax}\n\
+         \\r\\message{[survived]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+    // the parameter stack (parameter stack size=20000): `\ia`'s nine
+    // arguments, under 2222 calls of `\r` that each hold nine
+    let s = check(
+        "capacity-param",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\ia#1#2#3#4#5#6#7#8#9{\\global\\dimen1=2pt\\relax}\n\
+         \\def\\measure{\\begingroup\\ia123456789\\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\r#1#2#3#4#5#6#7#8#9{\\ifnum\\count1<2221 \\advance\\count1 1 \\expandafter\\rr\\else\\count1=0 \\expandafter\\measure\\fi\\relax}\n\
+         \\def\\rr{\\r123456789}\n\
+         \\rr\\message{[survived]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+    // the save stack (save size=200000): the call saves 510 registers in
+    // its group, 195 groups deep that each saved as many (1024 words a
+    // group, which leaves 313). Each group sets them to 1 and back to 0:
+    // e-TeX saves nothing for a value assigned again, and the registers
+    // must be what they were where the call was recorded (its key)
+    let s = check(
+        "capacity-save",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\setall{\\ifnum\\count255<255 \\count\\count255=1 \\dimen\\count255=1sp \\advance\\count255 1 \\expandafter\\setall\\fi}\n\
+         \\def\\zeroall{\\ifnum\\count255<255 \\count\\count255=0 \\dimen\\count255=0sp \\advance\\count255 1 \\expandafter\\zeroall\\fi}\n\
+         \\def\\measure{\\begingroup\\count255=0 \\setall\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen255=\\wd0 \\endgroup}\n\
+         \\measure\\measure\\measure\n\
+         \\def\\nest{\\begingroup\\count255=0 \\setall\\count255=0 \\zeroall\\count255=0 \\ifnum\\currentgrouplevel<195 \\expandafter\\nest\\fi}\n\
+         \\nest\\measure\\message{[survived \\the\\currentgrouplevel]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert_eq!(stat(&s, "Room"), 1, "{s}");
+}
+
+#[test]
 fn outside_the_model_never_replays() {
     // output, the contents of a box register it did not make (`\\copy`),
     // and the main vertical list: recorded calls are abandoned, so nothing
