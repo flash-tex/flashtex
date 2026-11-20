@@ -597,7 +597,7 @@ impl Globals {
     pub fn tokens_to_string(&mut self, mut p: halfword) -> str_number {
         let mut tokens_to_string: str_number = 0;
         if (self.selector == new_string) {
-            self.pdf_error(66109i32, 66110i32);
+            self.pdf_error(66118i32, 66119i32);
         }
         self.old_setting = self.selector;
         self.selector = new_string;
@@ -897,7 +897,7 @@ impl Globals {
     // §733
     pub fn print_fam_and_char(&mut self, mut p: halfword) {
         let mut c: i32 = 0; // §733
-        self.print_esc(65756i32);
+        self.print_esc(65764i32);
         self.print_int(((self.mem[crate::ix::U((p) as usize)].hh().b0() % 256i32) % 256i32));
         self.print_char(32i32);
         c = (self.cast_to_ushort(self.mem[crate::ix::U((p) as usize)].hh().b1())).wrapping_add(((self.mem[crate::ix::U((p) as usize)].hh().b0() / 256i32)).wrapping_mul(65536i32));
@@ -970,7 +970,7 @@ impl Globals {
                             {
                                 self.print_ln();
                                 self.print_current_string();
-                                self.print(66263i32);
+                                self.print(66270i32);
                             }
                         } else {
                             self.show_info();
@@ -989,19 +989,19 @@ impl Globals {
     pub fn print_style(&mut self, mut c: i32) {
         match (c / 2i32) {
             0 => {
-                self.print_esc(66264i32);
+                self.print_esc(66271i32);
             }
             1 => {
-                self.print_esc(66265i32);
+                self.print_esc(66272i32);
             }
             2 => {
-                self.print_esc(66266i32);
+                self.print_esc(66273i32);
             }
             3 => {
-                self.print_esc(66267i32);
+                self.print_esc(66274i32);
             }
             _ => {
-                self.print(66268i32);
+                self.print(66275i32);
             }
         }
     }
@@ -1014,64 +1014,64 @@ impl Globals {
     pub fn print_skip_param(&mut self, mut n: i32) {
         match n {
             line_skip_code => {
-                self.print_esc(65667i32);
-            }
-            baseline_skip_code => {
-                self.print_esc(65668i32);
-            }
-            par_skip_code => {
-                self.print_esc(65669i32);
-            }
-            above_display_skip_code => {
-                self.print_esc(65670i32);
-            }
-            below_display_skip_code => {
-                self.print_esc(65671i32);
-            }
-            above_display_short_skip_code => {
-                self.print_esc(65672i32);
-            }
-            below_display_short_skip_code => {
-                self.print_esc(65673i32);
-            }
-            left_skip_code => {
-                self.print_esc(65674i32);
-            }
-            right_skip_code => {
                 self.print_esc(65675i32);
             }
-            top_skip_code => {
+            baseline_skip_code => {
                 self.print_esc(65676i32);
             }
-            split_top_skip_code => {
+            par_skip_code => {
                 self.print_esc(65677i32);
             }
-            tab_skip_code => {
+            above_display_skip_code => {
                 self.print_esc(65678i32);
             }
-            space_skip_code => {
+            below_display_skip_code => {
                 self.print_esc(65679i32);
             }
-            xspace_skip_code => {
+            above_display_short_skip_code => {
                 self.print_esc(65680i32);
             }
-            par_fill_skip_code => {
+            below_display_short_skip_code => {
                 self.print_esc(65681i32);
             }
-            XeTeX_linebreak_skip_code => {
+            left_skip_code => {
                 self.print_esc(65682i32);
             }
-            thin_mu_skip_code => {
+            right_skip_code => {
                 self.print_esc(65683i32);
             }
-            med_mu_skip_code => {
+            top_skip_code => {
                 self.print_esc(65684i32);
             }
-            thick_mu_skip_code => {
+            split_top_skip_code => {
                 self.print_esc(65685i32);
             }
+            tab_skip_code => {
+                self.print_esc(65686i32);
+            }
+            space_skip_code => {
+                self.print_esc(65687i32);
+            }
+            xspace_skip_code => {
+                self.print_esc(65688i32);
+            }
+            par_fill_skip_code => {
+                self.print_esc(65689i32);
+            }
+            XeTeX_linebreak_skip_code => {
+                self.print_esc(65690i32);
+            }
+            thin_mu_skip_code => {
+                self.print_esc(65691i32);
+            }
+            med_mu_skip_code => {
+                self.print_esc(65692i32);
+            }
+            thick_mu_skip_code => {
+                self.print_esc(65693i32);
+            }
             _ => {
-                self.print(65686i32);
+                self.print(65694i32);
             }
         }
     }
@@ -1199,7 +1199,7 @@ impl Globals {
                                             if (self.eTeX_mode == 1i32) {
                                                 // §1514
                                                 if ((self.mem[crate::ix::U((p) as usize)].hh().b0() == hlist_node) && (self.mem[crate::ix::U((p) as usize)].hh().b1() == dlist)) {
-                                                    self.print(66913i32);
+                                                    self.print(66925i32);
                                                 }
                                             }
                                         }
@@ -1276,38 +1276,38 @@ impl Globals {
                                 match self.mem[crate::ix::U((p) as usize)].hh().b1() {
                                     open_node => {
                                         {
-                                            self.print_write_whatsit(66736i32, p);
+                                            self.print_write_whatsit(66748i32, p);
                                             self.print_char(61i32);
                                             self.print_file_name(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(), self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().lh(), self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh());
                                         }
                                     }
                                     write_node => {
                                         {
-                                            self.print_write_whatsit(65915i32, p);
+                                            self.print_write_whatsit(65922i32, p);
                                             self.print_mark(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh());
                                         }
                                     }
                                     close_node => {
-                                        self.print_write_whatsit(66737i32, p);
+                                        self.print_write_whatsit(66749i32, p);
                                     }
                                     special_node => {
                                         {
-                                            self.print_esc(66738i32);
+                                            self.print_esc(66750i32);
                                             self.print_mark(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh());
                                         }
                                     }
                                     latespecial_node => {
                                         {
-                                            self.print_esc(66738i32);
-                                            self.print(66753i32);
+                                            self.print_esc(66750i32);
+                                            self.print(66765i32);
                                             self.print_mark(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh());
                                         }
                                     }
                                     language_node => {
                                         {
-                                            self.print_esc(66740i32);
+                                            self.print_esc(66752i32);
                                             self.print_int(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh());
-                                            self.print(66754i32);
+                                            self.print(66766i32);
                                             self.print_int(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().b0());
                                             self.print_char(44i32);
                                             self.print_int(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().b1());
@@ -1315,7 +1315,7 @@ impl Globals {
                                         }
                                     }
                                     pdf_save_pos_node => {
-                                        self.print_esc(66748i32);
+                                        self.print_esc(66760i32);
                                     }
                                     native_word_node | native_word_node_AT => {
                                         {
@@ -1327,18 +1327,18 @@ impl Globals {
                                     glyph_node => {
                                         {
                                             self.print_esc(self.hash[crate::ix::U((((font_id_base).wrapping_add(self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b1())) - 1179650) as usize)].rh());
-                                            self.print(66755i32);
+                                            self.print(66767i32);
                                             self.print_int(self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b2());
                                         }
                                     }
                                     pic_node | pdf_node => {
                                         {
                                             if (self.mem[crate::ix::U((p) as usize)].hh().b1() == pic_node) {
-                                                self.print_esc(66743i32);
+                                                self.print_esc(66755i32);
                                             } else {
-                                                self.print_esc(66744i32);
+                                                self.print_esc(66756i32);
                                             }
-                                            self.print(66756i32);
+                                            self.print(66768i32);
                                             {
                                                 let __for_end_11 = (self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].hh().b0()).wrapping_sub(1i32);
                                                 i = 0i32;
@@ -1351,7 +1351,7 @@ impl Globals {
                                         }
                                     }
                                     _ => {
-                                        self.print(66757i32);
+                                        self.print(66769i32);
                                     }
                                 }
                             }
@@ -1614,7 +1614,7 @@ impl Globals {
                             choice_node => {
                                 // §737
                                 {
-                                    self.print_esc(65838i32);
+                                    self.print_esc(65846i32);
                                     {
                                         if (68i32 > 65535i32) {
                                             {
@@ -1690,62 +1690,62 @@ impl Globals {
                                 {
                                     match self.mem[crate::ix::U((p) as usize)].hh().b0() {
                                         ord_noad => {
-                                            self.print_esc(66269i32);
-                                        }
-                                        op_noad => {
-                                            self.print_esc(66270i32);
-                                        }
-                                        bin_noad => {
-                                            self.print_esc(66271i32);
-                                        }
-                                        rel_noad => {
-                                            self.print_esc(66272i32);
-                                        }
-                                        open_noad => {
-                                            self.print_esc(66273i32);
-                                        }
-                                        close_noad => {
-                                            self.print_esc(66274i32);
-                                        }
-                                        punct_noad => {
-                                            self.print_esc(66275i32);
-                                        }
-                                        inner_noad => {
                                             self.print_esc(66276i32);
                                         }
-                                        over_noad => {
+                                        op_noad => {
                                             self.print_esc(66277i32);
                                         }
-                                        under_noad => {
+                                        bin_noad => {
                                             self.print_esc(66278i32);
                                         }
+                                        rel_noad => {
+                                            self.print_esc(66279i32);
+                                        }
+                                        open_noad => {
+                                            self.print_esc(66280i32);
+                                        }
+                                        close_noad => {
+                                            self.print_esc(66281i32);
+                                        }
+                                        punct_noad => {
+                                            self.print_esc(66282i32);
+                                        }
+                                        inner_noad => {
+                                            self.print_esc(66283i32);
+                                        }
+                                        over_noad => {
+                                            self.print_esc(66284i32);
+                                        }
+                                        under_noad => {
+                                            self.print_esc(66285i32);
+                                        }
                                         vcenter_noad => {
-                                            self.print_esc(65855i32);
+                                            self.print_esc(65863i32);
                                         }
                                         radical_noad => {
                                             {
-                                                self.print_esc(65847i32);
+                                                self.print_esc(65855i32);
                                                 self.print_delimiter((p).wrapping_add(4i32));
                                             }
                                         }
                                         accent_noad => {
                                             {
-                                                self.print_esc(65813i32);
+                                                self.print_esc(65821i32);
                                                 self.print_fam_and_char((p).wrapping_add(4i32));
                                             }
                                         }
                                         left_noad => {
                                             {
-                                                self.print_esc(66279i32);
+                                                self.print_esc(66286i32);
                                                 self.print_delimiter((p).wrapping_add(1i32));
                                             }
                                         }
                                         right_noad => {
                                             {
                                                 if (self.mem[crate::ix::U((p) as usize)].hh().b1() == normal) {
-                                                    self.print_esc(66280i32);
+                                                    self.print_esc(66287i32);
                                                 } else {
-                                                    self.print_esc(66281i32);
+                                                    self.print_esc(66288i32);
                                                 }
                                                 self.print_delimiter((p).wrapping_add(1i32));
                                             }
@@ -1756,9 +1756,9 @@ impl Globals {
                                         {
                                             if (self.mem[crate::ix::U((p) as usize)].hh().b1() != normal) {
                                                 if (self.mem[crate::ix::U((p) as usize)].hh().b1() == limits) {
-                                                    self.print_esc(66282i32);
+                                                    self.print_esc(66289i32);
                                                 } else {
-                                                    self.print_esc(66283i32);
+                                                    self.print_esc(66290i32);
                                                 }
                                             }
                                             self.print_subsidiary_data((p).wrapping_add(1i32), 46i32);
@@ -1771,21 +1771,21 @@ impl Globals {
                             fraction_noad => {
                                 // §739
                                 {
-                                    self.print_esc(66284i32);
+                                    self.print_esc(66291i32);
                                     if (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int() == default_code) {
-                                        self.print(66285i32);
+                                        self.print(66292i32);
                                     } else {
                                         self.print_scaled(self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int());
                                     }
                                     if (((((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b0() % 256i32) != 0i32) || ((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b1()).wrapping_add(((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b0() / 256i32)).wrapping_mul(65536i32)) != min_quarterword)) || ((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b2() % 256i32) != 0i32)) || ((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b3()).wrapping_add(((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b2() / 256i32)).wrapping_mul(65536i32)) != min_quarterword)) {
                                         {
-                                            self.print(66286i32);
+                                            self.print(66293i32);
                                             self.print_delimiter((p).wrapping_add(4i32));
                                         }
                                     }
                                     if (((((self.mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].qqqq().b0() % 256i32) != 0i32) || ((self.mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].qqqq().b1()).wrapping_add(((self.mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].qqqq().b0() / 256i32)).wrapping_mul(65536i32)) != min_quarterword)) || ((self.mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].qqqq().b2() % 256i32) != 0i32)) || ((self.mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].qqqq().b3()).wrapping_add(((self.mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].qqqq().b2() / 256i32)).wrapping_mul(65536i32)) != min_quarterword)) {
                                         {
-                                            self.print(66287i32);
+                                            self.print(66294i32);
                                             self.print_delimiter((p).wrapping_add(5i32));
                                         }
                                     }
@@ -1940,7 +1940,7 @@ impl Globals {
                                                 self.free_node(p, small_node_size);
                                             }
                                             _ => {
-                                                self.confusion(66759i32);
+                                                self.confusion(66771i32);
                                             }
                                         }
                                         break 'l_done_f;
@@ -2161,7 +2161,7 @@ impl Globals {
                                     r = self.get_node(small_node_size);
                                 }
                                 _ => {
-                                    self.confusion(66758i32);
+                                    self.confusion(66770i32);
                                 }
                             }
                         }
@@ -2292,13 +2292,62 @@ impl Globals {
                         self.print(65651i32);
                     }
                     2 => {
-                        self.print(65633i32);
+                        self.print(65652i32);
                     }
                     _ => {}
                 }
             }
         }
-        self.print(65652i32);
+    }
+
+    /// \[16] The semantic nest.
+    /// \TeX\ is typically in the midst of building many lists at once. For example,
+    /// when a math formula is being processed, \TeX\ is in math mode and
+    /// working on an mlist; this formula has temporarily interrupted \TeX\ from
+    /// being in horizontal mode and building the hlist of a paragraph; and this
+    /// paragraph has temporarily interrupted \TeX\ from being in vertical mode
+    /// and building the vlist for the next page of a document. Similarly, when a
+    /// \.{\\vbox} occurs inside of an \.{\\hbox}, \TeX\ is temporarily
+    /// interrupted from working in restricted horizontal mode, and it enters
+    /// internal vertical mode.  The ``semantic nest'' is a stack that
+    /// keeps track of what lists and modes are currently suspended.
+    /// At each level of processing we are in one of six modes:
+    /// \yskip\hang`vmode` stands for vertical mode (the page builder);
+    /// \hang`hmode` stands for horizontal mode (the paragraph builder);
+    /// ...
+    // §237
+    pub fn print_in_mode(&mut self, mut m: i32) {
+        if (m > 0i32) {
+            match (m / 104i32) {
+                0 => {
+                    self.print(65653i32);
+                }
+                1 => {
+                    self.print(65654i32);
+                }
+                2 => {
+                    self.print(65655i32);
+                }
+                _ => {}
+            }
+        } else {
+            if (m == 0i32) {
+                self.print(65656i32);
+            } else {
+                match ((m).wrapping_neg() / 104i32) {
+                    0 => {
+                        self.print(65657i32);
+                    }
+                    1 => {
+                        self.print(65658i32);
+                    }
+                    2 => {
+                        self.print(65659i32);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// When \TeX's work on one level is interrupted, the state is saved by
@@ -2310,7 +2359,7 @@ impl Globals {
             {
                 self.max_nest_stack = self.nest_ptr;
                 if (self.nest_ptr == nest_size) {
-                    self.overflow(65653i32, nest_size);
+                    self.overflow(65660i32, nest_size);
                 }
             }
         }
@@ -2360,16 +2409,16 @@ impl Globals {
                 {
                     m = self.nest[crate::ix::U((p) as usize)].mode_field;
                     a = self.nest[crate::ix::U((p) as usize)].aux_field;
-                    self.print_nl(65654i32);
+                    self.print_nl(65661i32);
                     self.print_mode(m);
-                    self.print(65655i32);
+                    self.print(65662i32);
                     self.print_int((self.nest[crate::ix::U((p) as usize)].ml_field).wrapping_abs());
                     if (m == hmode) {
                         if (self.nest[crate::ix::U((p) as usize)].pg_field != 8585216i32) {
                             {
-                                self.print(65656i32);
+                                self.print(65663i32);
                                 self.print_int((self.nest[crate::ix::U((p) as usize)].pg_field % 65536i32));
-                                self.print(65657i32);
+                                self.print(65664i32);
                                 self.print_int((self.nest[crate::ix::U((p) as usize)].pg_field / 4194304i32));
                                 self.print_char(44i32);
                                 self.print_int(((self.nest[crate::ix::U((p) as usize)].pg_field / 65536i32) % 64i32));
@@ -2378,23 +2427,23 @@ impl Globals {
                         }
                     }
                     if (self.nest[crate::ix::U((p) as usize)].ml_field < 0i32) {
-                        self.print(65658i32);
+                        self.print(65665i32);
                     }
                     if (p == 0i32) {
                         {
                             // §1040
                             if (page_head != self.page_tail) {
                                 {
-                                    self.print_nl(66409i32);
+                                    self.print_nl(66416i32);
                                     if self.output_active {
-                                        self.print(66410i32);
+                                        self.print(66417i32);
                                     }
                                     self.show_box(self.mem[crate::ix::U((page_head) as usize)].hh().rh());
                                     if (self.page_contents > empty) {
                                         {
-                                            self.print_nl(66411i32);
+                                            self.print_nl(66418i32);
                                             self.print_totals();
-                                            self.print_nl(66412i32);
+                                            self.print_nl(66419i32);
                                             self.print_scaled(self.page_so_far[crate::ix::U((0i32) as usize)]);
                                             r = self.mem[crate::ix::U((page_ins_head) as usize)].hh().rh();
                                             while (r != page_ins_head) {
@@ -2403,7 +2452,7 @@ impl Globals {
                                                     self.print_esc(65618i32);
                                                     t = self.mem[crate::ix::U((r) as usize)].hh().b1();
                                                     self.print_int(t);
-                                                    self.print(66413i32);
+                                                    self.print(66420i32);
                                                     if (self.eqtb[crate::ix::U((((count_base).wrapping_add(t)) - 1) as usize)].int() == 1000i32) {
                                                         t = self.mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].int();
                                                     } else {
@@ -2421,9 +2470,9 @@ impl Globals {
                                                                 }
                                                                 if (q == self.mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].hh().lh()) { break; }
                                                             }
-                                                            self.print(66414i32);
+                                                            self.print(66421i32);
                                                             self.print_int(t);
-                                                            self.print(66415i32);
+                                                            self.print(66422i32);
                                                         }
                                                     }
                                                     r = self.mem[crate::ix::U((r) as usize)].hh().rh();
@@ -2435,7 +2484,7 @@ impl Globals {
                             }
                             // §244
                             if (self.mem[crate::ix::U((contrib_head) as usize)].hh().rh() != (268435455i32).wrapping_neg()) {
-                                self.print_nl(65659i32);
+                                self.print_nl(65666i32);
                             }
                         }
                     }
@@ -2444,19 +2493,20 @@ impl Globals {
                     match ((m).wrapping_abs() / 104i32) {
                         0 => {
                             {
-                                self.print_nl(65660i32);
+                                self.print_nl(65667i32);
                                 if (a.int() <= (65536000i32).wrapping_neg()) {
-                                    self.print(65661i32);
+                                    self.print(65668i32);
                                 } else {
                                     self.print_scaled(a.int());
                                 }
                                 if (self.nest[crate::ix::U((p) as usize)].pg_field != 0i32) {
                                     {
-                                        self.print(65662i32);
+                                        self.print(65669i32);
                                         self.print_int(self.nest[crate::ix::U((p) as usize)].pg_field);
-                                        self.print(65663i32);
                                         if (self.nest[crate::ix::U((p) as usize)].pg_field != 1i32) {
-                                            self.print_char(115i32);
+                                            self.print(65670i32);
+                                        } else {
+                                            self.print(65671i32);
                                         }
                                     }
                                 }
@@ -2464,12 +2514,12 @@ impl Globals {
                         }
                         1 => {
                             {
-                                self.print_nl(65664i32);
+                                self.print_nl(65672i32);
                                 self.print_int(a.hh().lh());
                                 if (m > 0i32) {
                                     if (a.hh().rh() > 0i32) {
                                         {
-                                            self.print(65665i32);
+                                            self.print(65673i32);
                                             self.print_int(a.hh().rh());
                                         }
                                     }
@@ -2479,7 +2529,7 @@ impl Globals {
                         2 => {
                             if (a.int() != (268435455i32).wrapping_neg()) {
                                 {
-                                    self.print(65666i32);
+                                    self.print(65674i32);
                                     self.show_box(a.int());
                                 }
                             }
@@ -2497,266 +2547,266 @@ impl Globals {
     pub fn print_param(&mut self, mut n: i32) {
         match n {
             pretolerance_code => {
-                self.print_esc(65712i32);
-            }
-            tolerance_code => {
-                self.print_esc(65713i32);
-            }
-            line_penalty_code => {
-                self.print_esc(65714i32);
-            }
-            hyphen_penalty_code => {
-                self.print_esc(65715i32);
-            }
-            ex_hyphen_penalty_code => {
-                self.print_esc(65716i32);
-            }
-            club_penalty_code => {
-                self.print_esc(65717i32);
-            }
-            widow_penalty_code => {
-                self.print_esc(65718i32);
-            }
-            display_widow_penalty_code => {
-                self.print_esc(65719i32);
-            }
-            broken_penalty_code => {
                 self.print_esc(65720i32);
             }
-            bin_op_penalty_code => {
+            tolerance_code => {
                 self.print_esc(65721i32);
             }
-            rel_penalty_code => {
+            line_penalty_code => {
                 self.print_esc(65722i32);
             }
-            pre_display_penalty_code => {
+            hyphen_penalty_code => {
                 self.print_esc(65723i32);
             }
-            post_display_penalty_code => {
+            ex_hyphen_penalty_code => {
                 self.print_esc(65724i32);
             }
-            inter_line_penalty_code => {
+            club_penalty_code => {
                 self.print_esc(65725i32);
             }
-            double_hyphen_demerits_code => {
+            widow_penalty_code => {
                 self.print_esc(65726i32);
             }
-            final_hyphen_demerits_code => {
+            display_widow_penalty_code => {
                 self.print_esc(65727i32);
             }
-            adj_demerits_code => {
+            broken_penalty_code => {
                 self.print_esc(65728i32);
             }
-            mag_code => {
+            bin_op_penalty_code => {
                 self.print_esc(65729i32);
             }
-            delimiter_factor_code => {
+            rel_penalty_code => {
                 self.print_esc(65730i32);
             }
-            looseness_code => {
+            pre_display_penalty_code => {
                 self.print_esc(65731i32);
             }
-            time_code => {
+            post_display_penalty_code => {
                 self.print_esc(65732i32);
             }
-            day_code => {
+            inter_line_penalty_code => {
                 self.print_esc(65733i32);
             }
-            month_code => {
+            double_hyphen_demerits_code => {
                 self.print_esc(65734i32);
             }
-            year_code => {
+            final_hyphen_demerits_code => {
                 self.print_esc(65735i32);
             }
-            show_box_breadth_code => {
+            adj_demerits_code => {
                 self.print_esc(65736i32);
             }
-            show_box_depth_code => {
+            mag_code => {
                 self.print_esc(65737i32);
             }
-            hbadness_code => {
+            delimiter_factor_code => {
                 self.print_esc(65738i32);
             }
-            vbadness_code => {
+            looseness_code => {
                 self.print_esc(65739i32);
             }
-            pausing_code => {
+            time_code => {
                 self.print_esc(65740i32);
             }
-            tracing_online_code => {
+            day_code => {
                 self.print_esc(65741i32);
             }
-            tracing_macros_code => {
+            month_code => {
                 self.print_esc(65742i32);
             }
-            tracing_stats_code => {
+            year_code => {
                 self.print_esc(65743i32);
             }
-            tracing_paragraphs_code => {
+            show_box_breadth_code => {
                 self.print_esc(65744i32);
             }
-            tracing_pages_code => {
+            show_box_depth_code => {
                 self.print_esc(65745i32);
             }
-            tracing_output_code => {
+            hbadness_code => {
                 self.print_esc(65746i32);
             }
-            tracing_lost_chars_code => {
+            vbadness_code => {
                 self.print_esc(65747i32);
             }
-            tracing_commands_code => {
+            pausing_code => {
                 self.print_esc(65748i32);
             }
-            tracing_restores_code => {
+            tracing_online_code => {
                 self.print_esc(65749i32);
             }
-            uc_hyph_code => {
+            tracing_macros_code => {
                 self.print_esc(65750i32);
             }
-            output_penalty_code => {
+            tracing_stats_code => {
                 self.print_esc(65751i32);
             }
-            max_dead_cycles_code => {
+            tracing_paragraphs_code => {
                 self.print_esc(65752i32);
             }
-            hang_after_code => {
+            tracing_pages_code => {
                 self.print_esc(65753i32);
             }
-            floating_penalty_code => {
+            tracing_output_code => {
                 self.print_esc(65754i32);
             }
-            global_defs_code => {
+            tracing_lost_chars_code => {
                 self.print_esc(65755i32);
             }
-            cur_fam_code => {
+            tracing_commands_code => {
                 self.print_esc(65756i32);
             }
-            escape_char_code => {
+            tracing_restores_code => {
                 self.print_esc(65757i32);
             }
-            default_hyphen_char_code => {
+            uc_hyph_code => {
                 self.print_esc(65758i32);
             }
-            default_skew_char_code => {
+            output_penalty_code => {
                 self.print_esc(65759i32);
             }
-            end_line_char_code => {
+            max_dead_cycles_code => {
                 self.print_esc(65760i32);
             }
-            new_line_char_code => {
+            hang_after_code => {
                 self.print_esc(65761i32);
             }
-            language_code => {
+            floating_penalty_code => {
                 self.print_esc(65762i32);
             }
-            left_hyphen_min_code => {
+            global_defs_code => {
                 self.print_esc(65763i32);
             }
-            right_hyphen_min_code => {
+            cur_fam_code => {
                 self.print_esc(65764i32);
             }
-            holding_inserts_code => {
+            escape_char_code => {
                 self.print_esc(65765i32);
             }
-            error_context_lines_code => {
+            default_hyphen_char_code => {
                 self.print_esc(65766i32);
             }
-            char_sub_def_min_code => {
+            default_skew_char_code => {
                 self.print_esc(65767i32);
             }
-            char_sub_def_max_code => {
+            end_line_char_code => {
                 self.print_esc(65768i32);
             }
-            tracing_char_sub_def_code => {
+            new_line_char_code => {
                 self.print_esc(65769i32);
             }
-            tracing_stack_levels_code => {
+            language_code => {
                 self.print_esc(65770i32);
             }
-            partoken_context_code => {
+            left_hyphen_min_code => {
                 self.print_esc(65771i32);
             }
-            show_stream_code => {
+            right_hyphen_min_code => {
                 self.print_esc(65772i32);
             }
-            XeTeX_linebreak_penalty_code => {
+            holding_inserts_code => {
                 self.print_esc(65773i32);
             }
-            XeTeX_protrude_chars_code => {
+            error_context_lines_code => {
                 self.print_esc(65774i32);
+            }
+            char_sub_def_min_code => {
+                self.print_esc(65775i32);
+            }
+            char_sub_def_max_code => {
+                self.print_esc(65776i32);
+            }
+            tracing_char_sub_def_code => {
+                self.print_esc(65777i32);
+            }
+            tracing_stack_levels_code => {
+                self.print_esc(65778i32);
+            }
+            partoken_context_code => {
+                self.print_esc(65779i32);
+            }
+            show_stream_code => {
+                self.print_esc(65780i32);
+            }
+            XeTeX_linebreak_penalty_code => {
+                self.print_esc(65781i32);
+            }
+            XeTeX_protrude_chars_code => {
+                self.print_esc(65782i32);
             }
             tracing_assigns_code => {
                 // §1469
-                self.print_esc(66850i32);
+                self.print_esc(66862i32);
             }
             tracing_groups_code => {
-                self.print_esc(66851i32);
+                self.print_esc(66863i32);
             }
             tracing_ifs_code => {
-                self.print_esc(66852i32);
+                self.print_esc(66864i32);
             }
             tracing_scan_tokens_code => {
-                self.print_esc(66853i32);
+                self.print_esc(66865i32);
             }
             tracing_nesting_code => {
-                self.print_esc(66854i32);
+                self.print_esc(66866i32);
             }
             pre_display_direction_code => {
-                self.print_esc(66855i32);
+                self.print_esc(66867i32);
             }
             last_line_fit_code => {
-                self.print_esc(66856i32);
+                self.print_esc(66868i32);
             }
             saving_vdiscards_code => {
-                self.print_esc(66857i32);
+                self.print_esc(66869i32);
             }
             saving_hyph_codes_code => {
-                self.print_esc(66858i32);
+                self.print_esc(66870i32);
             }
             ignore_primitive_error_code => {
-                self.print_esc(66859i32);
+                self.print_esc(66871i32);
             }
             suppress_fontnotfound_error_code => {
                 // §1510
-                self.print_esc(66898i32);
+                self.print_esc(66910i32);
             }
             75 => {
-                self.print_esc(66899i32);
+                self.print_esc(66911i32);
             }
             77 => {
-                self.print_esc(66900i32);
+                self.print_esc(66912i32);
             }
             78 => {
-                self.print_esc(66901i32);
+                self.print_esc(66913i32);
             }
             79 => {
-                self.print_esc(66902i32);
+                self.print_esc(66914i32);
             }
             76 => {
-                self.print_esc(66903i32);
+                self.print_esc(66915i32);
             }
             80 => {
-                self.print_esc(66904i32);
+                self.print_esc(66916i32);
             }
             83 => {
-                self.print_esc(66905i32);
+                self.print_esc(66917i32);
             }
             84 => {
-                self.print_esc(66906i32);
+                self.print_esc(66918i32);
             }
             85 => {
-                self.print_esc(66907i32);
+                self.print_esc(66919i32);
             }
             86 => {
-                self.print_esc(66908i32);
+                self.print_esc(66920i32);
             }
             synctex_code => {
                 // §1704
-                self.print_esc(66962i32);
+                self.print_esc(66977i32);
             }
             _ => {
                 // §263
-                self.print(65775i32);
+                self.print(65783i32);
             }
         }
     }
@@ -2811,76 +2861,76 @@ impl Globals {
     pub fn print_length_param(&mut self, mut n: i32) {
         match n {
             par_indent_code => {
-                self.print_esc(65779i32);
-            }
-            math_surround_code => {
-                self.print_esc(65780i32);
-            }
-            line_skip_limit_code => {
-                self.print_esc(65781i32);
-            }
-            hsize_code => {
-                self.print_esc(65782i32);
-            }
-            vsize_code => {
-                self.print_esc(65783i32);
-            }
-            max_depth_code => {
-                self.print_esc(65784i32);
-            }
-            split_max_depth_code => {
-                self.print_esc(65785i32);
-            }
-            box_max_depth_code => {
-                self.print_esc(65786i32);
-            }
-            hfuzz_code => {
                 self.print_esc(65787i32);
             }
-            vfuzz_code => {
+            math_surround_code => {
                 self.print_esc(65788i32);
             }
-            delimiter_shortfall_code => {
+            line_skip_limit_code => {
                 self.print_esc(65789i32);
             }
-            null_delimiter_space_code => {
+            hsize_code => {
                 self.print_esc(65790i32);
             }
-            script_space_code => {
+            vsize_code => {
                 self.print_esc(65791i32);
             }
-            pre_display_size_code => {
+            max_depth_code => {
                 self.print_esc(65792i32);
             }
-            display_width_code => {
+            split_max_depth_code => {
                 self.print_esc(65793i32);
             }
-            display_indent_code => {
+            box_max_depth_code => {
                 self.print_esc(65794i32);
             }
-            overfull_rule_code => {
+            hfuzz_code => {
                 self.print_esc(65795i32);
             }
-            hang_indent_code => {
+            vfuzz_code => {
                 self.print_esc(65796i32);
             }
-            h_offset_code => {
+            delimiter_shortfall_code => {
                 self.print_esc(65797i32);
             }
-            v_offset_code => {
+            null_delimiter_space_code => {
                 self.print_esc(65798i32);
             }
-            emergency_stretch_code => {
+            script_space_code => {
                 self.print_esc(65799i32);
             }
-            pdf_page_width_code => {
+            pre_display_size_code => {
                 self.print_esc(65800i32);
             }
-            pdf_page_height_code => {
+            display_width_code => {
                 self.print_esc(65801i32);
             }
+            display_indent_code => {
+                self.print_esc(65802i32);
+            }
+            overfull_rule_code => {
+                self.print_esc(65803i32);
+            }
+            hang_indent_code => {
+                self.print_esc(65804i32);
+            }
+            h_offset_code => {
+                self.print_esc(65805i32);
+            }
+            v_offset_code => {
+                self.print_esc(65806i32);
+            }
+            emergency_stretch_code => {
+                self.print_esc(65807i32);
+            }
+            pdf_page_width_code => {
+                self.print_esc(65808i32);
+            }
+            pdf_page_height_code => {
+                self.print_esc(65809i32);
+            }
             _ => {
-                self.print(65802i32);
+                self.print(65810i32);
             }
         }
     }
@@ -2902,7 +2952,7 @@ impl Globals {
         match cmd {
             left_brace => {
                 {
-                    self.print(65876i32);
+                    self.print(65884i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2912,7 +2962,7 @@ impl Globals {
             }
             right_brace => {
                 {
-                    self.print(65877i32);
+                    self.print(65885i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2922,7 +2972,7 @@ impl Globals {
             }
             math_shift => {
                 {
-                    self.print(65878i32);
+                    self.print(65886i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2932,7 +2982,7 @@ impl Globals {
             }
             mac_param => {
                 {
-                    self.print(65879i32);
+                    self.print(65887i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2942,7 +2992,7 @@ impl Globals {
             }
             sup_mark => {
                 {
-                    self.print(65880i32);
+                    self.print(65888i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2952,7 +3002,7 @@ impl Globals {
             }
             sub_mark => {
                 {
-                    self.print(65881i32);
+                    self.print(65889i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2961,11 +3011,11 @@ impl Globals {
                 }
             }
             endv => {
-                self.print(65882i32);
+                self.print(65890i32);
             }
             spacer => {
                 {
-                    self.print(65883i32);
+                    self.print(65891i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2975,7 +3025,7 @@ impl Globals {
             }
             letter => {
                 {
-                    self.print(65884i32);
+                    self.print(65892i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -2985,7 +3035,7 @@ impl Globals {
             }
             other_char => {
                 {
-                    self.print(65885i32);
+                    self.print(65893i32);
                     if (chr_code < 65536i32) {
                         self.print(chr_code);
                     } else {
@@ -3000,12 +3050,12 @@ impl Globals {
                 } else {
                     if (chr_code < mu_skip_base) {
                         {
-                            self.print_esc(65687i32);
+                            self.print_esc(65695i32);
                             self.print_int((chr_code).wrapping_sub(1205783i32));
                         }
                     } else {
                         {
-                            self.print_esc(65688i32);
+                            self.print_esc(65696i32);
                             self.print_int((chr_code).wrapping_sub(1206039i32));
                         }
                     }
@@ -3015,45 +3065,45 @@ impl Globals {
                 // §257
                 if (chr_code >= toks_base) {
                     {
-                        self.print_esc(65699i32);
+                        self.print_esc(65707i32);
                         self.print_int((chr_code).wrapping_sub(1206307i32));
                     }
                 } else {
                     match chr_code {
                         output_routine_loc => {
-                            self.print_esc(65690i32);
+                            self.print_esc(65698i32);
                         }
                         every_par_loc => {
-                            self.print_esc(65691i32);
+                            self.print_esc(65699i32);
                         }
                         every_math_loc => {
-                            self.print_esc(65692i32);
+                            self.print_esc(65700i32);
                         }
                         every_display_loc => {
-                            self.print_esc(65693i32);
+                            self.print_esc(65701i32);
                         }
                         every_hbox_loc => {
-                            self.print_esc(65694i32);
+                            self.print_esc(65702i32);
                         }
                         every_vbox_loc => {
-                            self.print_esc(65695i32);
+                            self.print_esc(65703i32);
                         }
                         every_job_loc => {
-                            self.print_esc(65696i32);
+                            self.print_esc(65704i32);
                         }
                         every_cr_loc => {
-                            self.print_esc(65697i32);
+                            self.print_esc(65705i32);
                         }
                         every_eof_loc => {
                             // §1468
-                            self.print_esc(66849i32);
+                            self.print_esc(66861i32);
                         }
                         XeTeX_inter_char_loc => {
-                            self.print_esc(66747i32);
+                            self.print_esc(66759i32);
                         }
                         _ => {
                             // §257
-                            self.print_esc(65698i32);
+                            self.print_esc(65706i32);
                         }
                     }
                 }
@@ -3064,7 +3114,7 @@ impl Globals {
                     self.print_param((chr_code).wrapping_sub(7892264i32));
                 } else {
                     {
-                        self.print_esc(65777i32);
+                        self.print_esc(65785i32);
                         self.print_int((chr_code).wrapping_sub(7892352i32));
                     }
                 }
@@ -3075,81 +3125,81 @@ impl Globals {
                     self.print_length_param((chr_code).wrapping_sub(9006720i32));
                 } else {
                     {
-                        self.print_esc(65803i32);
+                        self.print_esc(65811i32);
                         self.print_int((chr_code).wrapping_sub(9006743i32));
                     }
                 }
             }
             accent => {
                 // §296
-                self.print_esc(65813i32);
+                self.print_esc(65821i32);
             }
             advance => {
-                self.print_esc(65814i32);
+                self.print_esc(65822i32);
             }
             after_assignment => {
-                self.print_esc(65815i32);
+                self.print_esc(65823i32);
             }
             after_group => {
-                self.print_esc(65816i32);
+                self.print_esc(65824i32);
             }
             assign_font_dimen => {
-                self.print_esc(65826i32);
+                self.print_esc(65834i32);
             }
             begin_group => {
-                self.print_esc(65817i32);
+                self.print_esc(65825i32);
             }
             break_penalty => {
-                self.print_esc(65845i32);
+                self.print_esc(65853i32);
             }
             char_num => {
-                self.print_esc(65818i32);
+                self.print_esc(65826i32);
             }
             cs_name => {
-                self.print_esc(65809i32);
+                self.print_esc(65817i32);
             }
             def_font => {
-                self.print_esc(65825i32);
+                self.print_esc(65833i32);
             }
             delim_num => {
                 if (chr_code == 1i32) {
-                    self.print_esc(65821i32);
+                    self.print_esc(65829i32);
                 } else {
-                    self.print_esc(65819i32);
+                    self.print_esc(65827i32);
                 }
             }
             divide => {
-                self.print_esc(65822i32);
+                self.print_esc(65830i32);
             }
             end_cs_name => {
-                self.print_esc(65810i32);
+                self.print_esc(65818i32);
             }
             end_group => {
-                self.print_esc(65823i32);
+                self.print_esc(65831i32);
             }
             ex_space => {
                 self.print_esc(32i32);
             }
             expand_after => {
                 if (chr_code == 0i32) {
-                    self.print_esc(65824i32);
+                    self.print_esc(65832i32);
                 } else {
                     // §1574
-                    self.print_esc(66155i32);
+                    self.print_esc(66164i32);
                 }
             }
             halign => {
                 // §296
-                self.print_esc(65827i32);
+                self.print_esc(65835i32);
             }
             hrule => {
-                self.print_esc(65828i32);
+                self.print_esc(65836i32);
             }
             ignore_spaces => {
                 if (chr_code == 0i32) {
-                    self.print_esc(65829i32);
+                    self.print_esc(65837i32);
                 } else {
-                    self.print_esc(65806i32);
+                    self.print_esc(65814i32);
                 }
             }
             insert => {
@@ -3168,89 +3218,89 @@ impl Globals {
             }
             math_accent => {
                 if (chr_code == 1i32) {
-                    self.print_esc(65832i32);
+                    self.print_esc(65840i32);
                 } else {
-                    self.print_esc(65830i32);
+                    self.print_esc(65838i32);
                 }
             }
             math_char_num => {
                 if (chr_code == 2i32) {
-                    self.print_esc(65837i32);
+                    self.print_esc(65845i32);
                 } else {
                     if (chr_code == 1i32) {
-                        self.print_esc(65835i32);
+                        self.print_esc(65843i32);
                     } else {
-                        self.print_esc(65833i32);
+                        self.print_esc(65841i32);
                     }
                 }
             }
             math_choice => {
-                self.print_esc(65838i32);
+                self.print_esc(65846i32);
             }
             multiply => {
-                self.print_esc(65839i32);
+                self.print_esc(65847i32);
             }
             no_align => {
-                self.print_esc(65840i32);
+                self.print_esc(65848i32);
             }
             no_boundary => {
-                self.print_esc(65841i32);
+                self.print_esc(65849i32);
             }
             no_expand => {
                 if (chr_code == 0i32) {
-                    self.print_esc(65842i32);
+                    self.print_esc(65850i32);
                 } else {
-                    self.print_esc(65806i32);
+                    self.print_esc(65814i32);
                 }
             }
             non_script => {
                 self.print_esc(65623i32);
             }
             omit => {
-                self.print_esc(65843i32);
+                self.print_esc(65851i32);
             }
             radical => {
                 if (chr_code == 1i32) {
-                    self.print_esc(65849i32);
+                    self.print_esc(65857i32);
                 } else {
-                    self.print_esc(65847i32);
+                    self.print_esc(65855i32);
                 }
             }
             read_to_cs => {
                 if (chr_code == 0i32) {
-                    self.print_esc(65850i32);
+                    self.print_esc(65858i32);
                 } else {
                     // §1571
-                    self.print_esc(66923i32);
+                    self.print_esc(66935i32);
                 }
             }
             relax => {
                 // §296
-                self.print_esc(65851i32);
+                self.print_esc(65859i32);
             }
             set_box => {
-                self.print_esc(65852i32);
+                self.print_esc(65860i32);
             }
             set_prev_graf => {
-                self.print_esc(65846i32);
+                self.print_esc(65854i32);
             }
             set_shape => {
                 match chr_code {
                     par_shape_loc => {
-                        self.print_esc(65844i32);
+                        self.print_esc(65852i32);
                     }
                     inter_line_penalties_loc => {
                         // §1676
-                        self.print_esc(66958i32);
+                        self.print_esc(66970i32);
                     }
                     club_penalties_loc => {
-                        self.print_esc(66959i32);
+                        self.print_esc(66971i32);
                     }
                     widow_penalties_loc => {
-                        self.print_esc(66960i32);
+                        self.print_esc(66972i32);
                     }
                     display_widow_penalties_loc => {
-                        self.print_esc(66961i32);
+                        self.print_esc(66973i32);
                     }
                     _ => {}
                 }
@@ -3258,20 +3308,20 @@ impl Globals {
             the => {
                 // §296
                 if (chr_code == 0i32) {
-                    self.print_esc(65853i32);
+                    self.print_esc(65861i32);
                 } else {
                     // §1497
                     if (chr_code == 1i32) {
-                        self.print_esc(66888i32);
+                        self.print_esc(66900i32);
                     } else {
-                        self.print_esc(66889i32);
+                        self.print_esc(66901i32);
                     }
                 }
             }
             toks_register => {
                 // §1644
                 {
-                    self.print_esc(65699i32);
+                    self.print_esc(65707i32);
                     if (chr_code != mem_bot) {
                         self.print_sa_num(chr_code);
                     }
@@ -3283,50 +3333,50 @@ impl Globals {
             }
             valign => {
                 if (chr_code == 0i32) {
-                    self.print_esc(65854i32);
+                    self.print_esc(65862i32);
                 } else {
                     // §1512
                     match chr_code {
                         begin_L_code => {
-                            self.print_esc(66909i32);
+                            self.print_esc(66921i32);
                         }
                         end_L_code => {
-                            self.print_esc(66910i32);
+                            self.print_esc(66922i32);
                         }
                         begin_R_code => {
-                            self.print_esc(66911i32);
+                            self.print_esc(66923i32);
                         }
                         _ => {
-                            self.print_esc(66912i32);
+                            self.print_esc(66924i32);
                         }
                     }
                 }
             }
             vcenter => {
                 // §296
-                self.print_esc(65855i32);
+                self.print_esc(65863i32);
             }
             vrule => {
-                self.print_esc(65856i32);
+                self.print_esc(65864i32);
             }
             partoken_name => {
-                self.print_esc(65776i32);
+                self.print_esc(65784i32);
             }
             par_end => {
                 // §365
-                self.print_esc(65919i32);
+                self.print_esc(65926i32);
             }
             input => {
                 // §411
                 if (chr_code == 0i32) {
-                    self.print_esc(65953i32);
+                    self.print_esc(65962i32);
                 } else {
                     // §1559
                     if (chr_code == 2i32) {
-                        self.print_esc(66921i32);
+                        self.print_esc(66933i32);
                     } else {
                         // §411
-                        self.print_esc(65954i32);
+                        self.print_esc(65963i32);
                     }
                 }
             }
@@ -3335,19 +3385,19 @@ impl Globals {
                 {
                     match (chr_code % marks_code) {
                         first_mark_code => {
-                            self.print_esc(65956i32);
+                            self.print_esc(65965i32);
                         }
                         bot_mark_code => {
-                            self.print_esc(65957i32);
+                            self.print_esc(65966i32);
                         }
                         split_first_mark_code => {
-                            self.print_esc(65958i32);
+                            self.print_esc(65967i32);
                         }
                         split_bot_mark_code => {
-                            self.print_esc(65959i32);
+                            self.print_esc(65968i32);
                         }
                         _ => {
-                            self.print_esc(65955i32);
+                            self.print_esc(65964i32);
                         }
                     }
                     if (chr_code >= marks_code) {
@@ -3367,15 +3417,15 @@ impl Globals {
                         }
                     }
                     if (cmd == int_val) {
-                        self.print_esc(65777i32);
+                        self.print_esc(65785i32);
                     } else {
                         if (cmd == dimen_val) {
-                            self.print_esc(65803i32);
+                            self.print_esc(65811i32);
                         } else {
                             if (cmd == glue_val) {
-                                self.print_esc(65687i32);
+                                self.print_esc(65695i32);
                             } else {
-                                self.print_esc(65688i32);
+                                self.print_esc(65696i32);
                             }
                         }
                     }
@@ -3387,234 +3437,234 @@ impl Globals {
             set_aux => {
                 // §451
                 if (chr_code == vmode) {
-                    self.print_esc(66004i32);
+                    self.print_esc(66013i32);
                 } else {
-                    self.print_esc(66003i32);
+                    self.print_esc(66012i32);
                 }
             }
             set_page_int => {
                 if (chr_code == 0i32) {
-                    self.print_esc(66005i32);
+                    self.print_esc(66014i32);
                 } else {
                     // §1503
                     if (chr_code == 2i32) {
-                        self.print_esc(66894i32);
+                        self.print_esc(66906i32);
                     } else {
                         // §451
-                        self.print_esc(66006i32);
+                        self.print_esc(66015i32);
                     }
                 }
             }
             set_box_dimen => {
                 if (chr_code == width_offset) {
-                    self.print_esc(66007i32);
+                    self.print_esc(66016i32);
                 } else {
                     if (chr_code == height_offset) {
-                        self.print_esc(66008i32);
+                        self.print_esc(66017i32);
                     } else {
-                        self.print_esc(66009i32);
+                        self.print_esc(66018i32);
                     }
                 }
             }
             last_item => {
                 match chr_code {
                     int_val => {
-                        self.print_esc(66010i32);
+                        self.print_esc(66019i32);
                     }
                     dimen_val => {
-                        self.print_esc(66011i32);
+                        self.print_esc(66020i32);
                     }
                     glue_val => {
-                        self.print_esc(66012i32);
+                        self.print_esc(66021i32);
                     }
                     input_line_no_code => {
-                        self.print_esc(66013i32);
+                        self.print_esc(66022i32);
                     }
                     last_node_type_code => {
                         // §1453
-                        self.print_esc(66804i32);
-                    }
-                    eTeX_version_code => {
-                        self.print_esc(66805i32);
-                    }
-                    XeTeX_version_code => {
-                        self.print_esc(66806i32);
-                    }
-                    XeTeX_count_glyphs_code => {
-                        self.print_esc(66808i32);
-                    }
-                    XeTeX_count_variations_code => {
-                        self.print_esc(66809i32);
-                    }
-                    XeTeX_variation_code => {
-                        self.print_esc(66810i32);
-                    }
-                    XeTeX_find_variation_by_name_code => {
-                        self.print_esc(66811i32);
-                    }
-                    XeTeX_variation_min_code => {
-                        self.print_esc(66812i32);
-                    }
-                    XeTeX_variation_max_code => {
-                        self.print_esc(66813i32);
-                    }
-                    XeTeX_variation_default_code => {
-                        self.print_esc(66814i32);
-                    }
-                    XeTeX_count_features_code => {
-                        self.print_esc(66815i32);
-                    }
-                    XeTeX_feature_code_code => {
                         self.print_esc(66816i32);
                     }
-                    XeTeX_find_feature_by_name_code => {
+                    eTeX_version_code => {
                         self.print_esc(66817i32);
                     }
-                    XeTeX_is_exclusive_feature_code => {
+                    XeTeX_version_code => {
                         self.print_esc(66818i32);
                     }
-                    XeTeX_count_selectors_code => {
-                        self.print_esc(66819i32);
-                    }
-                    XeTeX_selector_code_code => {
+                    XeTeX_count_glyphs_code => {
                         self.print_esc(66820i32);
                     }
-                    XeTeX_find_selector_by_name_code => {
+                    XeTeX_count_variations_code => {
                         self.print_esc(66821i32);
                     }
-                    XeTeX_is_default_selector_code => {
+                    XeTeX_variation_code => {
                         self.print_esc(66822i32);
                     }
-                    XeTeX_OT_count_scripts_code => {
+                    XeTeX_find_variation_by_name_code => {
+                        self.print_esc(66823i32);
+                    }
+                    XeTeX_variation_min_code => {
+                        self.print_esc(66824i32);
+                    }
+                    XeTeX_variation_max_code => {
+                        self.print_esc(66825i32);
+                    }
+                    XeTeX_variation_default_code => {
                         self.print_esc(66826i32);
                     }
-                    XeTeX_OT_count_languages_code => {
+                    XeTeX_count_features_code => {
                         self.print_esc(66827i32);
                     }
-                    XeTeX_OT_count_features_code => {
+                    XeTeX_feature_code_code => {
                         self.print_esc(66828i32);
                     }
-                    XeTeX_OT_script_code => {
+                    XeTeX_find_feature_by_name_code => {
                         self.print_esc(66829i32);
                     }
-                    XeTeX_OT_language_code => {
+                    XeTeX_is_exclusive_feature_code => {
                         self.print_esc(66830i32);
                     }
-                    XeTeX_OT_feature_code => {
+                    XeTeX_count_selectors_code => {
                         self.print_esc(66831i32);
                     }
-                    XeTeX_map_char_to_glyph_code => {
+                    XeTeX_selector_code_code => {
                         self.print_esc(66832i32);
                     }
-                    XeTeX_glyph_index_code => {
+                    XeTeX_find_selector_by_name_code => {
                         self.print_esc(66833i32);
                     }
-                    XeTeX_glyph_bounds_code => {
+                    XeTeX_is_default_selector_code => {
                         self.print_esc(66834i32);
                     }
-                    XeTeX_font_type_code => {
-                        self.print_esc(66836i32);
-                    }
-                    XeTeX_first_char_code => {
-                        self.print_esc(66837i32);
-                    }
-                    XeTeX_last_char_code => {
+                    XeTeX_OT_count_scripts_code => {
                         self.print_esc(66838i32);
                     }
-                    XeTeX_pdf_page_count_code => {
+                    XeTeX_OT_count_languages_code => {
                         self.print_esc(66839i32);
+                    }
+                    XeTeX_OT_count_features_code => {
+                        self.print_esc(66840i32);
+                    }
+                    XeTeX_OT_script_code => {
+                        self.print_esc(66841i32);
+                    }
+                    XeTeX_OT_language_code => {
+                        self.print_esc(66842i32);
+                    }
+                    XeTeX_OT_feature_code => {
+                        self.print_esc(66843i32);
+                    }
+                    XeTeX_map_char_to_glyph_code => {
+                        self.print_esc(66844i32);
+                    }
+                    XeTeX_glyph_index_code => {
+                        self.print_esc(66845i32);
+                    }
+                    XeTeX_glyph_bounds_code => {
+                        self.print_esc(66846i32);
+                    }
+                    XeTeX_font_type_code => {
+                        self.print_esc(66848i32);
+                    }
+                    XeTeX_first_char_code => {
+                        self.print_esc(66849i32);
+                    }
+                    XeTeX_last_char_code => {
+                        self.print_esc(66850i32);
+                    }
+                    XeTeX_pdf_page_count_code => {
+                        self.print_esc(66851i32);
                     }
                     current_group_level_code => {
                         // §1474
-                        self.print_esc(66873i32);
+                        self.print_esc(66885i32);
                     }
                     current_group_type_code => {
-                        self.print_esc(66874i32);
+                        self.print_esc(66886i32);
                     }
                     current_if_level_code => {
                         // §1477
-                        self.print_esc(66875i32);
+                        self.print_esc(66887i32);
                     }
                     current_if_type_code => {
-                        self.print_esc(66876i32);
+                        self.print_esc(66888i32);
                     }
                     current_if_branch_code => {
-                        self.print_esc(66877i32);
+                        self.print_esc(66889i32);
                     }
                     font_char_wd_code => {
                         // §1480
-                        self.print_esc(66878i32);
+                        self.print_esc(66890i32);
                     }
                     font_char_ht_code => {
-                        self.print_esc(66879i32);
+                        self.print_esc(66891i32);
                     }
                     font_char_dp_code => {
-                        self.print_esc(66880i32);
+                        self.print_esc(66892i32);
                     }
                     font_char_ic_code => {
-                        self.print_esc(66881i32);
+                        self.print_esc(66893i32);
                     }
                     par_shape_length_code => {
                         // §1483
-                        self.print_esc(66882i32);
+                        self.print_esc(66894i32);
                     }
                     par_shape_indent_code => {
-                        self.print_esc(66883i32);
+                        self.print_esc(66895i32);
                     }
                     par_shape_dimen_code => {
-                        self.print_esc(66884i32);
+                        self.print_esc(66896i32);
                     }
                     67 => {
                         // §1590
-                        self.print_esc(66933i32);
+                        self.print_esc(66945i32);
                     }
                     68 => {
-                        self.print_esc(66934i32);
+                        self.print_esc(66946i32);
                     }
                     69 => {
-                        self.print_esc(66935i32);
+                        self.print_esc(66947i32);
                     }
                     70 => {
-                        self.print_esc(66936i32);
+                        self.print_esc(66948i32);
                     }
                     glue_stretch_order_code => {
                         // §1613
-                        self.print_esc(66940i32);
+                        self.print_esc(66952i32);
                     }
                     glue_shrink_order_code => {
-                        self.print_esc(66941i32);
+                        self.print_esc(66953i32);
                     }
                     glue_stretch_code => {
-                        self.print_esc(66942i32);
+                        self.print_esc(66954i32);
                     }
                     glue_shrink_code => {
-                        self.print_esc(66943i32);
+                        self.print_esc(66955i32);
                     }
                     mu_to_glue_code => {
                         // §1617
-                        self.print_esc(66944i32);
+                        self.print_esc(66956i32);
                     }
                     glue_to_mu_code => {
-                        self.print_esc(66945i32);
+                        self.print_esc(66957i32);
                     }
                     pdf_last_x_pos_code => {
                         // §451
-                        self.print_esc(66015i32);
+                        self.print_esc(66024i32);
                     }
                     pdf_last_y_pos_code => {
-                        self.print_esc(66016i32);
+                        self.print_esc(66025i32);
                     }
                     elapsed_time_code => {
-                        self.print_esc(66017i32);
+                        self.print_esc(66026i32);
                     }
                     pdf_shell_escape_code => {
-                        self.print_esc(66018i32);
+                        self.print_esc(66027i32);
                     }
                     random_seed_code => {
-                        self.print_esc(66019i32);
+                        self.print_esc(66028i32);
                     }
                     _ => {
-                        self.print_esc(66014i32);
+                        self.print_esc(66023i32);
                     }
                 }
             }
@@ -3622,81 +3672,81 @@ impl Globals {
                 // §504
                 match chr_code {
                     number_code => {
-                        self.print_esc(66087i32);
-                    }
-                    roman_numeral_code => {
-                        self.print_esc(66088i32);
-                    }
-                    string_code => {
-                        self.print_esc(66089i32);
-                    }
-                    meaning_code => {
-                        self.print_esc(66090i32);
-                    }
-                    font_name_code => {
-                        self.print_esc(66091i32);
-                    }
-                    eTeX_revision_code => {
-                        self.print_esc(66106i32);
-                    }
-                    expanded_code => {
-                        self.print_esc(66092i32);
-                    }
-                    left_margin_kern_code => {
-                        self.print_esc(66093i32);
-                    }
-                    right_margin_kern_code => {
-                        self.print_esc(66094i32);
-                    }
-                    pdf_creation_date_code => {
-                        self.print_esc(66095i32);
-                    }
-                    pdf_file_mod_date_code => {
                         self.print_esc(66096i32);
                     }
-                    pdf_file_size_code => {
+                    roman_numeral_code => {
                         self.print_esc(66097i32);
                     }
-                    pdf_mdfive_sum_code => {
+                    string_code => {
                         self.print_esc(66098i32);
                     }
-                    pdf_file_dump_code => {
+                    meaning_code => {
                         self.print_esc(66099i32);
                     }
-                    pdf_strcmp_code => {
+                    font_name_code => {
                         self.print_esc(66100i32);
                     }
-                    uniform_deviate_code => {
+                    eTeX_revision_code => {
+                        self.print_esc(66115i32);
+                    }
+                    expanded_code => {
                         self.print_esc(66101i32);
                     }
-                    normal_deviate_code => {
+                    left_margin_kern_code => {
                         self.print_esc(66102i32);
+                    }
+                    right_margin_kern_code => {
+                        self.print_esc(66103i32);
+                    }
+                    pdf_creation_date_code => {
+                        self.print_esc(66104i32);
+                    }
+                    pdf_file_mod_date_code => {
+                        self.print_esc(66105i32);
+                    }
+                    pdf_file_size_code => {
+                        self.print_esc(66106i32);
+                    }
+                    pdf_mdfive_sum_code => {
+                        self.print_esc(66107i32);
+                    }
+                    pdf_file_dump_code => {
+                        self.print_esc(66108i32);
+                    }
+                    pdf_strcmp_code => {
+                        self.print_esc(66109i32);
+                    }
+                    uniform_deviate_code => {
+                        self.print_esc(66110i32);
+                    }
+                    normal_deviate_code => {
+                        self.print_esc(66111i32);
                     }
                     XeTeX_revision_code => {
                         // §1459
-                        self.print_esc(66807i32);
+                        self.print_esc(66819i32);
                     }
                     XeTeX_variation_name_code => {
-                        self.print_esc(66823i32);
-                    }
-                    XeTeX_feature_name_code => {
-                        self.print_esc(66824i32);
-                    }
-                    XeTeX_selector_name_code => {
-                        self.print_esc(66825i32);
-                    }
-                    XeTeX_glyph_name_code => {
                         self.print_esc(66835i32);
                     }
+                    XeTeX_feature_name_code => {
+                        self.print_esc(66836i32);
+                    }
+                    XeTeX_selector_name_code => {
+                        self.print_esc(66837i32);
+                    }
+                    XeTeX_glyph_name_code => {
+                        self.print_esc(66847i32);
+                    }
                     XeTeX_Uchar_code => {
-                        self.print_esc(66104i32);
+                        self.print_esc(66113i32);
                     }
                     XeTeX_Ucharcat_code => {
-                        self.print_esc(66105i32);
+                        self.print_esc(66114i32);
                     }
                     _ => {
                         // §504
-                        self.print_esc(66103i32);
+                        self.print_esc(66112i32);
                     }
                 }
             }
@@ -3704,76 +3754,76 @@ impl Globals {
                 // §523
                 {
                     if (chr_code >= unless_code) {
-                        self.print_esc(66155i32);
+                        self.print_esc(66164i32);
                     }
                     match (chr_code % unless_code) {
                         if_cat_code => {
-                            self.print_esc(66138i32);
-                        }
-                        if_int_code => {
-                            self.print_esc(66139i32);
-                        }
-                        if_dim_code => {
-                            self.print_esc(66140i32);
-                        }
-                        if_odd_code => {
-                            self.print_esc(66141i32);
-                        }
-                        if_vmode_code => {
-                            self.print_esc(66142i32);
-                        }
-                        if_hmode_code => {
-                            self.print_esc(66143i32);
-                        }
-                        if_mmode_code => {
-                            self.print_esc(66144i32);
-                        }
-                        if_inner_code => {
-                            self.print_esc(66145i32);
-                        }
-                        if_void_code => {
-                            self.print_esc(66146i32);
-                        }
-                        if_hbox_code => {
                             self.print_esc(66147i32);
                         }
-                        if_vbox_code => {
+                        if_int_code => {
                             self.print_esc(66148i32);
                         }
-                        ifx_code => {
+                        if_dim_code => {
                             self.print_esc(66149i32);
                         }
-                        if_eof_code => {
+                        if_odd_code => {
                             self.print_esc(66150i32);
                         }
-                        if_true_code => {
+                        if_vmode_code => {
                             self.print_esc(66151i32);
                         }
-                        if_false_code => {
+                        if_hmode_code => {
                             self.print_esc(66152i32);
                         }
-                        if_case_code => {
+                        if_mmode_code => {
                             self.print_esc(66153i32);
                         }
-                        if_primitive_code => {
+                        if_inner_code => {
                             self.print_esc(66154i32);
+                        }
+                        if_void_code => {
+                            self.print_esc(66155i32);
+                        }
+                        if_hbox_code => {
+                            self.print_esc(66156i32);
+                        }
+                        if_vbox_code => {
+                            self.print_esc(66157i32);
+                        }
+                        ifx_code => {
+                            self.print_esc(66158i32);
+                        }
+                        if_eof_code => {
+                            self.print_esc(66159i32);
+                        }
+                        if_true_code => {
+                            self.print_esc(66160i32);
+                        }
+                        if_false_code => {
+                            self.print_esc(66161i32);
+                        }
+                        if_case_code => {
+                            self.print_esc(66162i32);
+                        }
+                        if_primitive_code => {
+                            self.print_esc(66163i32);
                         }
                         if_def_code => {
                             // §1575
-                            self.print_esc(66924i32);
+                            self.print_esc(66936i32);
                         }
                         if_cs_code => {
-                            self.print_esc(66925i32);
+                            self.print_esc(66937i32);
                         }
                         if_font_char_code => {
-                            self.print_esc(66926i32);
+                            self.print_esc(66938i32);
                         }
                         if_in_csname_code => {
-                            self.print_esc(66927i32);
+                            self.print_esc(66939i32);
                         }
                         _ => {
                             // §523
-                            self.print_esc(66137i32);
+                            self.print_esc(66146i32);
                         }
                     }
                 }
@@ -3781,22 +3831,22 @@ impl Globals {
             fi_or_else => {
                 // §527
                 if (chr_code == fi_code) {
-                    self.print_esc(66156i32);
+                    self.print_esc(66165i32);
                 } else {
                     if (chr_code == or_code) {
-                        self.print_esc(66157i32);
+                        self.print_esc(66166i32);
                     } else {
-                        self.print_esc(66158i32);
+                        self.print_esc(66167i32);
                     }
                 }
             }
             tab_mark => {
                 // §829
                 if (chr_code == span_code) {
-                    self.print_esc(66319i32);
+                    self.print_esc(66326i32);
                 } else {
                     {
-                        self.print(66323i32);
+                        self.print(66330i32);
                         if (chr_code < 65536i32) {
                             self.print(chr_code);
                         } else {
@@ -3807,44 +3857,44 @@ impl Globals {
             }
             car_ret => {
                 if (chr_code == cr_code) {
-                    self.print_esc(66320i32);
+                    self.print_esc(66327i32);
                 } else {
-                    self.print_esc(66321i32);
+                    self.print_esc(66328i32);
                 }
             }
             set_page_dimen => {
                 // §1038
                 match chr_code {
                     0 => {
-                        self.print_esc(66399i32);
+                        self.print_esc(66406i32);
                     }
                     1 => {
-                        self.print_esc(66400i32);
+                        self.print_esc(66407i32);
                     }
                     2 => {
-                        self.print_esc(66401i32);
+                        self.print_esc(66408i32);
                     }
                     3 => {
-                        self.print_esc(66402i32);
+                        self.print_esc(66409i32);
                     }
                     4 => {
-                        self.print_esc(66403i32);
+                        self.print_esc(66410i32);
                     }
                     5 => {
-                        self.print_esc(66404i32);
+                        self.print_esc(66411i32);
                     }
                     6 => {
-                        self.print_esc(66405i32);
+                        self.print_esc(66412i32);
                     }
                     _ => {
-                        self.print_esc(66406i32);
+                        self.print_esc(66413i32);
                     }
                 }
             }
             stop => {
                 // §1107
                 if (chr_code == 1i32) {
-                    self.print_esc(66453i32);
+                    self.print_esc(66459i32);
                 } else {
                     self.print_esc(65631i32);
                 }
@@ -3853,38 +3903,38 @@ impl Globals {
                 // §1113
                 match chr_code {
                     skip_code => {
-                        self.print_esc(66454i32);
+                        self.print_esc(66460i32);
                     }
                     fil_code => {
-                        self.print_esc(66455i32);
+                        self.print_esc(66461i32);
                     }
                     fill_code => {
-                        self.print_esc(66456i32);
+                        self.print_esc(66462i32);
                     }
                     ss_code => {
-                        self.print_esc(66457i32);
+                        self.print_esc(66463i32);
                     }
                     _ => {
-                        self.print_esc(66458i32);
+                        self.print_esc(66464i32);
                     }
                 }
             }
             vskip => {
                 match chr_code {
                     skip_code => {
-                        self.print_esc(66459i32);
+                        self.print_esc(66465i32);
                     }
                     fil_code => {
-                        self.print_esc(66460i32);
+                        self.print_esc(66466i32);
                     }
                     fill_code => {
-                        self.print_esc(66461i32);
+                        self.print_esc(66467i32);
                     }
                     ss_code => {
-                        self.print_esc(66462i32);
+                        self.print_esc(66468i32);
                     }
                     _ => {
-                        self.print_esc(66463i32);
+                        self.print_esc(66469i32);
                     }
                 }
             }
@@ -3900,54 +3950,54 @@ impl Globals {
             hmove => {
                 // §1126
                 if (chr_code == 1i32) {
-                    self.print_esc(66481i32);
+                    self.print_esc(66487i32);
                 } else {
-                    self.print_esc(66482i32);
+                    self.print_esc(66488i32);
                 }
             }
             vmove => {
                 if (chr_code == 1i32) {
-                    self.print_esc(66483i32);
+                    self.print_esc(66489i32);
                 } else {
-                    self.print_esc(66484i32);
+                    self.print_esc(66490i32);
                 }
             }
             make_box => {
                 match chr_code {
                     box_code => {
-                        self.print_esc(65701i32);
+                        self.print_esc(65709i32);
                     }
                     copy_code => {
-                        self.print_esc(66485i32);
+                        self.print_esc(66491i32);
                     }
                     last_box_code => {
-                        self.print_esc(66486i32);
+                        self.print_esc(66492i32);
                     }
                     vsplit_code => {
-                        self.print_esc(66394i32);
+                        self.print_esc(66401i32);
                     }
                     vtop_code => {
-                        self.print_esc(66487i32);
+                        self.print_esc(66493i32);
                     }
                     5 => {
-                        self.print_esc(66396i32);
+                        self.print_esc(66403i32);
                     }
                     _ => {
-                        self.print_esc(66488i32);
+                        self.print_esc(66494i32);
                     }
                 }
             }
             leader_ship => {
                 if (chr_code == a_leaders) {
-                    self.print_esc(66490i32);
+                    self.print_esc(66496i32);
                 } else {
                     if (chr_code == c_leaders) {
-                        self.print_esc(66491i32);
+                        self.print_esc(66497i32);
                     } else {
                         if (chr_code == x_leaders) {
-                            self.print_esc(66492i32);
+                            self.print_esc(66498i32);
                         } else {
-                            self.print_esc(66489i32);
+                            self.print_esc(66495i32);
                         }
                     }
                 }
@@ -3955,43 +4005,43 @@ impl Globals {
             start_par => {
                 // §1143
                 if (chr_code == 0i32) {
-                    self.print_esc(66509i32);
+                    self.print_esc(66515i32);
                 } else {
-                    self.print_esc(66508i32);
+                    self.print_esc(66514i32);
                 }
             }
             remove_item => {
                 // §1162
                 if (chr_code == glue_node) {
-                    self.print_esc(66521i32);
+                    self.print_esc(66527i32);
                 } else {
                     if (chr_code == kern_node) {
-                        self.print_esc(66520i32);
+                        self.print_esc(66526i32);
                     } else {
-                        self.print_esc(66519i32);
+                        self.print_esc(66525i32);
                     }
                 }
             }
             un_hbox => {
                 if (chr_code == copy_code) {
-                    self.print_esc(66523i32);
+                    self.print_esc(66529i32);
                 } else {
-                    self.print_esc(66522i32);
+                    self.print_esc(66528i32);
                 }
             }
             un_vbox => {
                 if (chr_code == copy_code) {
-                    self.print_esc(66525i32);
+                    self.print_esc(66531i32);
                 } else {
                     // §1673
                     if (chr_code == last_box_code) {
-                        self.print_esc(66956i32);
+                        self.print_esc(66968i32);
                     } else {
                         if (chr_code == vsplit_code) {
-                            self.print_esc(66957i32);
+                            self.print_esc(66969i32);
                         } else {
                             // §1162
-                            self.print_esc(66524i32);
+                            self.print_esc(66530i32);
                         }
                     }
                 }
@@ -4007,54 +4057,54 @@ impl Globals {
             eq_no => {
                 // §1197
                 if (chr_code == 1i32) {
-                    self.print_esc(66557i32);
+                    self.print_esc(66563i32);
                 } else {
-                    self.print_esc(66556i32);
+                    self.print_esc(66562i32);
                 }
             }
             math_comp => {
                 // §1211
                 match chr_code {
                     ord_noad => {
-                        self.print_esc(66269i32);
-                    }
-                    op_noad => {
-                        self.print_esc(66270i32);
-                    }
-                    bin_noad => {
-                        self.print_esc(66271i32);
-                    }
-                    rel_noad => {
-                        self.print_esc(66272i32);
-                    }
-                    open_noad => {
-                        self.print_esc(66273i32);
-                    }
-                    close_noad => {
-                        self.print_esc(66274i32);
-                    }
-                    punct_noad => {
-                        self.print_esc(66275i32);
-                    }
-                    inner_noad => {
                         self.print_esc(66276i32);
                     }
-                    under_noad => {
+                    op_noad => {
+                        self.print_esc(66277i32);
+                    }
+                    bin_noad => {
                         self.print_esc(66278i32);
                     }
+                    rel_noad => {
+                        self.print_esc(66279i32);
+                    }
+                    open_noad => {
+                        self.print_esc(66280i32);
+                    }
+                    close_noad => {
+                        self.print_esc(66281i32);
+                    }
+                    punct_noad => {
+                        self.print_esc(66282i32);
+                    }
+                    inner_noad => {
+                        self.print_esc(66283i32);
+                    }
+                    under_noad => {
+                        self.print_esc(66285i32);
+                    }
                     _ => {
-                        self.print_esc(66277i32);
+                        self.print_esc(66284i32);
                     }
                 }
             }
             limit_switch => {
                 if (chr_code == limits) {
-                    self.print_esc(66282i32);
+                    self.print_esc(66289i32);
                 } else {
                     if (chr_code == no_limits) {
-                        self.print_esc(66283i32);
+                        self.print_esc(66290i32);
                     } else {
-                        self.print_esc(66558i32);
+                        self.print_esc(66564i32);
                     }
                 }
             }
@@ -4066,68 +4116,68 @@ impl Globals {
                 // §1233
                 match chr_code {
                     over_code => {
-                        self.print_esc(66579i32);
+                        self.print_esc(66585i32);
                     }
                     atop_code => {
-                        self.print_esc(66580i32);
+                        self.print_esc(66586i32);
                     }
                     3 => {
-                        self.print_esc(66581i32);
+                        self.print_esc(66587i32);
                     }
                     4 => {
-                        self.print_esc(66582i32);
+                        self.print_esc(66588i32);
                     }
                     5 => {
-                        self.print_esc(66583i32);
+                        self.print_esc(66589i32);
                     }
                     _ => {
-                        self.print_esc(66578i32);
+                        self.print_esc(66584i32);
                     }
                 }
             }
             left_right => {
                 // §1243
                 if (chr_code == left_noad) {
-                    self.print_esc(66279i32);
+                    self.print_esc(66286i32);
                 } else {
                     // §1508
                     if (chr_code == middle_noad) {
-                        self.print_esc(66281i32);
+                        self.print_esc(66288i32);
                     } else {
                         // §1243
-                        self.print_esc(66280i32);
+                        self.print_esc(66287i32);
                     }
                 }
             }
             prefix => {
                 // §1263
                 if (chr_code == 1i32) {
-                    self.print_esc(66603i32);
+                    self.print_esc(66609i32);
                 } else {
                     if (chr_code == 2i32) {
-                        self.print_esc(66604i32);
+                        self.print_esc(66610i32);
                     } else {
                         // §1582
                         if (chr_code == 8i32) {
-                            self.print_esc(66617i32);
+                            self.print_esc(66623i32);
                         } else {
                             // §1263
-                            self.print_esc(66605i32);
+                            self.print_esc(66611i32);
                         }
                     }
                 }
             }
             def => {
                 if (chr_code == 0i32) {
-                    self.print_esc(66606i32);
+                    self.print_esc(66612i32);
                 } else {
                     if (chr_code == 1i32) {
-                        self.print_esc(66607i32);
+                        self.print_esc(66613i32);
                     } else {
                         if (chr_code == 2i32) {
-                            self.print_esc(66608i32);
+                            self.print_esc(66614i32);
                         } else {
-                            self.print_esc(66609i32);
+                            self.print_esc(66615i32);
                         }
                     }
                 }
@@ -4135,58 +4185,58 @@ impl Globals {
             let_ => {
                 // §1274
                 if (chr_code != normal) {
-                    self.print_esc(66627i32);
+                    self.print_esc(66633i32);
                 } else {
-                    self.print_esc(66626i32);
+                    self.print_esc(66632i32);
                 }
             }
             shorthand_def => {
                 // §1277
                 match chr_code {
                     char_def_code => {
-                        self.print_esc(66628i32);
-                    }
-                    math_char_def_code => {
-                        self.print_esc(66629i32);
-                    }
-                    XeTeX_math_char_def_code => {
-                        self.print_esc(66633i32);
-                    }
-                    XeTeX_math_char_num_def_code => {
-                        self.print_esc(66631i32);
-                    }
-                    count_def_code => {
                         self.print_esc(66634i32);
                     }
-                    dimen_def_code => {
+                    math_char_def_code => {
                         self.print_esc(66635i32);
                     }
-                    skip_def_code => {
-                        self.print_esc(66636i32);
+                    XeTeX_math_char_def_code => {
+                        self.print_esc(66639i32);
                     }
-                    mu_skip_def_code => {
+                    XeTeX_math_char_num_def_code => {
                         self.print_esc(66637i32);
                     }
+                    count_def_code => {
+                        self.print_esc(66640i32);
+                    }
+                    dimen_def_code => {
+                        self.print_esc(66641i32);
+                    }
+                    skip_def_code => {
+                        self.print_esc(66642i32);
+                    }
+                    mu_skip_def_code => {
+                        self.print_esc(66643i32);
+                    }
                     _ => {
-                        self.print_esc(66638i32);
+                        self.print_esc(66644i32);
                     }
                 }
             }
             char_given => {
                 {
-                    self.print_esc(65818i32);
+                    self.print_esc(65826i32);
                     self.print_hex(chr_code);
                 }
             }
             math_given => {
                 {
-                    self.print_esc(65833i32);
+                    self.print_esc(65841i32);
                     self.print_hex(chr_code);
                 }
             }
             XeTeX_math_given => {
                 {
-                    self.print_esc(65837i32);
+                    self.print_esc(65845i32);
                     { let __a107_0 = self.math_class_field(chr_code); self.print_hex(__a107_0) };
                     { let __a108_0 = self.math_fam_field(chr_code); self.print_hex(__a108_0) };
                     { let __a109_0 = self.math_char_field(chr_code); self.print_hex(__a109_0) };
@@ -4195,21 +4245,21 @@ impl Globals {
             def_code => {
                 // §1285
                 if (chr_code == cat_code_base) {
-                    self.print_esc(65707i32);
+                    self.print_esc(65715i32);
                 } else {
                     if (chr_code == math_code_base) {
-                        self.print_esc(65711i32);
+                        self.print_esc(65719i32);
                     } else {
                         if (chr_code == lc_code_base) {
-                            self.print_esc(65708i32);
+                            self.print_esc(65716i32);
                         } else {
                             if (chr_code == uc_code_base) {
-                                self.print_esc(65709i32);
+                                self.print_esc(65717i32);
                             } else {
                                 if (chr_code == sf_code_base) {
-                                    self.print_esc(65710i32);
+                                    self.print_esc(65718i32);
                                 } else {
-                                    self.print_esc(65778i32);
+                                    self.print_esc(65786i32);
                                 }
                             }
                         }
@@ -4218,18 +4268,18 @@ impl Globals {
             }
             XeTeX_def_code => {
                 if (chr_code == sf_code_base) {
-                    self.print_esc(66645i32);
+                    self.print_esc(66654i32);
                 } else {
                     if (chr_code == math_code_base) {
-                        self.print_esc(66642i32);
+                        self.print_esc(66651i32);
                     } else {
                         if (chr_code == 5664041i32) {
-                            self.print_esc(66644i32);
+                            self.print_esc(66653i32);
                         } else {
                             if (chr_code == del_code_base) {
-                                self.print_esc(66647i32);
+                                self.print_esc(66656i32);
                             } else {
-                                self.print_esc(66649i32);
+                                self.print_esc(66658i32);
                             }
                         }
                     }
@@ -4241,25 +4291,25 @@ impl Globals {
             hyph_data => {
                 // §1305
                 if (chr_code == 1i32) {
-                    self.print_esc(66382i32);
+                    self.print_esc(66389i32);
                 } else {
-                    self.print_esc(66370i32);
+                    self.print_esc(66377i32);
                 }
             }
             assign_font_int => {
                 // §1309
                 match chr_code {
                     0 => {
-                        self.print_esc(66664i32);
+                        self.print_esc(66673i32);
                     }
                     1 => {
-                        self.print_esc(66665i32);
+                        self.print_esc(66674i32);
                     }
                     lp_code_base => {
-                        self.print_esc(66666i32);
+                        self.print_esc(66675i32);
                     }
                     rp_code_base => {
-                        self.print_esc(66667i32);
+                        self.print_esc(66676i32);
                     }
                     _ => {}
                 }
@@ -4267,7 +4317,7 @@ impl Globals {
             set_font => {
                 // §1315
                 {
-                    self.print(66675i32);
+                    self.print(66684i32);
                     font_name_str = self.font_name[crate::ix::U((chr_code) as usize)];
                     if ((self.font_area[crate::ix::U((chr_code) as usize)] == aat_font_flag) || (self.font_area[crate::ix::U((chr_code) as usize)] == otgr_font_flag)) {
                         {
@@ -4291,9 +4341,9 @@ impl Globals {
                     }
                     if (self.font_size[crate::ix::U((chr_code) as usize)] != self.font_dsize[crate::ix::U((chr_code) as usize)]) {
                         {
-                            self.print(66121i32);
+                            self.print(66130i32);
                             self.print_scaled(self.font_size[crate::ix::U((chr_code) as usize)]);
-                            self.print(65689i32);
+                            self.print(65697i32);
                         }
                     }
                 }
@@ -4311,67 +4361,67 @@ impl Globals {
                         self.print_esc(65556i32);
                     }
                     _ => {
-                        self.print_esc(66676i32);
+                        self.print_esc(66685i32);
                     }
                 }
             }
             in_stream => {
                 // §1327
                 if (chr_code == 0i32) {
-                    self.print_esc(66678i32);
+                    self.print_esc(66687i32);
                 } else {
-                    self.print_esc(66677i32);
+                    self.print_esc(66686i32);
                 }
             }
             message => {
                 // §1332
                 if (chr_code == 0i32) {
-                    self.print_esc(66679i32);
+                    self.print_esc(66688i32);
                 } else {
-                    self.print_esc(66680i32);
+                    self.print_esc(66689i32);
                 }
             }
             case_shift => {
                 // §1341
                 if (chr_code == lc_code_base) {
-                    self.print_esc(66686i32);
+                    self.print_esc(66695i32);
                 } else {
-                    self.print_esc(66687i32);
+                    self.print_esc(66696i32);
                 }
             }
             xray => {
                 // §1346
                 match chr_code {
                     show_box_code => {
-                        self.print_esc(66689i32);
+                        self.print_esc(66698i32);
                     }
                     show_the_code => {
-                        self.print_esc(66690i32);
+                        self.print_esc(66699i32);
                     }
                     show_lists_code => {
-                        self.print_esc(66691i32);
+                        self.print_esc(66700i32);
                     }
                     show_groups => {
                         // §1486
-                        self.print_esc(66885i32);
+                        self.print_esc(66897i32);
                     }
                     show_tokens => {
                         // §1495
-                        self.print_esc(66887i32);
+                        self.print_esc(66899i32);
                     }
                     show_ifs => {
                         // §1500
-                        self.print_esc(66890i32);
+                        self.print_esc(66902i32);
                     }
                     _ => {
                         // §1346
-                        self.print_esc(66688i32);
+                        self.print_esc(66697i32);
                     }
                 }
             }
             undefined_cs => {
                 // §1349
-                self.print(66698i32);
+                self.print(66707i32);
             }
             call | long_call | outer_call | long_outer_call => {
                 {
@@ -4380,79 +4430,79 @@ impl Globals {
                         n = (n).wrapping_add(4i32);
                     }
                     if ((((n / 4i32)) % 2) != 0) {
-                        self.print_esc(66617i32);
+                        self.print_esc(66623i32);
                     }
                     if (((n) % 2) != 0) {
-                        self.print_esc(66603i32);
+                        self.print_esc(66609i32);
                     }
                     if ((((n / 2i32)) % 2) != 0) {
-                        self.print_esc(66604i32);
+                        self.print_esc(66610i32);
                     }
                     if (n > 0i32) {
                         self.print_char(32i32);
                     }
-                    self.print(66699i32);
+                    self.print(66708i32);
                 }
             }
             end_template => {
-                self.print_esc(66700i32);
+                self.print_esc(66709i32);
             }
             extension => {
                 // §1401
                 match chr_code {
                     open_node => {
-                        self.print_esc(66736i32);
-                    }
-                    write_node => {
-                        self.print_esc(65915i32);
-                    }
-                    close_node => {
-                        self.print_esc(66737i32);
-                    }
-                    special_node => {
-                        self.print_esc(66738i32);
-                    }
-                    immediate_code => {
-                        self.print_esc(66739i32);
-                    }
-                    set_language_code => {
-                        self.print_esc(66740i32);
-                    }
-                    pdf_save_pos_node => {
                         self.print_esc(66748i32);
                     }
-                    reset_timer_code => {
-                        self.print_esc(66741i32);
+                    write_node => {
+                        self.print_esc(65922i32);
                     }
-                    set_random_seed_code => {
-                        self.print_esc(66742i32);
-                    }
-                    pic_file_code => {
-                        self.print_esc(66743i32);
-                    }
-                    pdf_file_code => {
-                        self.print_esc(66744i32);
-                    }
-                    glyph_code => {
-                        self.print_esc(66745i32);
-                    }
-                    XeTeX_linebreak_locale_extension_code => {
-                        self.print_esc(66746i32);
-                    }
-                    XeTeX_input_encoding_extension_code => {
+                    close_node => {
                         self.print_esc(66749i32);
                     }
-                    XeTeX_default_encoding_extension_code => {
+                    special_node => {
                         self.print_esc(66750i32);
                     }
+                    immediate_code => {
+                        self.print_esc(66751i32);
+                    }
+                    set_language_code => {
+                        self.print_esc(66752i32);
+                    }
+                    pdf_save_pos_node => {
+                        self.print_esc(66760i32);
+                    }
+                    reset_timer_code => {
+                        self.print_esc(66753i32);
+                    }
+                    set_random_seed_code => {
+                        self.print_esc(66754i32);
+                    }
+                    pic_file_code => {
+                        self.print_esc(66755i32);
+                    }
+                    pdf_file_code => {
+                        self.print_esc(66756i32);
+                    }
+                    glyph_code => {
+                        self.print_esc(66757i32);
+                    }
+                    XeTeX_linebreak_locale_extension_code => {
+                        self.print_esc(66758i32);
+                    }
+                    XeTeX_input_encoding_extension_code => {
+                        self.print_esc(66761i32);
+                    }
+                    XeTeX_default_encoding_extension_code => {
+                        self.print_esc(66762i32);
+                    }
                     _ => {
-                        self.print(66751i32);
+                        self.print(66763i32);
                     }
                 }
             }
             _ => {
                 // §328
-                self.print(65886i32);
+                self.print(65894i32);
             }
         }
     }
@@ -4468,12 +4518,12 @@ impl Globals {
             } else {
                 self.print_nl(65544i32);
             }
-            self.print(66840i32);
+            self.print(66852i32);
         }
         self.print_cmd_chr(cmd, c);
-        self.print(66841i32);
+        self.print(66853i32);
         self.print(self.font_name[crate::ix::U((f) as usize)]);
-        self.print(66842i32);
+        self.print(66854i32);
         self.error();
     }
 
@@ -4488,32 +4538,12 @@ impl Globals {
             } else {
                 self.print_nl(65544i32);
             }
-            self.print(66840i32);
+            self.print(66852i32);
         }
         self.print_cmd_chr(cmd, c);
-        self.print(66841i32);
+        self.print(66853i32);
         self.print(self.font_name[crate::ix::U((f) as usize)]);
-        self.print(66843i32);
-        self.error();
-    }
-
-    /// @<Declare the procedure called `print_cmd_chr`
-    // §1457
-    pub fn not_ot_font_error(&mut self, mut cmd: i32, mut c: i32, mut f: i32) {
-        {
-            if (self.interaction == error_stop_mode) {
-            }
-            if self.file_line_error_style_p {
-                self.print_file_line();
-            } else {
-                self.print_nl(65544i32);
-            }
-            self.print(66840i32);
-        }
-        self.print_cmd_chr(cmd, c);
-        self.print(66841i32);
-        self.print(self.font_name[crate::ix::U((f) as usize)]);
-        self.print(66844i32);
+        self.print(66855i32);
         self.error();
     }
 

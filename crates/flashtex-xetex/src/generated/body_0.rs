@@ -558,15 +558,15 @@ impl Globals {
                 self.hash_high = 0i32;
                 self.cs_count = 0i32;
                 self.eqtb[crate::ix::U(((frozen_dont_expand) - 1) as usize)].set_hh_b0(dont_expand);
-                self.hash[crate::ix::U(((frozen_dont_expand) - 1179650) as usize)].set_rh(65805i32);
+                self.hash[crate::ix::U(((frozen_dont_expand) - 1179650) as usize)].set_rh(65813i32);
                 self.eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_b0(ignore_spaces);
                 self.eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_rh(1i32);
                 self.eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_b1(level_one);
-                self.hash[crate::ix::U(((frozen_primitive) - 1179650) as usize)].set_rh(65806i32);
+                self.hash[crate::ix::U(((frozen_primitive) - 1179650) as usize)].set_rh(65814i32);
                 // §587
                 self.font_ptr = null_font;
                 self.fmem_ptr = 7i32;
-                self.font_name[crate::ix::U((null_font) as usize)] = 66187i32;
+                self.font_name[crate::ix::U((null_font) as usize)] = 66194i32;
                 self.font_area[crate::ix::U((null_font) as usize)] = 65626i32;
                 self.hyphen_char[crate::ix::U((null_font) as usize)] = 45i32;
                 self.skew_char[crate::ix::U((null_font) as usize)] = (1i32).wrapping_neg();
@@ -620,13 +620,13 @@ impl Globals {
                 self.trie_c[crate::ix::U((0i32) as usize)] = 0i32;
                 self.trie_ptr = 0i32;
                 // §1270
-                self.hash[crate::ix::U(((frozen_protection) - 1179650) as usize)].set_rh(66625i32);
+                self.hash[crate::ix::U(((frozen_protection) - 1179650) as usize)].set_rh(66631i32);
                 // §1355
                 if self.ini_version() {
-                    self.format_ident = 66704i32;
+                    self.format_ident = 66713i32;
                 }
                 // §1432
-                self.hash[crate::ix::U(((end_write) - 1179650) as usize)].set_rh(66760i32);
+                self.hash[crate::ix::U(((end_write) - 1179650) as usize)].set_rh(66772i32);
                 self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b1(level_one);
                 self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b0(outer_call);
                 self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_rh((268435455i32).wrapping_neg());
@@ -634,7 +634,7 @@ impl Globals {
                 self.eTeX_mode = 0i32;
                 // §1623
                 self.max_reg_num = 255i32;
-                self.max_reg_help_line = 66952i32;
+                self.max_reg_help_line = 66964i32;
                 // §1629
                 {
                     let __for_end_4 = inter_char_val;
@@ -1119,8 +1119,8 @@ impl Globals {
             if (p >= single_base) {
                 if (p == null_cs) {
                     {
-                        self.print_esc(65809i32);
-                        self.print_esc(65810i32);
+                        self.print_esc(65817i32);
+                        self.print_esc(65818i32);
                         self.print_char(32i32);
                     }
                 } else {
@@ -1133,17 +1133,17 @@ impl Globals {
                 }
             } else {
                 if (p < active_base) {
-                    self.print_esc(65811i32);
+                    self.print_esc(65819i32);
                 } else {
                     self.print_char((p).wrapping_sub(1i32));
                 }
             }
         } else {
             if (((p >= undefined_control_sequence) && (p <= eqtb_size)) || (p > eqtb_top)) {
-                self.print_esc(65811i32);
+                self.print_esc(65819i32);
             } else {
                 if ((self.hash[crate::ix::U(((p) - 1179650) as usize)].rh() < 0i32) || (self.hash[crate::ix::U(((p) - 1179650) as usize)].rh() >= self.str_ptr)) {
-                    self.print_esc(65812i32);
+                    self.print_esc(65820i32);
                 } else {
                     {
                         if ((p >= prim_eqtb_base) && (p < frozen_null_font)) {
@@ -1171,8 +1171,8 @@ impl Globals {
                     self.print_esc((p).wrapping_sub(1114113i32));
                 } else {
                     {
-                        self.print_esc(65809i32);
-                        self.print_esc(65810i32);
+                        self.print_esc(65817i32);
+                        self.print_esc(65818i32);
                     }
                 }
             }
@@ -1359,12 +1359,12 @@ impl Globals {
     // §741
     pub fn print_size(&mut self, mut s: i32) {
         if (s == text_size) {
-            self.print_esc(65704i32);
+            self.print_esc(65712i32);
         } else {
             if (s == script_size) {
-                self.print_esc(65705i32);
+                self.print_esc(65713i32);
             } else {
-                self.print_esc(65706i32);
+                self.print_esc(65714i32);
             }
         }
     }
@@ -3131,7 +3131,7 @@ impl Globals {
                             m = (self.mem[crate::ix::U((p) as usize)].hh().lh() / max_char_val);
                             c = (self.mem[crate::ix::U((p) as usize)].hh().lh() % max_char_val);
                             if (self.mem[crate::ix::U((p) as usize)].hh().lh() < 0i32) {
-                                self.print_esc(65874i32);
+                                self.print_esc(65882i32);
                             } else {
                                 // §324
                                 match m {
@@ -3170,11 +3170,11 @@ impl Globals {
                                     }
                                     end_match => {
                                         if (c == 0i32) {
-                                            self.print(65875i32);
+                                            self.print(65883i32);
                                         }
                                     }
                                     _ => {
-                                        self.print_esc(65874i32);
+                                        self.print_esc(65882i32);
                                     }
                                 }
                             }
@@ -3185,7 +3185,7 @@ impl Globals {
                 }
             }
             if (p != (268435455i32).wrapping_neg()) {
-                self.print_esc(65700i32);
+                self.print_esc(65708i32);
             }
         }
     }
@@ -3198,29 +3198,28 @@ impl Globals {
         let mut p: halfword = 0; // §336
         if (self.scanner_status > skipping) {
             {
-                self.print_nl(65888i32);
                 match self.scanner_status {
                     defining => {
                         {
-                            self.print(65889i32);
+                            self.print_nl(65896i32);
                             p = self.def_ref;
                         }
                     }
                     matching => {
                         {
-                            self.print(65890i32);
+                            self.print_nl(65897i32);
                             p = temp_head;
                         }
                     }
                     aligning => {
                         {
-                            self.print(65891i32);
+                            self.print_nl(65898i32);
                             p = hold_head;
                         }
                     }
                     absorbing => {
                         {
-                            self.print(65892i32);
+                            self.print_nl(65899i32);
                             p = self.def_ref;
                         }
                     }
