@@ -31,7 +31,7 @@ positions 10/10 exact, P-T2 10/10.
 
 | probe | what it draws | what the display list does |
 |---|---|---|
-| `pv-form-state` | `\pdfxform` forms (immediate, nested, explicit black) drawn in red, blue, CMYK, a literal colour, `1 Tr`, `3 Tr`, a 0.2 bp pen | page 1 (initial state) drawn; pages 2–9 INCOMPLETE: a PDF form inherits the state it is drawn in, a `FORM` starts black |
+| `pv-form-state` | `\pdfxform` forms (immediate, nested, explicit black) drawn in red, blue, CMYK, a literal colour, `1 Tr`, `3 Tr`, a 0.2 bp pen | a PDF form inherits the state it is drawn in. Pages 1–8 drawn for a client that accepts `form-state` (FORMs flagged INHERITS, spec §4.3); to one that does not, pages 2–8 come INCOMPLETE (FORM_STATE). Page 9 (a pen) INCOMPLETE for both |
 | `pv-stroke-text` | text render modes 0–3 (page 1); then a pen width, round/bevel joins, a miter limit, a dash, a scaled and a stretched CTM, mode 7 | page 1 drawn; the rest INCOMPLETE (no `LINE_STATE`, spec §11.4; mode 7 is text clipping) |
 | `pv-literal-modes` | `page` and `direct` literals, colour and `Tc`/`Tz`/`Ts` inside text, balanced and unbalanced `q`/`Q`, a `q` left open at a page end, a clip; a string a literal shows in letters TeX typesets nowhere in the font | drawn; the literal's string INCOMPLETE (not in the font subset) |
 | `pv-colorstack-pages` | xcolor red, CMYK and grey running across page breaks and a footnote, `\pagecolor`, a `\pdfcolorstackinit page direct` stack | drawn |
