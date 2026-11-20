@@ -47,10 +47,15 @@ JOB = ("\\pdfoutput=1 \\pdfsuppressptexinfo=-1 \\pdfcompresslevel=0 "
        "\\pdfobjcompresslevel=0 \\pdfminorversion=%d\n%s\\bye\n")
 CRASH_CLASSES = ("crash", "hang", "ok", "graceful-error", "output-flood")
 CRASH_STORE = ("crash", "hang", "output-flood")
-DIFF_CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
+# equal-pdf: same exit status, log and PDF bytes; equal-error: no PDF from
+# either, same exit status and the same non-empty log (matching "!pdfTeX
+# error" text is real parity); inconclusive: same exit status but neither
+# engine wrote a PDF or a log, so nothing was compared (e.g. both failed to
+# load the format). inconclusive is counted, not stored.
+DIFF_CLASSES = ("equal-pdf", "equal-error", "inconclusive", "diverge", "candidate-crash", "oracle-crash",
                 "both-crash", "timeout", "both-hang", "output-flood",
                 "both-flood")
-DIFF_STORE = DIFF_CLASSES[1:]
+DIFF_STORE = DIFF_CLASSES[3:]
 U32 = (0, 1, 2, 0xFF, 0x100, 0xFFFF, 0x10000, 0x7FFFFFFF, 0xFFFFFFFF)
 # T.88 7.3: segment types (0 symbol dictionary ... 62 extension) and some
 # that are reserved
@@ -398,7 +403,11 @@ def classify_diff(cand, orc):
     if crc != orc_rc or cand[3] != orc[3] or \
             normalised_log(cand[2]) != normalised_log(orc[2]):
         return "diverge"
-    return "equal"
+    if cand[3] is not None:
+        return "equal-pdf"
+    if normalised_log(orc[2]).strip():
+        return "equal-error"
+    return "inconclusive"
 
 
 def first_diff(a, b):
@@ -473,6 +482,7 @@ def run_fuzz(candidate, out_dir, iterations, seed, timeout, oracle=None,
     known = load_known(out_dir)
     seen = set()
     counts = {c: 0 for c in classes}
+    oracle_output = 0  # iterations where the oracle wrote a PDF or a log
     for i in range(iterations):
         name, base = seeds[rng.randrange(len(seeds))]
         data, desc = mutate(base, rng)
@@ -483,6 +493,8 @@ def run_fuzz(candidate, out_dir, iterations, seed, timeout, oracle=None,
         if oracle:
             orc = run_engine(oracle, data, job, timeout, engine_env(False))
             cls = classify_diff(cand, orc)
+            if orc[3] is not None or (orc[2] or "").strip():
+                oracle_output += 1
         else:
             cls = classify_crash(cand[0])
         counts[cls] += 1
@@ -512,6 +524,11 @@ def run_fuzz(candidate, out_dir, iterations, seed, timeout, oracle=None,
                      " ".join("%s=%d" % (c, counts[c]) for c in classes)))
     print("done: %d iterations: %s"
           % (iterations, " ".join("%s=%d" % (c, counts[c]) for c in classes)))
+    if oracle and iterations > 0 and oracle_output == 0:
+        print("error: harness failure: the oracle wrote no PDF and no log in "
+              "%d iterations; nothing was compared" % iterations,
+              file=sys.stderr)
+        return 2
     return counts
 
 

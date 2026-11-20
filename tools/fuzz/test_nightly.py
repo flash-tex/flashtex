@@ -208,6 +208,19 @@ class NightlyTest(unittest.TestCase):
                                       'default="fail"'))
         self.assertEqual(self.run_main(self.base_args()), 2)
 
+    def test_collect_findings_points_at_jbig2_input(self):
+        cls_dir = os.path.join(self.out, "jbig2", "diverge")
+        os.makedirs(cls_dir)
+        with open(os.path.join(cls_dir, "ab.jbig2"), "wb") as fh:
+            fh.write(b"\x97JB2")
+        with open(os.path.join(cls_dir, "ab.json"), "w") as fh:
+            json.dump({"signature": "diverge:x"}, fh)
+        found = nightly.collect_findings(os.path.join(self.out, "jbig2"))
+        self.assertEqual([f["path"] for f in found],
+                         [os.path.join(cls_dir, "ab.jbig2")])
+        # inconclusive is never stored, and is not a finding class
+        self.assertNotIn("inconclusive", nightly.BENIGN_CLASSES)
+
     def test_benign_classes_listed_but_exit_zero(self):
         self.assertTrue(nightly.is_benign(
             {"path": "out/fz0/both-crash/abcd.tex"}))
