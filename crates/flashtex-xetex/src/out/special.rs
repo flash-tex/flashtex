@@ -745,6 +745,21 @@ impl<M: Metrics> Builder<'_, M> {
                     self.doc.catalog.merge(&d);
                 }
             }
+            // dvipdfmx's `spc_handler_pdfm_bop`/`eop`: the rest of the
+            // special (white space skipped) is the new stream's content;
+            // nothing there changes nothing
+            b"bop" | b"eop" => {
+                p.skip_white();
+                let r = p.rest();
+                if !r.is_empty() {
+                    let s = Some(std::sync::Arc::new(r.to_vec()));
+                    if cmd == b"bop" {
+                        self.doc.bop = s;
+                    } else {
+                        self.doc.eop = s;
+                    }
+                }
+            }
             b"mapline" => {
                 let line = trim(p.rest()).to_vec();
                 self.doc.fonts.map_line(&line);

@@ -125,6 +125,8 @@ struct Writer<'a> {
     faces: HashMap<[u8; 32], Arc<FaceData>>,
     /// What the PDF does not carry as the document asks (reported).
     pub warnings: Vec<String>,
+    /// The `pdf:bop`/`pdf:eop` streams written, by their content's address.
+    bop_eop: HashMap<usize, u32>,
 }
 
 /// The resources a content stream uses.
@@ -161,7 +163,33 @@ impl<'a> Writer<'a> {
             agl: None,
             faces: HashMap::new(),
             warnings: Vec::new(),
+            bop_eop: HashMap::new(),
         }
+    }
+
+    /// A page's `pdf:bop` or `pdf:eop` stream (pdfdoc.c `doc_flush_page`):
+    /// the one in effect when the page ended, else the document's last
+    /// (pages are flushed when the document closes). Each is one object
+    /// however many pages use it; the last one, written at the close, has
+    /// a newline added (`pdf_doc_close_page_tree`).
+    fn bop_eop(
+        &mut self,
+        at_end: &Option<Arc<Vec<u8>>>,
+        last: &Option<Arc<Vec<u8>>>,
+    ) -> Option<u32> {
+        let s = at_end.as_ref().or(last.as_ref())?;
+        let key = Arc::as_ptr(s) as usize;
+        if let Some(&o) = self.bop_eop.get(&key) {
+            return Some(o);
+        }
+        let mut data = s.to_vec();
+        if last.as_ref().is_some_and(|l| Arc::ptr_eq(l, s)) {
+            data.push(b'\n');
+        }
+        let o = self.alloc();
+        self.stream(o, b"", &data, true);
+        self.bop_eop.insert(key, o);
+        Some(o)
     }
 
     fn agl(&mut self) -> Arc<Agl> {
@@ -468,9 +496,25 @@ impl<'a> Writer<'a> {
         let b = &doc.pages[i];
         let num = self.pages[i];
         let mut res = Res::default();
-        let content = self.content(&b.dl, &b.sup, &mut res);
+        let mut content = self.content(&b.dl, &b.sup, &mut res);
+        let bop = self.bop_eop(&b.sup.bop, &doc.bop);
+        let eop = self.bop_eop(&b.sup.eop, &doc.eop);
+        if bop.is_some() || eop.is_some() {
+            content = between_bop_eop(&content, &b.sup);
+        }
         let contents = self.alloc();
         self.stream(contents, b"", &content, true);
+        let contents = match (bop, eop) {
+            (None, None) => format!("{contents} 0 R"),
+            _ => {
+                let refs: Vec<String> = [bop, Some(contents), eop]
+                    .into_iter()
+                    .flatten()
+                    .map(|o| format!("{o} 0 R"))
+                    .collect();
+                format!("[{}]", refs.join(" "))
+            }
+        };
         let resources = self.resources(&res, &b.sup)?;
         // annotations
         let mut annots = Vec::new();
@@ -504,7 +548,7 @@ impl<'a> Writer<'a> {
         let [x0, y0, x1, y1] = b.dl.pdf_box;
         let _ = write!(
             Bytes(&mut d),
-            "<</Type /Page /Parent {} 0 R /MediaBox [{} {} {} {}] /Contents {contents} 0 R /Resources ",
+            "<</Type /Page /Parent {} 0 R /MediaBox [{} {} {} {}] /Contents {contents} /Resources ",
             self.pages_root,
             n(x0, 3),
             n(y0, 3),
@@ -2385,6 +2429,33 @@ fn type1_flags(font_name: &str, italic_angle: &str, force_bold: bool) -> u32 {
         f |= 64;
     }
     f
+}
+
+/// A page's stream as it must be between a `pdf:bop` and a `pdf:eop`: as
+/// xdvipdfmx writes its own, the colours of the page's start set after its
+/// `q` (stroke, then fill: `0 G 0 g` by default) and the `q`s left open
+/// closed, so that the page neither takes the bop's graphics state nor
+/// leaves its own to the eop. It starts with white space, as xdvipdfmx's
+/// does (` q 1 0 0 1 ...`): the bop before it may end in an operator.
+fn between_bop_eop(content: &[u8], sup: &Supplement) -> Vec<u8> {
+    let mut c = Vec::with_capacity(content.len() + 32);
+    c.push(b' ');
+    let rest = match content.strip_prefix(b"q\n") {
+        Some(rest) => {
+            c.extend_from_slice(b"q\n");
+            rest
+        }
+        None => content,
+    };
+    if let Some((fill, stroke)) = &sup.start_colors {
+        color_op(&mut c, &stroke.0, true);
+        color_op(&mut c, &fill.0, false);
+    }
+    c.extend_from_slice(rest);
+    for _ in 0..sup.open_saves {
+        c.extend_from_slice(b"Q\n");
+    }
+    c
 }
 
 fn color_op(c: &mut Vec<u8>, v: &[f64], stroke: bool) {

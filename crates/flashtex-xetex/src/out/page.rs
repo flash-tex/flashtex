@@ -415,7 +415,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         page.dl.height = clamp_i32(h.to_sp());
         b.streams.push(page);
         // The colour in effect (dvipdfmx's colour stack lasts across pages).
-        if let Some((f, s)) = b.doc.colors.last().cloned() {
+        let start = b.doc.colors.last().cloned();
+        b.cur().sup.start_colors = Some(start.clone().unwrap_or((Col::black(), Col::black())));
+        if let Some((f, s)) = start {
             b.set_colors(Some(f), Some(s));
         }
         b.run(bytes)?;
@@ -428,7 +430,13 @@ impl<'a, M: Metrics> Builder<'a, M> {
             b.end_form(None);
         }
         let page = b.streams.pop().expect("the page");
-        Ok(page.finish())
+        let open_saves = page.stack.len();
+        let mut built = page.finish();
+        built.sup.open_saves = open_saves;
+        // `pdf_doc_finish_page`: the page keeps the bop and eop of now
+        built.sup.bop = b.doc.bop.clone();
+        built.sup.eop = b.doc.eop.clone();
+        Ok(built)
     }
 
     pub fn cur(&mut self) -> &mut Stream {
