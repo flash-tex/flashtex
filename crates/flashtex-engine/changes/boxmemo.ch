@@ -136,6 +136,7 @@ else begin if intr_rec_on then flashtex_intr_next;
   end_token_list; goto restart; {resume previous level}
 @y
   end_token_list;
+  if intr_rec_on then flashtex_intr_popped; {an intrinsic's read past its call}
   if bm_rec_on then flashtex_bm_popped;
   goto restart; {resume previous level}
 @z

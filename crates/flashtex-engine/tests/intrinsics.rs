@@ -262,6 +262,24 @@ fn register_arithmetic_is_a_dependency() {
     assert_eq!(stat(&s, "replays"), 2, "{s}");
 }
 
+/// A hook ending in `\let\x= ` leaves `\let` to read its source after the
+/// call: here a parameter of the macro the call is in, whose `out_param`
+/// pushes the argument's list at the level the body had. Before, the
+/// recording did not see the read past it and kept `a`; the next call
+/// replayed `\let\x=a` and left `b` to be typeset (lane AUDIT-MATH).
+#[test]
+fn a_hook_that_reads_a_parameter_after_it_is_not_pure() {
+    let s = check(
+        "read-past-param",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\hook{\\let\\x= }\\def\\caller#1{\\hook#1}\n\
+         \\def\\show{\\message{[\\meaning\\x]}\\let\\x\\relax}\\let\\x\\relax\n\
+         \\caller a\\show\\caller b\\show\\caller c\\show\\end\n",
+    );
+    assert_eq!(stat(&s, "replays"), 0, "{s}");
+    assert!(stat(&s, "Level") >= 1, "{s}");
+}
+
 #[test]
 fn verify_all_on_the_test_file() {
     // every parameterless macro big_switch expands is a candidate

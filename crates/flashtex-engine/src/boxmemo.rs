@@ -2901,19 +2901,26 @@ impl Globals {
     /// about a third of an edited page's instructions there (lane
     /// EDITED-PAGE). A read past the call anywhere else -- a primitive's
     /// look-ahead, a macro's parameters, an expansion's scan -- still
-    /// abandons it (`flashtex_bm_next`).
+    /// abandons it, here: `get_next` goes on to read the token after the
+    /// call. `flashtex_bm_next`'s level test alone missed one that came
+    /// from a parameter of the macro the call is in (`\\let#1= ` as the
+    /// body's end, called as `\\measure\\x#1`, expl3's `\\cs_set_eq:NN`): its
+    /// `out_param` pushes the argument's list at the body's old level, and
+    /// the recording took the value `\\let` read there as its own (lane
+    /// AUDIT-MATH).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_popped(&mut self) {
         let Some(base) = self.bm_with_rec(|r| r.base) else {
             return;
         };
-        if self.input_ptr < base
-            && self.bm_at_switch
-            && self.expand_depth_count == 0
-            && self.scanner_status == k::normal
-        {
-            self.bm_finish(None);
+        if self.input_ptr < base {
+            if self.bm_at_switch && self.expand_depth_count == 0 && self.scanner_status == k::normal
+            {
+                self.bm_finish(None);
+            } else {
+                self.bm_abort("Level");
+            }
         }
     }
 

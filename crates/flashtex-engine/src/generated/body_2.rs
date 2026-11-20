@@ -2625,6 +2625,9 @@ impl Globals {
                     } else {
                         {
                             self.end_token_list();
+                            if self.intr_rec_on {
+                                self.flashtex_intr_popped();
+                            }
                             if self.bm_rec_on {
                                 self.flashtex_bm_popped();
                             }
