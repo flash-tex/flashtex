@@ -272,6 +272,9 @@ pub struct Doc {
     /// What went wrong reading the output: the run fails (a page that
     /// cannot be read is never dropped silently).
     pub errors: Vec<String>,
+    /// `pdf:tounicode`'s CMap and taint keys (spc_pdfm.c's `struct
+    /// tounicode`), which last across pages.
+    pub tounicode: super::cmap::ToUnicode,
 }
 
 impl Doc {

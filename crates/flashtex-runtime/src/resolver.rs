@@ -53,6 +53,9 @@ pub enum Format {
     /// `graphic/figure` (`kpse_pict_format`): the XeTeX-derived engine's
     /// `\\XeTeXpicfile` and `\\XeTeXpdffile` (crates/flashtex-xetex).
     Pict,
+    /// `cmap files` (`CMAPFONTS`): PostScript CMaps, for xdvipdfmx's
+    /// `pdf:tounicode` special (crates/flashtex-xetex).
+    Cmap,
 }
 
 impl Format {
@@ -76,6 +79,7 @@ impl Format {
             Format::Sfd => "subfont definition files",
             Format::Ist => "ist",
             Format::Pict => "graphic/figure",
+            Format::Cmap => "cmap files",
         }
     }
 
@@ -99,6 +103,7 @@ impl Format {
             Format::Sfd,
             Format::Ist,
             Format::Pict,
+            Format::Cmap,
         ]
     }
 

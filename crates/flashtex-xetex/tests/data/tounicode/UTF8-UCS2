@@ -1,0 +1,39 @@
+%!PS-Adobe-3.0 Resource-CMap
+%%DocumentNeededResources: ProcSet (CIDInit)
+%%IncludeResource: ProcSet (CIDInit)
+%%BeginResource: CMap (UTF8-UCS2)
+%%Title: (UTF8-UCS2)
+%% Part of TeX Live's fonts/cmap/dvipdfmx/UTF8-UCS2 (TeX Users Group).
+%%EndComments
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo 3 dict dup begin
+  /Registry (DPX) def
+  /Ordering (UTF8_UCS2) def
+  /Supplement 0 def
+end def
+/CMapName /UTF8-UCS2 def
+/CMapVersion 1.001 def
+/CMapType 2 def
+/WMode 0 def
+6 begincodespacerange
+<00> <7F>
+<C280> <DFBF>
+<E0A080> <E0BFBF>
+<E18080> <ECBFBF>
+<ED8080> <ED9FBF>
+<EE8080> <EFBFBF>
+endcodespacerange
+4 beginbfrange
+<00> <7F> <0000>
+<C280> <C2BF> <0080>
+<C380> <C3BF> <00C0>
+<E28880> <E288BF> <2200>
+endbfrange
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+%%EndResource
+%%EOF
