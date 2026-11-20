@@ -2073,6 +2073,26 @@ const DEAD_SCALARS: &[&str] = &[
     // tex.web §864: zeroed with `printed_node` before each pass's first
     // `try_break`, its only reader
     "pass_number",
+    // `line_break`'s pass state (#2447): it sets each before it reads it,
+    // in every call, and the only other readers (`try_break`,
+    // `finite_shrink`) run only inside it. `no_shrink_error_yet` (tex.web
+    // §816) and e-TeX's `do_last_line_fit`/`active_node_size` are set
+    // unconditionally at its start, `threshold`, `second_pass` and
+    // `final_pass` on either branch of its `\pretolerance` test (§863),
+    // `auto_breaking` before the first pass (§863)
+    "no_shrink_error_yet",
+    "do_last_line_fit",
+    "active_node_size",
+    "threshold",
+    "second_pass",
+    "final_pass",
+    "auto_breaking",
+    // read only by `short_display` (tex.web §174), whose every outermost
+    // caller sets it first: `hpack`'s box report (§663) and `line_break`
+    // (§864, unconditionally, with `pass_number`) to `null_font`, a
+    // ligature in `show_box` to the ligature's font, and pdfTeX's
+    // `short_display_n` to `null_font` (#2447)
+    "font_in_short_display",
     "prev_p",
     "first_p",
     "prev_char_p",
