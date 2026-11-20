@@ -19,6 +19,23 @@ pub fn no_texlive() {
     eprintln!("no TeX Live found; skipping");
 }
 
+/// What a test does where TeX Live is there but lacks a file the test needs
+/// (`what`: e.g. the fonts of one case): as [`no_texlive`], a skip locally,
+/// a failure where `FLASHTEX_REQUIRE_TEXLIVE=1`, so a CI image without the
+/// file fails the test instead of passing it unrun (#2489: on the hosted
+/// image `ttf_tag_strncmp` and nine of `pdf_fonts2`'s twelve cases could
+/// not run). Give the image the package (ci.yml's texlive-2026 `extra`).
+#[allow(dead_code)]
+pub fn not_installed(what: &str) {
+    if std::env::var_os("FLASHTEX_REQUIRE_TEXLIVE").is_some_and(|v| v == "1") {
+        panic!(
+            "TeX Live lacks {what}, and FLASHTEX_REQUIRE_TEXLIVE=1 says this run must have it \
+             (add its package to the texlive-2026 action's `extra` in ci.yml)"
+        );
+    }
+    eprintln!("TeX Live lacks {what}; skipping");
+}
+
 /// A scratch directory that belongs to this test process alone:
 /// `$TMPDIR/<prefix>-<pid>-<nanos>`, created here, so it never existed before.
 ///

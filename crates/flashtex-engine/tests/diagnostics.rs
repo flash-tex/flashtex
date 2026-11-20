@@ -226,7 +226,7 @@ fn check_case(name: &str, expected: &[Json], got: &[Json]) -> Result<usize, Vec<
 #[test]
 fn corpus_positions_equal_pdflatex() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
@@ -350,7 +350,7 @@ fn session_doc() -> String {
 #[test]
 fn incremental_diagnostics_equal_scratch() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("session");
@@ -446,7 +446,7 @@ fn incremental_diagnostics_equal_scratch() {
 fn socket_negotiates_diag_v1() {
     use flashtex_display_list::client::{Client, CompileRequest, Event};
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("socket");
