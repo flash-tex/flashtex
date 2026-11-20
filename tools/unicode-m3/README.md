@@ -51,6 +51,15 @@ together. Its macOS counterpart on system fonts is
 `tools/displaylist/unicode-cases/u14-realdoc-system.tex` (Unicode preview
 parity).
 
+`u14-bidi-numbers` probes ICU's bidi runs inside native words (#1777) on
+TeX Live's own fonts (Amiri, David CLM), so the Linux oracle checks what
+`l011-bidi-rtl` checks on macOS system fonts: European, Arabic-Indic and
+Extended Arabic-Indic digits in right-to-left words, number separators and
+terminators, signs and brackets, words with no strong character (whose
+level comes from the font's script), and `\XeTeXinterwordspaceshaping` 0, 1
+and 2. `p03-polyglossia-arabic` and `p04-polyglossia-hebrew` are the Unicode
+corpus's documents of the same issue (`tools/xetex-corpus/docs`).
+
 A case directory may set `trace` to `boxes` (box dumps at every `\shipout`,
 no `\tracingall`) for documents too long to trace in full; the P-T1 results
 say which cases were compared that way.

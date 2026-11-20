@@ -108,10 +108,16 @@ def assemble_case(c, corpus, out, cache, fonts_line):
     os.makedirs(d)
     meta = {"family": c["family"], "source": c.get("source", "FlashTeX repository"),
             "trace": c.get("trace", "full")}
+    # a parity case: the oracle's run must have no error (latex.py fails it
+    # otherwise; an errored reference is a note, not parity)
+    if c.get("reference_clean"):
+        meta["reference_clean"] = True
     main = os.path.join(d, name + ".tex")
     if "path" in c:
         shutil.copy(os.path.join(REPO, c["path"]), main)
         meta["source_path"] = c["path"]
+        if c.get("subst"):
+            meta["substituted"] = substitute(main, c["subst"])
     elif "archive" in c:
         spec = corpus["archives"][c["archive"]]
         extract(fetch(c["archive"], spec, cache), c["root"], d)
