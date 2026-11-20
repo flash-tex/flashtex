@@ -1048,6 +1048,10 @@ impl Globals {
     fn input_path(&mut self, format: Format, must_exist: bool) -> Option<String> {
         self.host.full_name_of_file = None;
         let s = self.raw_file_name();
+        if format == Format::Tfm {
+            // kpathsea's own reads at the first TFM lookup (`-recorder`)
+            flashtex_engine::system::recorder_fontmaps();
+        }
         let mut found = None;
         // The output-directory shortcut is confined as the pdfTeX engine's
         // `find_input` confines it (FLASHTEX_CONFINE_READS: the name's rule,
@@ -1082,6 +1086,8 @@ impl Globals {
             Some(rest) if searched && !rest.is_empty() && !s.starts_with("./") => rest,
             _ => found.as_str(),
         };
+        // (openclose.c: `recorder_record_input (nameoffile + 1)`)
+        flashtex_engine::system::recorder_record_input(shown);
         let shown = shown.as_bytes().to_vec();
         self.set_name_of_file(&shown);
         Some(found)
@@ -1126,6 +1132,8 @@ impl Globals {
         }
         if f.is_some() {
             flashtex_engine::system::note_output(&fname);
+            // (openclose.c: `recorder_record_output (fname)`)
+            flashtex_engine::system::recorder_record_output(&fname);
             // a resident run's output opens, in order (`crate::ckpt`: a
             // file opened again after a checkpoint cannot be cut back to it)
             if let Some(r) = self.host.resident.as_mut() {
@@ -1552,6 +1560,8 @@ impl Globals {
                 return false;
             }
             self.host.full_name_of_file = Some(s.clone());
+            // (texmfmp.c: `recorder_record_input (fname + 1)`)
+            flashtex_engine::system::recorder_record_input(cmd);
             // texmfmp.c's `runpopen`, as the pdfTeX engine runs it: in
             // restricted mode (`-shell-restricted`, or texmf.cnf's
             // `shell_escape = p`) only a command in `shell_escape_commands`
@@ -1970,8 +1980,13 @@ impl Globals {
             None => s,
         }
     }
-    /// `recorder_change_filename`: `-recorder` is not supported in phase S0.
-    pub fn recorder_change_filename(&mut self) {}
+    /// `recorder_change_filename(name_of_file)`: with `-recorder`, the
+    /// `.fls` the first file opened started (`xetex<pid>.fls`) takes the
+    /// job's name when the log file opens.
+    pub fn recorder_change_filename(&mut self) {
+        let n = self.raw_file_name();
+        flashtex_engine::system::recorder_rename(&n);
+    }
     /// tex.ch's `tex_input_type`.
     pub fn set_tex_input_type(&mut self, input: bool) {
         self.host.tex_input_type = input;
