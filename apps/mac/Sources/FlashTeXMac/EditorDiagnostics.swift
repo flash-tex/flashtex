@@ -281,6 +281,9 @@ enum EditorDiagnostics {
             guard let compiledText, !compiledText.sameBytes(as: currentText) else { return nil }
             return SourceMapping.changedRegion(from: compiledText, to: currentText)
         }()
+        // UTF-16 offsets through an anchor, never a walk of the keystroke's
+        // new text (MarkUTF16.swift).
+        let utf16 = MarkUTF16(current: currentText, compiled: compiledText, region: region)
         var marks: [Mark] = []
         var stale: [Stale] = []
         marks.reserveCapacity(result.diagnostics.count)
@@ -298,12 +301,13 @@ enum EditorDiagnostics {
             // Offsets inside a multi-byte scalar, reversed or out of range are
             // refused (nil): a byte span that is not a valid slice of the
             // current buffer is not drawn anywhere.
-            guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
+            guard let r = currentText.clusterAlignedRange(utf8Start: start, utf8End: end) else { continue }
+            let ns = utf16.nsRange(r)
             marks.append(Mark(identity: identity, nsRange: ns, severity: diagnostic.severity,
                               message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status,
                               hasFix: mechanicalEdit(for: diagnostic) != nil, code: diagnostic.code))
         }
-        marks += packageHints(for: result, resultID: resultID, path: path, region: region, currentText: currentText)
+        marks += packageHints(for: result, resultID: resultID, path: path, region: region, currentText: currentText, utf16: utf16)
         return Report(marks: marks, stale: stale, edit: region)
     }
 
@@ -319,7 +323,7 @@ enum EditorDiagnostics {
     /// the package buffer draws for the same diagnostic. Rebased and refused
     /// exactly like a primary mark; never a fix.
     static func packageHints(for result: RuntimeV1.CompileResult, resultID: String?, path: String,
-                             region: SourceMapping.ChangedRegion?, currentText: String) -> [Mark] {
+                             region: SourceMapping.ChangedRegion?, currentText: String, utf16: MarkUTF16? = nil) -> [Mark] {
         struct Hint { var index: Int; var source: RuntimeV1.SourceRange; var severity: RuntimeV1.Severity; var count: Int; var file: String }
         var order: [String] = []
         var hints: [String: Hint] = [:]
@@ -346,7 +350,8 @@ enum EditorDiagnostics {
                 guard case .rebased(let s, let e) = SourceMapping.rebase(start: start, end: end, across: region) else { continue }
                 start = s; end = e
             }
-            guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
+            guard let r = currentText.clusterAlignedRange(utf8Start: start, utf8End: end) else { continue }
+            let ns = utf16?.nsRange(r) ?? NSRange(r, in: currentText)
             let message = "\(hint.file): \(hint.count) problem\(hint.count == 1 ? "" : "s") — loaded here"
             out.append(Mark(identity: Identity(resultID: resultID, index: hint.index, source: hint.source), nsRange: ns,
                             severity: hint.severity, message: message, recovery: nil, resultStatus: result.status, hasFix: false))
@@ -591,6 +596,12 @@ extension String {
     /// of being cut in half). Nil when the bytes are not a valid scalar-aligned
     /// slice of the string.
     func clusterAlignedNSRange(utf8Start start: Int, utf8End end: Int) -> NSRange? {
+        clusterAlignedRange(utf8Start: start, utf8End: end).map { NSRange($0, in: self) }
+    }
+
+    /// The same span as string indices (`EditorDiagnostics.report` converts
+    /// them to UTF-16 through `MarkUTF16`).
+    func clusterAlignedRange(utf8Start start: Int, utf8End end: Int) -> Range<String.Index>? {
         guard var r = rangeOfUTF8(start: start, end: end) else { return nil }
         if String.Index(r.lowerBound, within: self) == nil {
             // `index(after:)` rounds an unaligned index down to its cluster
@@ -600,7 +611,7 @@ extension String {
         if r.upperBound < endIndex, String.Index(r.upperBound, within: self) == nil {
             r = r.lowerBound..<index(after: r.upperBound)
         }
-        return NSRange(r, in: self)
+        return r
     }
 }
 
