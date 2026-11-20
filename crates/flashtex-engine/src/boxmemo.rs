@@ -3559,6 +3559,19 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
+        } else if c == k::limit_switch || c == k::sup_mark || c == k::sub_mark {
+            // (lane AUDIT-MATH) in the list the call began in, these change
+            // the node before the call in place: `\\limits` its subtype
+            // (tex.web §1159), a script its field (§1176), filled while the
+            // tail stays where it was. In a math list a call appends nothing
+            // (`bm_finish`), so that node is always the outer one
+            self.nest_ptr > outer
+        } else if c == k::ital_corr {
+            // ... and `\\/` reads it (§1113): the italic correction of the
+            // character the list ends with, before the call unless the call
+            // appended the tail itself (it removes none at its own level)
+            let start_tail = self.bm_with_rec(|r| r.start.tail).unwrap_or(0);
+            self.nest_ptr > outer || self.cur_list.tail_field != start_tail
         } else if c == k::make_box {
             if chr == k::vsplit_code {
                 false
