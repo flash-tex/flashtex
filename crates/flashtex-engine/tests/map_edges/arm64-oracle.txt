@@ -1,0 +1,22 @@
+# TeX Live macOS arm64's result on pdf_map_edges.rs's ARM64_RULED cases (DESIGN §13,
+# 2026-11-01: undefined C behaviour follows that build). Oracle data only: measured with
+# pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), MacTeX 2026's universal-darwin binary run
+# as arm64, on GitHub's hosted macos-15 (Apple M1 (Virtual)), run 42501522185, same
+# documents and normalisation as the test. On a macOS arm64 host the test checks that its
+# TeX Live still gives these lines, and prints new ones if not.
+#
+# Per case: exit status; PDF length and FNV-1a 64 hash; the log from the `**` line on, lines
+# joined, the program name after "pdfTeX warning: " written PROG, and kpsewhich's paths of
+# pdftex.map and cmr10.pfb written $PDFTEX_MAP and $CMR10_PFB.
+case slant-min
+exit 0
+pdf 10675 c57f9390afadfe2d
+log **&plain slant-min(./slant-min.tex{$PDFTEX_MAP}pdfTeX warning: PROG: invalid entry for `cmr10': SlantFont value too big: -2.14748e+06[1] )<$CMR10_PFB>Output written on slant-min.pdf (1 page, 10675 bytes).PDF statistics: 10 PDF objects out of 1000 (max. 8388607) 0 named destinations out of 1000 (max. 500000) 1 words of extra memory for PDF output out of 10000 (max. 10000000)
+case extend-min
+exit 0
+pdf 10675 4bbfe14f45763d6d
+log **&plain extend-min(./extend-min.tex{$PDFTEX_MAP}pdfTeX warning: PROG: invalid entry for `cmr10': ExtendFont value too big: -2.14748e+06[1] )<$CMR10_PFB>Output written on extend-min.pdf (1 page, 10675 bytes).PDF statistics: 10 PDF objects out of 1000 (max. 8388607) 0 named destinations out of 1000 (max. 500000) 1 words of extra memory for PDF output out of 10000 (max. 10000000)
+case extend-max
+exit 0
+pdf 10675 ac9bfae39578a217
+log **&plain extend-max(./extend-max.tex{$PDFTEX_MAP}pdfTeX warning: PROG: invalid entry for `cmr10': ExtendFont value too big: 2.14748e+06[1] )<$CMR10_PFB>Output written on extend-max.pdf (1 page, 10675 bytes).PDF statistics: 10 PDF objects out of 1000 (max. 8388607) 0 named destinations out of 1000 (max. 500000) 1 words of extra memory for PDF output out of 10000 (max. 10000000)
