@@ -1981,10 +1981,24 @@ impl Globals {
         let n = self.raw_file_name();
         name_ok(&n, "openin_any", 'a')
     }
-    /// kpathsea's `kpse_out_name_ok` (texmf.cnf's `openout_any`).
+    /// kpathsea's `kpse_out_name_ok` (texmf.cnf's `openout_any`), asked of
+    /// the run's kpathsea instance, as the pdfTeX engine asks it; a refusal
+    /// is kpathsea's message on stderr after `argv[0]` as given:
+    /// `/path/xetex: Not writing to ../x.tex (openout_any = p; no extended
+    /// check).` (tex-file.c, #2453).
     pub fn kpse_out_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        name_ok(&n, "openout_any", 'p')
+        if flashtex_engine::system::out_name_ok_silent(&n) {
+            return true;
+        }
+        let choice = texmf_var("openout_any").unwrap_or_else(|| "p".into());
+        eprint!(
+            "\n{}: Not writing to {} (openout_any = {}; no extended check).\n",
+            invocation_name(),
+            n,
+            choice
+        );
+        false
     }
     /// `-output-comment` (texmfmp.c truncates it to 255 bytes), or -1.
     pub fn output_comment_length(&mut self) -> i32 {
