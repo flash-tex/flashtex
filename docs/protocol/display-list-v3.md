@@ -530,6 +530,7 @@ JSON, before the first `PAGE` that draws it:
 | `width`, `height` | pixels (PDF: the box, in bp) |
 | `rotate`, `x_res`, `y_res` | as pdfTeX read them |
 | `page`, `page_box`, `orig_x`, `orig_y` | PDF only: the page included, the box (`media`, `crop`, `bleed`, `trim`, `art`) and its origin |
+| `group` | optional, PDF only: `true` when pdfTeX's Form XObject has a `/Group`, from `\pdfximage`'s `attr` (LaTeX's `pdftex.def` gives every included page `/Group <</S/Transparency/K false/I false>>`) or the page's own; absent otherwise. A viewer paints such a form through a transparency group (Core Graphics: a transparency layer) |
 | `color_space` | optional, PNG and JPEG: the colour space the host's PDF gives the samples when it is not their Device space (below) |
 
 `color_space` (optional; absent: DeviceGray, DeviceRGB or DeviceCMYK by the
