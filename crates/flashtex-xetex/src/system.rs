@@ -873,6 +873,70 @@ pub fn set_no_pdf(g: &mut Globals, on: bool) {
 /// XeTeX's `BANNER` (xetexextra.h), the same text as xetex.web's banner.
 pub const BANNER: &str = "This is XeTeX, Version 3.141592653-2.6-0.999998";
 
+/// `-help`: texmfmp-help.h's XETEXHELP as TeX Live 2026's `xetex --help`
+/// prints it, as the pdfTeX engine's `HELP` is pdfTeX's: without the options
+/// this engine refuses, which its last line names instead of the address
+/// for bug reports.
+pub const HELP: &str = r#"Usage: xetex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
+   or: xetex [OPTION]... \FIRST-LINE
+   or: xetex [OPTION]... &FMT ARGS
+  Run XeTeX on TEXNAME, usually creating TEXNAME.pdf.
+  Any remaining COMMANDS are processed as XeTeX input, after TEXNAME is read.
+  If the first line of TEXNAME is %&FMT, and FMT is an existing .fmt file,
+  use it.  Else use `NAME.fmt', where NAME is the program invocation name,
+  most commonly `xetex'.
+
+  Alternatively, if the first non-option argument begins with a backslash,
+  interpret all non-option arguments as a line of XeTeX input.
+
+  Alternatively, if the first non-option argument begins with a &, the
+  next word is taken as the FMT to read, overriding all else.  Any
+  remaining arguments are processed as above.
+
+  If no arguments or options are specified, prompt for input.
+
+-cnf-line=STRING        parse STRING as a configuration file line
+-etex                   enable e-TeX extensions
+[-no]-file-line-error   disable/enable file:line:error style messages
+-fmt=FMTNAME            use FMTNAME instead of program name or a %& line
+-halt-on-error          stop processing at the first error
+-ini                    be xeinitex, for dumping formats; this is implicitly
+                          true if the program name is `xeinitex'
+-interaction=STRING     set interaction mode (STRING=batchmode/nonstopmode/
+                          scrollmode/errorstopmode)
+-jobname=STRING         set the job name to STRING
+-output-comment=STRING  use STRING for XDV file comment instead of date
+-output-directory=DIR   use existing DIR as the directory to write files in
+-output-driver=CMD      use CMD as the XDV-to-PDF driver instead of xdvipdfmx
+-no-pdf                 generate XDV (extended DVI) output rather than PDF
+[-no]-parse-first-line  disable/enable parsing of first line of input file
+-papersize=STRING       set PDF media size to STRING
+-progname=STRING        set program (and fmt) name to STRING
+-recorder               enable filename recorder
+[-no]-shell-escape      disable/enable \write18{SHELL COMMAND}
+-shell-restricted       enable restricted \write18
+-translate-file=TCXNAME (ignored)
+-8bit                   make all characters printable, don't use ^^X sequences
+-help                   display this help and exit
+-version                output version information and exit
+
+Not implemented by this engine yet: -kpathsea-debug, -mktex, -no-mktex,
+-mltex, -src-specials, -synctex.
+"#;
+
+/// XeTeX's command line for the pdfTeX engine's parser
+/// (`flashtex_engine::cli::parse_as`): texmfmp.c's `long_options[]` for
+/// XeTeX lack pdfTeX's `-draftmode`, `-enc`, `-ipc`, `-ipc-start` and
+/// `-output-format` (getopt calls them unrecognized) and have `-no-pdf`,
+/// `-output-driver` and `-papersize` (xetexextra.c; `crate::driver` reads
+/// them); `-help` and `-version` are XeTeX's.
+pub const CLI: flashtex_engine::cli::Program = flashtex_engine::cli::Program {
+    without: &["draftmode", "enc", "ipc", "ipc-start", "output-format"],
+    with: &[("no-pdf", 0), ("output-driver", 1), ("papersize", 1)],
+    help: HELP,
+    version: version_text,
+};
+
 /// `-version`.
 pub fn version_text() -> String {
     "XeTeX 3.141592653-2.6-0.999998 (FlashTeX XeTeX port, phase S0)\n\
