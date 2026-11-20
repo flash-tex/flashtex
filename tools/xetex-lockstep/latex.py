@@ -35,6 +35,7 @@ import fnmatch
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -91,15 +92,24 @@ def stage(src, name, d):
         shutil.copy(src, os.path.join(d, name + ".tex"))
 
 
+# DESIGN.md §4.5 pins the random seed, as tools/parity/capture.py's SEED does
+# for pdfTeX: XeTeX also seeds \\uniformdeviate (l3kernel's \\int_rand,
+# tagpdf's namespace id, pgf's random numbers) from the clock, under
+# SOURCE_DATE_EPOCH too, so such a document differed from itself between runs
+# (TeX Live's tagpdf examples, ltxtalk, xltabular and JeuxCartes documentation
+# in lane PARITY-HUNT's session F). Every run of both engines starts its first
+# line with this; XeTeX's name for pdfTeX's \\pdfsetrandomseed is \\setrandomseed.
+SEED = "\\setrandomseed 1\\relax"
+
+
 def doc_arg(name, meta, traced):
-    """The last argument of a run: the main file, after the case's first-line
-    code (the host's `preamble\\input{main.tex}`), traced or not."""
+    """The last argument of a run: the main file, after the random seed and
+    the case's first-line code (the host's `preamble\\input{main.tex}`),
+    traced or not."""
     first = meta.get("firstline", "")
     if traced:
-        return TRACE_PREFIX[meta.get("trace", "full")] + first + "\\input{%s}" % name
-    if first:
-        return first + "\\input{%s.tex}" % name
-    return name + ".tex"
+        return SEED + TRACE_PREFIX[meta.get("trace", "full")] + first + "\\input{%s}" % name
+    return SEED + first + "\\input{%s.tex}" % name
 
 
 def env_for(fmt_dir):
@@ -130,11 +140,105 @@ def build_format(binary, d):
     return time.time() - t, r.returncode, log
 
 
+def accept_unreadable_font_paths(a, b):
+    """TeX Live's xetex sometimes prints freed memory as the file of a font
+    it found by name (`\\XeTeXtracingfonts`): `Requested font "Fira Math
+    Regular/OT" at 10.94997pt` and then ` -> ^^/^^_^^M-V^^^`, other bytes on
+    every run (measured on x86_64-linux, 2026-11-16: five TeX Live documents,
+    two runs of one gave different bytes). Nothing can equal that; where the
+    reference's ` -> ` line has no file name in it (empty, `^^` notation, or
+    no `.`) and the candidate names an absolute path after the same request,
+    the candidate's line is taken as equal. The bytes may hold the
+    document's `\\newlinechar`, so the reference's garbage may go on for a
+    line or two; such a line (again no file name in it) is dropped from the
+    reference when the lines after it match the candidate's again. Returns
+    how many were taken (shown in the report, not hidden)."""
+    def unreadable(t):
+        return t == "" or "^^" in t or "." not in t
+
+    n = 0
+    i = 1
+    while i < min(len(a), len(b)):
+        if (a[i - 1] == b[i - 1] and a[i - 1].startswith('Requested font "')
+                and a[i].startswith(" -> ") and b[i].startswith(" -> /") and a[i] != b[i]
+                and unreadable(a[i][4:])):
+            b[i] = a[i]
+            n += 1
+            # the garbage's own line breaks
+            k = 0
+            while (k < 3 and len(a) > len(b) and i + 1 < len(a) and i + 1 < len(b)
+                   and a[i + 1] != b[i + 1] and a[i + 1] != "" and unreadable(a[i + 1])
+                   and a[i + 2:i + 5] == b[i + 1:i + 4]):
+                del a[i + 1]
+                k += 1
+        i += 1
+    return n
+
+
+# A log is read whole; one larger than this is not read (a document that
+# loops on errors under xelatex writes gigabytes before the timeout: TeX
+# Live's luwiantype documentation, a LuaLaTeX document, wrote 16 GB in nine
+# minutes, and reading it killed the run's memory scope). Read as str and
+# split into lines, a log costs several times its size, and two are held at
+# once: 256 MiB keeps a case well inside the PC's 10G scope (REVIEW-5 #2546).
+MAX_LOG_BYTES = 256 << 20
+
+# An engine whose log grows past this is stopped and its case marked
+# "runaway log": no larger log is compared, so the rest is only disk (the
+# 16-22 GB written to tmp/ before the timeout).
+MAX_LOG_DISK_BYTES = MAX_LOG_BYTES
+RUNAWAY = "runaway log"
+
+
+def run_watched(cmd, logp, timeout, limit=None, poll=0.5, **kw):
+    """Run `cmd` (subprocess.Popen keyword arguments in `kw`) like
+    subprocess.run: its exit status, "timeout" when it runs past `timeout`
+    seconds, or RUNAWAY when the file at `logp` grows past `limit` bytes
+    (default MAX_LOG_DISK_BYTES). A stopped engine is killed with its
+    process group."""
+    limit = MAX_LOG_DISK_BYTES if limit is None else limit
+    proc = subprocess.Popen(cmd, start_new_session=True, **kw)
+    end = time.time() + timeout
+    why = None
+    while True:
+        try:
+            return proc.wait(timeout=poll)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            if os.path.getsize(logp) > limit:
+                why = RUNAWAY
+        except OSError:
+            pass
+        if why is None and time.time() > end:
+            why = "timeout"
+        if why:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            return why
+
+
+def read_log(path, limit=None):
+    """(text, None): the log at `path`, empty if there is none; (empty,
+    size) when it is larger than `limit` (default MAX_LOG_BYTES)."""
+    limit = MAX_LOG_BYTES if limit is None else limit
+    if not os.path.exists(path):
+        return "", None
+    size = os.path.getsize(path)
+    if size > limit:
+        return "", size
+    return open(path, encoding="utf-8", errors="surrogateescape").read(), None
+
+
 def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     src = src or os.path.join(CASES, name + ".tex")
     meta = case_meta(src)
     res = {}
     secs = {}
+    big = {}
     for who in ("reference", "candidate"):
         d = os.path.join(tmp, name, who)
         stage(src, name, d)
@@ -142,18 +246,15 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
         env = env_for(fmts[who])
         t = time.time()
         errp = os.path.join(d, ".stderr")
-        try:
-            with open(errp, "wb") as err:
-                subprocess.run([exe] + RUN_ARGS + [doc_arg(name, meta, False)], cwd=d, env=env,
-                               stdout=subprocess.DEVNULL, stderr=err, timeout=timeout)
-                r = subprocess.run([exe] + RUN_ARGS + [doc_arg(name, meta, True)], cwd=d, env=env,
-                                   stdout=subprocess.DEVNULL, stderr=err, timeout=timeout)
-            code = r.returncode
-        except subprocess.TimeoutExpired:
-            code = "timeout"
         logp = os.path.join(d, name + ".log")
-        log = open(logp, encoding="utf-8", errors="surrogateescape").read() \
-            if os.path.exists(logp) else ""
+        with open(errp, "wb") as err:
+            code = None
+            for traced in (False, True):
+                code = run_watched([exe] + RUN_ARGS + [doc_arg(name, meta, traced)], logp, timeout,
+                                   cwd=d, env=env, stdout=subprocess.DEVNULL, stderr=err)
+                if not isinstance(code, int):
+                    break
+        log, big[who] = read_log(logp)
         # the first TeX error, and an engine's panic, for the report
         first_error = next((ln for ln in log.split("\n") if ln.startswith("! ")), None)
         stderr = open(errp, encoding="utf-8", errors="replace").read()
@@ -170,6 +271,12 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     (rc, a, rxdv, rerr, _), (cc, b, cxdv, cerr, cpanic) = res["reference"], res["candidate"]
     if rc != cc:
         msgs.append("exit status reference=%s candidate=%s" % (rc, cc))
+    for who in ("reference", "candidate"):
+        if big[who]:
+            msgs.append("%s's log not compared: %d bytes (over %d)" % (who, big[who], MAX_LOG_BYTES))
+    for who, c in (("reference", rc), ("candidate", cc)):
+        if c == RUNAWAY:
+            msgs.append("%s: runaway log, stopped past %d bytes" % (who, MAX_LOG_DISK_BYTES))
     notes = []  # shown, not failures: the oracle decides what a document does
     if rc != 0 and rerr:
         notes.append("reference's first error: %s" % rerr[:200])
@@ -178,6 +285,10 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     if cpanic:
         msgs.append("the candidate panicked: %s" % cpanic[0][:300])
         notes.extend("  " + ln[:300] for ln in cpanic[1:])
+    unreadable = accept_unreadable_font_paths(a, b)
+    if unreadable:
+        notes.append("reference's font path unreadable (freed memory) at %d line(s): taken as equal"
+                     % unreadable)
     if a != b:
         i = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]),
                  min(len(a), len(b)))
@@ -205,6 +316,18 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
     if not keep:
         shutil.rmtree(os.path.join(tmp, name), ignore_errors=True)
     return name, not msgs, msgs + notes, len(a), info
+
+
+def say(text, stream=None):
+    """Print one report line. The logs are read with `surrogateescape`, so
+    a line quoted from one may hold bytes that are not UTF-8 (TeX Live's
+    xetex writes some: `Requested font ... -> ` followed by freed memory);
+    they are shown as `\\udcXX` escapes instead of stopping the run with
+    UnicodeEncodeError (session F of lane PARITY-HUNT lost 207 documents'
+    results so)."""
+    stream = stream or sys.stdout
+    enc = getattr(stream, "encoding", None) or "utf-8"
+    stream.write(text.encode(enc, "backslashreplace").decode(enc) + "\n")
 
 
 def main(argv=None):
@@ -255,7 +378,7 @@ def main(argv=None):
     # It is shown, not hidden.
     fa, fb = logs["reference"], logs["candidate"]
     fdiff = [(x, y) for x, y in zip(fa, fb) if x != y]
-    print("format logs: %d lines, %d differ%s" % (
+    say("format logs: %d lines, %d differ%s" % (
         len(fa), len(fdiff) + abs(len(fa) - len(fb)),
         "".join("\n  ref:  %s\n  cand: %s" % p for p in fdiff[:5])))
     ok = 0
@@ -265,11 +388,11 @@ def main(argv=None):
                 lambda n: run_case(n, engines, fmts, tmp, a.timeout, srcs[n], a.keep), names):
             ok += good
             infos.append(info)
-            print("%s %s (%d log lines%s)" % ("PASS" if good else "FAIL", name, n,
-                                               ", box dumps only" if info["trace"] == "boxes" else ""),
-                  flush=True)
+            say("%s %s (%d log lines%s)" % ("PASS" if good else "FAIL", name, n,
+                                             ", box dumps only" if info["trace"] == "boxes" else ""))
             for m in msgs:
-                print("  " + m)
+                say("  " + m)
+            sys.stdout.flush()
     print("%d cases, %d equal, %d differ" % (len(names), ok, len(names) - ok))
     if a.json:
         with open(a.json, "w") as f:

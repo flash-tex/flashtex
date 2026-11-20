@@ -101,6 +101,137 @@ class FontFiles(unittest.TestCase):
         self.assertEqual(run.native_font_files(pre() + bytes([252])), [])
 
 
+class ReportLines(unittest.TestCase):
+    """A report line that quotes a log line with bytes that are not UTF-8
+    (read with `surrogateescape`, as run_case reads logs) is printed with
+    escapes, not lost to UnicodeEncodeError (session F, 2026-11-15:
+    `print("  " + m)` stopped a 467-document run at its 260th)."""
+
+    def test_non_utf8_log_line(self):
+        import io
+        line = b" -> ^^\xce\x29^^A".decode("utf-8", "surrogateescape")
+        strict = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")  # as stdout is
+        with self.assertRaises(UnicodeEncodeError):
+            print("  reference: " + line, file=strict)
+            strict.flush()
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding="utf-8")
+        latex.say("  reference: " + line, out)
+        out.flush()
+        self.assertTrue(raw.getvalue().endswith(b"  reference:  -> ^^\\udcce)^^A\n"))
+
+
+class UnreadableFontPaths(unittest.TestCase):
+    """TeX Live's freed-memory font path (beamertheme-focus's demo, 2026-11-16)
+    is taken as equal to the candidate's path; nothing else is."""
+
+    REQ = 'Requested font "Fira Math Regular/OT" at 10.94997pt'
+    PATH = " -> /tl/fonts/opentype/public/firamath/FiraMath-Regular.otf"
+
+    def test_garbage_accepted(self):
+        garbage = b" -> ^^/^^_\xd6^^^".decode("utf-8", "surrogateescape")
+        for ref in (garbage, " -> ", " -> ^^S^^^^F", " -> J=X)"):
+            a, b = ["x", self.REQ, ref, "y"], ["x", self.REQ, self.PATH, "y"]
+            self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1, ref)
+            self.assertEqual(a, b)
+
+    def test_garbage_with_a_line_break(self):
+        # focusdemo: ` -> ^^/^^_` then `^^\udcdb^^O3` on a line of its own
+        a = ["x", self.REQ, " -> ^^/^^_", "^^\udcdb^^O3", "", "y", "z"]
+        b = ["x", self.REQ, self.PATH, "", "y", "z"]
+        self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1)
+        self.assertEqual(a, b)
+        # a real line after it is kept
+        a = ["x", self.REQ, " -> ^^/^^_", "\\foo.bar", "", "y", "z"]
+        b = ["x", self.REQ, self.PATH, "", "y", "z"]
+        self.assertEqual(latex.accept_unreadable_font_paths(a, b), 1)
+        self.assertNotEqual(a, b)
+
+    def test_real_differences_kept(self):
+        cases = [
+            # a file name on both sides
+            (["x", self.REQ, " -> /other/FiraMath-Regular.otf"], ["x", self.REQ, self.PATH]),
+            # another request before it
+            (["x", 'Requested font "Other" at 10.0pt', " -> "], ["x", self.REQ, self.PATH]),
+            # the candidate prints no path
+            (["x", self.REQ, " -> ^^S"], ["x", self.REQ, " -> ^^T"]),
+            # not after a request
+            (["x", "y", " -> "], ["x", "y", self.PATH]),
+        ]
+        for a, b in cases:
+            b0 = list(b)
+            self.assertEqual(latex.accept_unreadable_font_paths(a, b), 0, a)
+            self.assertEqual(b, b0)
+
+
+class ReadLog(unittest.TestCase):
+    """A log over the limit is not read (luwiantype's 16 GB log OOM-killed a
+    run, 2026-11-16); its size is returned instead."""
+
+    def test_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "t.log")
+            self.assertEqual(latex.read_log(p), ("", None))
+            with open(p, "wb") as f:
+                f.write(b"line \xce\n" * 10)
+            text, big = latex.read_log(p, limit=100)
+            self.assertIsNone(big)
+            self.assertEqual(text, b"line \xce\n".decode("utf-8", "surrogateescape") * 10)
+            self.assertEqual(latex.read_log(p, limit=50), ("", 70))
+            # REVIEW-5 #2546: a 1 GiB log read as text costs several GiB
+            self.assertLessEqual(latex.MAX_LOG_BYTES, 256 << 20)
+            self.assertLessEqual(latex.MAX_LOG_DISK_BYTES, latex.MAX_LOG_BYTES)
+
+
+class RunWatched(unittest.TestCase):
+    """REVIEW-5 #2546: an engine whose log grows without bound is stopped
+    (luwiantype wrote 16 GB to tmp/ before the timeout)."""
+
+    def _run(self, code, timeout=30, limit=1 << 16):
+        with tempfile.TemporaryDirectory() as d:
+            logp = os.path.join(d, "t.log")
+            return latex.run_watched([sys.executable, "-c", code, logp], logp, timeout,
+                                     limit=limit, poll=0.05, cwd=d), logp
+
+    def test_runaway_log_is_stopped(self):
+        code = ("import sys,time\nf=open(sys.argv[1],'w')\n"
+                "while True:\n f.write('x'*4096+'\\n'); f.flush(); time.sleep(0.001)")
+        t = latex.time.time()
+        got, _ = self._run(code)
+        self.assertEqual(got, latex.RUNAWAY)
+        self.assertLess(latex.time.time() - t, 20)
+
+    def test_timeout(self):
+        got, _ = self._run("import time; time.sleep(30)", timeout=0.3)
+        self.assertEqual(got, "timeout")
+
+    def test_exit_status(self):
+        got, _ = self._run("import sys; open(sys.argv[1],'w').write('ok\\n'); sys.exit(3)")
+        self.assertEqual(got, 3)
+
+    def test_runaway_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "t.tex")
+            open(src, "w").close()
+            calls = []
+
+            def fake(cmd, logp, timeout, **kw):
+                calls.append(cmd)
+                return latex.RUNAWAY if "reference" in kw["cwd"] else 0
+            with mock.patch.object(latex, "run_watched", fake), \
+                    mock.patch.object(latex, "stage", lambda *a: os.makedirs(a[2], exist_ok=True)), \
+                    mock.patch.object(latex, "link", lambda *a: "xelatex"), \
+                    mock.patch.object(latex, "env_for", lambda *a: {}), \
+                    mock.patch.object(latex.X, "compare_xdv", lambda *a: None):
+                _, ok, msgs, _, _ = latex.run_case("t", {"reference": "r", "candidate": "c"},
+                                                  {"reference": "", "candidate": ""}, tmp, 5, src)
+            self.assertFalse(ok)
+            self.assertIn("reference: runaway log, stopped past %d bytes" % latex.MAX_LOG_DISK_BYTES,
+                          msgs)
+            # the reference's traced pass is not run after a runaway first pass
+            self.assertEqual(len(calls), 3)
+
+
 class XetexTestSteps(unittest.TestCase):
 
     def test_known_tests(self):
@@ -190,11 +321,14 @@ class PostambleFonts(unittest.TestCase):
 class LatexCases(unittest.TestCase):
 
     def test_doc_arg(self):
-        self.assertEqual(latex.doc_arg("m", {}, False), "m.tex")
-        self.assertEqual(latex.doc_arg("m", {"firstline": "\\A"}, False), "\\A\\input{m.tex}")
-        self.assertEqual(latex.doc_arg("m", {}, True), latex.TRACE_PREFIX["full"] + "\\input{m}")
+        # every run starts with the pinned seed (DESIGN.md §4.5)
+        seed = "\\setrandomseed 1\\relax"
+        self.assertEqual(latex.SEED, seed)
+        self.assertEqual(latex.doc_arg("m", {}, False), seed + "\\input{m.tex}")
+        self.assertEqual(latex.doc_arg("m", {"firstline": "\\A"}, False), seed + "\\A\\input{m.tex}")
+        self.assertEqual(latex.doc_arg("m", {}, True), seed + latex.TRACE_PREFIX["full"] + "\\input{m}")
         self.assertEqual(latex.doc_arg("m", {"firstline": "\\A", "trace": "boxes"}, True),
-                         latex.TRACE_PREFIX["boxes"] + "\\A\\input{m}")
+                         seed + latex.TRACE_PREFIX["boxes"] + "\\A\\input{m}")
 
     def test_find_cases(self):
         with tempfile.TemporaryDirectory() as d:
