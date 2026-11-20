@@ -606,6 +606,26 @@ fn an_outer_control_sequence_in_a_definition_is_in_the_key() {
 }
 
 #[test]
+fn a_callers_parameter_read_past_the_call_is_not_the_calls() {
+    // (#2198) `\\count1=5` reads on past the body for more digits. The
+    // `#1` after `\\measure` in the caller pushes the caller's argument at
+    // the input level the body had, so its `7` and `\\relax` looked like the
+    // call's own. They are not in its key: once the argument is `8\\relax`
+    // the count is 58, not the recorded 57. Such a read is past the call
+    // and abandons the recording
+    let s = check(
+        "caller-param",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\global\\count1=5}\\def\\caller#1{\\measure#1}\n\
+         \\def\\show{\\message{[\\the\\count1]}}\n\
+         \\caller{7\\relax}\\show\\caller{7\\relax}\\show\\caller{7\\relax}\\show\n\
+         \\caller{8\\relax}\\show\\caller{8\\relax}\\show\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert!(stat(&s, "Level") >= 1, "{s}");
+}
+
+#[test]
 fn whatsits_of_a_call_act_at_its_shipout() {
     // (lane AUDIT-WHATSIT) the shipout-time whatsits a recorded call
     // leaves, replayed: a `\\write` and a `\\special shipout` /

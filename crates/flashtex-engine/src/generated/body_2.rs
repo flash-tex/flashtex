@@ -2611,6 +2611,12 @@ impl Globals {
                                         out_param => {
                                             // §381
                                             {
+                                                if self.intr_rec_on {
+                                                    self.flashtex_intr_next();
+                                                }
+                                                if self.bm_rec_on {
+                                                    self.flashtex_bm_next();
+                                                }
                                                 self.begin_token_list(self.param_stack[crate::ix::U((((self.cur_input.limit_field).wrapping_add(self.cur_chr)).wrapping_sub(1i32)) as usize)], parameter);
                                                 { __goto_1 = 0; continue 'l_dispatch_1; }
                                             }
