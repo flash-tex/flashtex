@@ -2717,6 +2717,20 @@ fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
     }
 }
 
+/// `fopen(name, "w")` on a file name's own bytes (Unix); elsewhere, where a
+/// path is not bytes, the name with replacement characters.
+fn create_by_bytes(name: &[u8]) -> Option<File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        File::create(std::ffi::OsStr::from_bytes(name)).ok()
+    }
+    #[cfg(not(unix))]
+    {
+        File::create(String::from_utf8_lossy(name).as_ref()).ok()
+    }
+}
+
 impl Globals {
     /// `name_of_file`, trimmed. `name_length` is authoritative when set, but
     /// §51 opens the pool file without setting it.
@@ -2729,6 +2743,19 @@ impl Globals {
             &self.name_of_file[..]
         };
         String::from_utf8_lossy(raw).trim().to_string()
+    }
+
+    /// `name_of_file`'s bytes, trimmed as [`Self::raw_file_name`] trims
+    /// them, when they are not UTF-8 (a Latin-1 `^^e9` in `\openout`); None
+    /// for a UTF-8 name.
+    fn non_utf8_file_name(&self) -> Option<Vec<u8>> {
+        let raw: &[u8] = if self.name_length > 0 {
+            &self.name_of_file[..self.name_length as usize]
+        } else {
+            &self.name_of_file[..]
+        };
+        let raw = raw.trim_ascii();
+        std::str::from_utf8(raw).is_err().then(|| raw.to_vec())
     }
 
     /// Split off a `tex.web` device name (§§514, 520: `TeXinputs:`,
@@ -2876,22 +2903,43 @@ impl Globals {
             s.clone()
         };
         let absolute = name.starts_with('/');
+        // A name that is not UTF-8 is opened by its bytes, as web2c's
+        // fopen opens it (#2298): macOS's file systems refuse it (EILSEQ),
+        // so pdfTeX says `I can't write on file', and Linux creates it. The
+        // bookkeeping below names it with replacement characters.
+        let raw = if cfg!(feature = "tex82") {
+            None
+        } else {
+            self.non_utf8_file_name()
+        };
+        let create = |prefix: Option<&str>, fname: &str| match &raw {
+            Some(r) => {
+                let mut b = prefix
+                    .map(|p| format!("{p}/").into_bytes())
+                    .unwrap_or_default();
+                b.extend_from_slice(r);
+                create_by_bytes(&b)
+            }
+            None => File::create(fname).ok(),
+        };
         let mut fname = name.clone();
         let out_dir = run().output_directory;
+        let mut prefix = None;
         if let Some(dir) = &out_dir {
             if !absolute {
                 fname = format!("{dir}/{name}");
+                prefix = Some(dir.as_str());
             }
         }
         file_trace(|| format!("openout {fname} disk {:?}", disk_len(&fname)));
         keep_instance(&fname, &out_key(&fname));
         before_truncate(&fname);
-        let mut f = File::create(&fname).ok();
+        let mut f = create(prefix, &fname);
         if f.is_none() && !absolute {
             // (the hosts: `chapters/one.aux` under the output directory, #1654)
             if let Some(dir) = &out_dir {
                 if make_output_subdir(dir, &name) {
-                    f = File::create(&fname).ok();
+                    f = create(prefix, &fname);
                 }
             }
         }
@@ -2900,7 +2948,7 @@ impl Globals {
                 fname = format!("{out}/{name}");
                 keep_instance(&fname, &out_key(&fname));
                 before_truncate(&fname);
-                f = File::create(&fname).ok();
+                f = create(Some(&out), &fname);
             }
         }
         if f.is_some() {
