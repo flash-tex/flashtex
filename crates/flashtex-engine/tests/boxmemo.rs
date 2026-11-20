@@ -104,6 +104,13 @@ fn check_with(tag: &str, src: &str, files: &[(&str, Vec<u8>)]) -> String {
         "{tag}: {}",
         verify.stats
     );
+    // the comparisons leave no checkpoint behind (#2141)
+    assert_eq!(
+        stat(&verify.stats, "checkpoints_at_end"),
+        0,
+        "{tag}: {}",
+        verify.stats
+    );
     // every admitted call is also compared on the whole engine state
     assert_eq!(
         stat(&verify.stats, "full_verified"),
