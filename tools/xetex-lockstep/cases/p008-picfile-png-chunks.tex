@@ -1,0 +1,13 @@
+% p008-picfile-png-chunks: \XeTeXpicfile of PNG files whose pHYs chunk libpng drops (a wrong CRC), has twice, or holds values past 2^31 - 1
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+\input prelude
+\def\space{ }
+\setbox0=\vbox{
+\hbox{\XeTeXpicfile p-phys-badcrc.png }
+\hbox{\XeTeXpicfile p-phys-badcrc.png width 1in }
+\hbox{\XeTeXpicfile p-phys-twice.png }
+\hbox{\XeTeXpicfile p-phys-huge.png }
+\hbox{\XeTeXpicfile p-phys-huge.png scaled 4000 }
+}
+\lsshipbox0
+\end

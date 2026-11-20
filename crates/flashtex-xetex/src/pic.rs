@@ -2,7 +2,9 @@
 //! the dimension scanners of `image/pngimage.c`, `image/jpegimage.c` and
 //! `image/bmpimage.c` (GPL-2.0-or-later, from dvipdfmx), TeX Live 2026:
 //! `\XeTeXpicfile` and `\XeTeXpdffile` need only a picture's size, never
-//! its pixels (docs/design/xetex/PLAN.md, S2).
+//! its pixels (docs/design/xetex/PLAN.md, S2). A PNG file's header is read
+//! by libpng itself, as `png_scan_file` reads it ([`png_file_size`],
+//! flash-tex/flashtex#2501).
 //!
 //! The size of a PNG, JPEG or BMP file is read here from its header, as the
 //! C does (libpng's `png_read_info` stops at the first `IDAT`, so only the
@@ -62,56 +64,23 @@ pub fn is_png(data: &[u8]) -> bool {
     data.len() >= 4 && data[..4] == [0x89, b'P', b'N', b'G']
 }
 
-/// `png_scan_file`: the size from `IHDR` and the resolution from a `pHYs`
-/// chunk in pixels per metre before the first `IDAT` (72 dpi otherwise).
-/// None where libpng would fail to read the header.
-pub fn png_size(data: &[u8]) -> Option<PixelSize> {
-    let be32 = |p: usize| -> Option<u32> {
-        Some(u32::from_be_bytes(data.get(p..p + 4)?.try_into().ok()?))
-    };
-    if data.len() < 8 || data[..8] != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
-        return None;
-    }
-    let mut pos = 8;
-    let mut size: Option<(u32, u32)> = None;
-    let mut phys: Option<(u32, u32, u8)> = None;
-    loop {
-        let len = be32(pos)? as usize;
-        let kind = data.get(pos + 4..pos + 8)?;
-        let body = pos + 8;
-        match kind {
-            b"IHDR" => {
-                if size.is_some() || len != 13 {
-                    return None;
-                }
-                let (w, h) = (be32(body)?, be32(body + 4)?);
-                if w == 0 || h == 0 || w > 0x7fff_ffff || h > 0x7fff_ffff {
-                    return None;
-                }
-                size = Some((w, h));
-            }
-            // libpng ignores a second pHYs or one of the wrong length (a
-            // benign error), and reads none after IDAT.
-            b"pHYs" if size.is_some() && phys.is_none() && len == 9 => {
-                phys = Some((be32(body)?, be32(body + 4)?, *data.get(body + 8)?));
-            }
-            b"IDAT" => break,
-            b"IEND" => return None,
-            // libpng reads IHDR first.
-            _ => {
-                size?;
-            }
-        }
-        pos = body.checked_add(len)?.checked_add(4)?;
-    }
-    let (w, h) = size?;
-    // png_get_x_pixels_per_meter: the pHYs values only in metres.
-    let (xppm, yppm) = match phys {
-        Some((x, y, 1)) => (x, y),
-        _ => (0, 0),
-    };
-    let mut xdpi = xppm as f64 * 0.0254;
-    let mut ydpi = yppm as f64 * 0.0254;
+/// `png_scan_file` (xetexdir/image/pngimage.c): the size and the resolution
+/// libpng's `png_read_info` gives (`png_get_image_width`,
+/// `png_get_x_pixels_per_meter`: a `pHYs` chunk in metres that libpng took,
+/// else 72 dpi), read with the same libpng (TeX Live's, through the pdfTeX
+/// engine's `png_header`). What libpng makes of a chunk is libpng's own
+/// behaviour: it drops a `pHYs` whose CRC is wrong, a second one, one of the
+/// wrong length and one after `IDAT`.
+///
+/// None where `png_read_info` raises a libpng error (a wrong CRC or an
+/// invalid value in `IHDR`, a truncated file, an unknown critical chunk):
+/// XeTeX gives libpng no error function, so there libpng prints its message
+/// and aborts the program (SIGABRT). The port prints libpng's message too
+/// and reports that the picture cannot be loaded.
+pub fn png_file_size(path: &str) -> Option<PixelSize> {
+    let h = flashtex_engine::pdftex::writepng::png_header(path.as_bytes()).ok()?;
+    let mut xdpi = h.x_pixels_per_meter as f64 * 0.0254;
+    let mut ydpi = h.y_pixels_per_meter as f64 * 0.0254;
     if xdpi == 0.0 {
         xdpi = 72.0;
     }
@@ -119,8 +88,8 @@ pub fn png_size(data: &[u8]) -> Option<PixelSize> {
         ydpi = 72.0;
     }
     Some(PixelSize {
-        width: w as f64,
-        height: h as f64,
+        width: h.width as f64,
+        height: h.height as f64,
         xdpi,
         ydpi,
     })
@@ -824,7 +793,7 @@ pub fn pic_bounds(path: &str, pdf_box_type: i32, page: i32) -> Option<[f64; 4]> 
             }
         }
     } else if is_png(&data) {
-        png_size(&data)
+        png_file_size(path)
     } else {
         None
     }?;
@@ -915,55 +884,95 @@ impl Globals {
 mod tests {
     use super::*;
 
-    fn png(chunks: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
-        let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-        for (kind, body) in chunks {
-            v.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            v.extend_from_slice(*kind);
-            v.extend_from_slice(body);
-            v.extend_from_slice(&[0; 4]);
-        }
-        v
+    /// A picture of the lockstep p-cases (tools/xetex-lockstep/pictures,
+    /// written by make_cases.py), where TeX Live's XeTeX is the oracle for
+    /// the box each gives.
+    fn picture(name: &str) -> String {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/xetex-lockstep/pictures")
+            .join(name);
+        assert!(p.is_file(), "{} is missing", p.display());
+        p.to_string_lossy().into_owned()
     }
 
-    fn ihdr(w: u32, h: u32) -> Vec<u8> {
-        let mut b = w.to_be_bytes().to_vec();
-        b.extend_from_slice(&h.to_be_bytes());
-        b.extend_from_slice(&[8, 2, 0, 0, 0]);
-        b
-    }
-
-    fn phys(x: u32, y: u32, unit: u8) -> Vec<u8> {
-        let mut b = x.to_be_bytes().to_vec();
-        b.extend_from_slice(&y.to_be_bytes());
-        b.push(unit);
-        b
-    }
-
+    /// The header as libpng reads it (cases p001, p005 and p008): no
+    /// `pHYs`, one in metres, one in no unit, one after `IDAT`.
     #[test]
     fn png_resolution() {
-        let plain = png(&[(b"IHDR", ihdr(10, 20)), (b"IDAT", vec![])]);
-        assert_eq!(png_size(&plain).unwrap().xdpi, 72.0);
-        let metres = png(&[
-            (b"IHDR", ihdr(10, 20)),
-            (b"pHYs", phys(11811, 5906, 1)),
-            (b"IDAT", vec![]),
-        ]);
-        let s = png_size(&metres).unwrap();
-        assert_eq!((s.width, s.height), (10.0, 20.0));
-        assert_eq!(s.xdpi, 11811.0 * 0.0254);
-        let unknown_unit = png(&[
-            (b"IHDR", ihdr(10, 20)),
-            (b"pHYs", phys(11811, 5906, 0)),
-            (b"IDAT", vec![]),
-        ]);
-        assert_eq!(png_size(&unknown_unit).unwrap().ydpi, 72.0);
-        let after_idat = png(&[
-            (b"IHDR", ihdr(10, 20)),
-            (b"IDAT", vec![]),
-            (b"pHYs", phys(11811, 5906, 1)),
-        ]);
-        assert_eq!(png_size(&after_idat).unwrap().xdpi, 72.0);
+        let plain = png_file_size(&picture("p-plain.png")).unwrap();
+        assert_eq!((plain.width, plain.height), (40.0, 30.0));
+        assert_eq!((plain.xdpi, plain.ydpi), (72.0, 72.0));
+        let metres = png_file_size(&picture("p-mixed.png")).unwrap();
+        assert_eq!((metres.width, metres.height), (50.0, 70.0));
+        assert_eq!(
+            (metres.xdpi, metres.ydpi),
+            (2835.0 * 0.0254, 5670.0 * 0.0254)
+        );
+        let no_unit = png_file_size(&picture("p-aspect.png")).unwrap();
+        assert_eq!((no_unit.xdpi, no_unit.ydpi), (72.0, 72.0));
+        let after_idat = png_file_size(&picture("p-late-phys.png")).unwrap();
+        assert_eq!(after_idat.xdpi, 72.0);
+        assert_eq!(png_file_size(&picture("p-notimage.png")), None);
+    }
+
+    /// flash-tex/flashtex#2501: what libpng makes of a `pHYs` chunk is
+    /// libpng's own behaviour. One whose CRC is wrong is dropped (XeTeX
+    /// 0.999998 sizes p-phys-badcrc.png, 60 x 30 pixels, at 72 dpi:
+    /// 60.225pt x 30.1125pt, case p008), and of two the first counts.
+    #[test]
+    fn png_phys_chunks_are_read_by_libpng() {
+        let bad_crc = png_file_size(&picture("p-phys-badcrc.png")).unwrap();
+        assert_eq!((bad_crc.width, bad_crc.height), (60.0, 30.0));
+        assert_eq!((bad_crc.xdpi, bad_crc.ydpi), (72.0, 72.0));
+        let twice = png_file_size(&picture("p-phys-twice.png")).unwrap();
+        assert_eq!((twice.xdpi, twice.ydpi), (2835.0 * 0.0254, 5670.0 * 0.0254));
+    }
+
+    /// A file on which `png_read_info` raises a libpng error is no picture
+    /// here (None; XeTeX itself aborts there, #2501): `IHDR` with a wrong
+    /// CRC, and an invalid bit depth under a right one.
+    #[test]
+    fn a_png_libpng_rejects_is_no_picture() {
+        let chunk = |kind: &[u8; 4], body: &[u8], crc: Option<u32>| {
+            let mut v = (body.len() as u32).to_be_bytes().to_vec();
+            v.extend_from_slice(kind);
+            v.extend_from_slice(body);
+            let sum = crc.unwrap_or_else(|| {
+                // CRC-32 of the type and the data (PNG's, as zlib's crc32)
+                let mut c = 0xFFFF_FFFFu32;
+                for &b in kind.iter().chain(body) {
+                    c ^= b as u32;
+                    for _ in 0..8 {
+                        c = if c & 1 != 0 {
+                            0xEDB8_8320 ^ (c >> 1)
+                        } else {
+                            c >> 1
+                        };
+                    }
+                }
+                !c
+            });
+            v.extend_from_slice(&sum.to_be_bytes());
+            v
+        };
+        let file = |name: &str, ihdr: Vec<u8>| {
+            let dir = std::env::temp_dir().join(format!("flashtex-pic-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut data = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+            data.extend(ihdr);
+            data.extend(chunk(b"IEND", &[], None));
+            let p = dir.join(name);
+            std::fs::write(&p, data).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let header = |depth: u8| [0, 0, 0, 20, 0, 0, 0, 10, depth, 2, 0, 0, 0];
+        let bad_crc = file(
+            "ihdr-crc.png",
+            chunk(b"IHDR", &header(8), Some(0x1234_5678)),
+        );
+        assert_eq!(png_file_size(&bad_crc), None);
+        let depth3 = file("depth3.png", chunk(b"IHDR", &header(3), None));
+        assert_eq!(png_file_size(&depth3), None);
     }
 
     #[test]
