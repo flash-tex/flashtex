@@ -357,19 +357,21 @@ impl<M: Metrics> Builder<'_, M> {
                     .diag(format!("bad colour in `color push{}'", lossy(r)));
                 return;
             };
-            self.doc.colors.push((c.clone(), c.clone()));
-            self.set_colors(Some(c.clone()), Some(c));
+            if self.doc.color_push((c.clone(), c.clone())) {
+                self.set_colors(Some(c.clone()), Some(c));
+            }
         } else if p.keyword(b"pop") {
-            self.doc.colors.pop();
+            self.doc.color_pop();
             self.reset_color();
         } else {
             let Some(c) = read_color(&mut p) else {
                 self.doc.diag(format!("bad colour in `color{}'", lossy(r)));
                 return;
             };
-            // `color SPEC`: the stack is that colour alone.
+            // `color SPEC` (pdf_color_clear_stack, pdf_color_set): the
+            // stack is emptied and its bottom entry is that colour.
             self.doc.colors.clear();
-            self.doc.colors.push((c.clone(), c.clone()));
+            self.doc.color_base = Some((c.clone(), c.clone()));
             self.set_colors(Some(c.clone()), Some(c));
         }
     }
@@ -382,9 +384,7 @@ impl<M: Metrics> Builder<'_, M> {
     fn pdf_colors(&mut self, p: &mut Parser) -> Option<(Col, Col)> {
         let (cf, cs) = self
             .doc
-            .colors
-            .last()
-            .cloned()
+            .color_current()
             .unwrap_or((Col::black(), Col::black()));
         let read = |p: &mut Parser, default: &Col| -> Option<Col> {
             if p.at_end() {
@@ -589,22 +589,25 @@ impl<M: Metrics> Builder<'_, M> {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                self.doc.colors.push((f.clone(), s.clone()));
-                self.set_colors(Some(f), Some(s));
+                if self.doc.color_push((f.clone(), s.clone())) {
+                    self.set_colors(Some(f), Some(s));
+                }
             }
             b"scolor" | b"setcolor" | b"sc" => {
                 let Some((f, s)) = self.pdf_colors(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
+                // the top entry, which is the bottom one when nothing is
+                // pushed
                 match self.doc.colors.last_mut() {
                     Some(top) => *top = (f.clone(), s.clone()),
-                    None => self.doc.colors.push((f.clone(), s.clone())),
+                    None => self.doc.color_base = Some((f.clone(), s.clone())),
                 }
                 self.set_colors(Some(f), Some(s));
             }
             b"ecolor" | b"endcolor" | b"ec" | b"endgray" | b"egray" | b"eg" => {
-                self.doc.colors.pop();
+                self.doc.color_pop();
                 self.reset_color();
             }
             b"bgcolor" | b"bgc" | b"bbc" | b"bbg" => {
@@ -631,7 +634,7 @@ impl<M: Metrics> Builder<'_, M> {
                 match p.object() {
                     Some(o) => {
                         let o = self.fixup(o);
-                        self.doc.named.insert(name, Named::Obj(o));
+                        self.define(name, Named::Obj(o));
                     }
                     None => self
                         .doc
@@ -742,7 +745,7 @@ impl<M: Metrics> Builder<'_, M> {
             b"docview" => {
                 if let Some(Obj::Dict(d)) = p.object() {
                     let d = self.text_dict(d);
-                    self.doc.catalog.merge(&d);
+                    docview(&mut self.doc.catalog, d);
                 }
             }
             b"mapline" => {
@@ -862,14 +865,10 @@ impl<M: Metrics> Builder<'_, M> {
                         "pdf:put to @{}, which is not a dictionary or array",
                         lossy(&name)
                     )),
-                    None => {
-                        // dvipdfmx makes the object on a put to an unknown name
-                        let o = match objs.len() {
-                            1 => objs.pop().expect("one"),
-                            _ => Obj::Array(objs),
-                        };
-                        self.doc.named.insert(name, Named::Obj(o));
-                    }
+                    // spc_handler_pdfm_put: nothing is made
+                    None => self
+                        .doc
+                        .diag(format!("Specified object not exist: {}", lossy(&name))),
                 }
             }
         }
@@ -908,7 +907,19 @@ impl<M: Metrics> Builder<'_, M> {
         } else {
             s
         };
-        self.doc.named.insert(name, Named::Stream(dict, data));
+        self.define(name, Named::Stream(dict, data));
+    }
+
+    /// `pdf:obj`, `pdf:stream`, `pdf:fstream` (specials.c's
+    /// spc_push_object, pdfnames.c's pdf_names_add_object): a name already
+    /// defined keeps its first object ("Object @name already defined.").
+    fn define(&mut self, name: Vec<u8>, o: Named) {
+        if self.doc.named.contains_key(&name) {
+            self.doc
+                .diag(format!("Object @{} already defined.", lossy(&name)));
+            return;
+        }
+        self.doc.named.insert(name, o);
     }
 
     /// `pdf:ann [@name] dims|bbox <<dict>>`: an annotation at the current
@@ -1523,6 +1534,20 @@ pub fn read_transform(p: &mut Parser) -> Mat {
     Mat(read_dims(p).info().matrix.map(fx))
 }
 
+/// `pdf:docview <<...>>` into the catalog (spc_pdfm.c's
+/// spc_handler_pdfm_docview): a `/ViewerPreferences` dictionary merges
+/// into the one the catalog has ("Avoid overriding whole
+/// ViewerPreferences"), every other entry replaces.
+fn docview(catalog: &mut Dict, mut d: Dict) {
+    if let Some(Obj::Dict(old)) = catalog.get_mut(b"ViewerPreferences") {
+        if let Some(Obj::Dict(add)) = d.get(b"ViewerPreferences") {
+            old.merge(add);
+            d.remove(b"ViewerPreferences");
+        }
+    }
+    catalog.merge(&d);
+}
+
 /// The keys whose string values dvipdfmx takes for text strings
 /// (spc_pdfm.c's `default_taintkeys`).
 const TEXT_KEYS: [&[u8]; 11] = [
@@ -1710,6 +1735,35 @@ mod tests {
         );
         let mut bad = Dict(vec![(b"T".to_vec(), Obj::Str(vec![0xff]))]);
         assert_eq!(text_strings(&mut bad), Err(b"T".to_vec()));
+    }
+
+    /// Measured (TeX Live 2026 xdvipdfmx): `pdf:docview <</ViewerPreferences
+    /// <</HideToolbar true /FitWindow true>> /PageMode /UseOutlines>>`, then
+    /// `pdf:docview <</ViewerPreferences <</HideMenubar true>> >>`, gives a
+    /// catalog with `/PageMode /UseOutlines` and all three preferences.
+    #[test]
+    fn docview_merges_viewer_preferences() {
+        let dict = |s: &str| match Parser::new(s.as_bytes()).object() {
+            Some(Obj::Dict(d)) => d,
+            o => panic!("{o:?}"),
+        };
+        let mut cat = Dict::default();
+        docview(
+            &mut cat,
+            dict("<</ViewerPreferences <</HideToolbar true /FitWindow true>> /PageMode /UseOutlines>>"),
+        );
+        docview(
+            &mut cat,
+            dict("<</ViewerPreferences <</HideMenubar true>> >>"),
+        );
+        assert_eq!(
+            cat.get(b"PageMode"),
+            Some(&Obj::Name(b"UseOutlines".to_vec()))
+        );
+        let vp = cat.get(b"ViewerPreferences").unwrap().as_dict().unwrap();
+        for k in [&b"HideToolbar"[..], b"FitWindow", b"HideMenubar"] {
+            assert_eq!(vp.get(k), Some(&Obj::Bool(true)), "{}", lossy(k));
+        }
     }
 
     #[test]
