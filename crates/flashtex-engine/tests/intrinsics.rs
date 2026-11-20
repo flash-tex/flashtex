@@ -475,3 +475,78 @@ fn a_changed_align_state_falls_back() {
     assert!(stat(&s, "replays") >= 1, "{s}");
     assert!(stat(&s, "Align") >= 1, "{s}");
 }
+
+/// (Q-D9NEST, after #2495/#2511) a call that leaves its own nest level --
+/// a display on an empty paragraph (`init_math` pops the level, `resume_par`
+/// pushes it back), `\par` ending a paragraph begun before the call, `}`
+/// ending a `\vbox` opened outside, `{}` in math mode -- is never replayed:
+/// `flashtex_intr_command` refuses `$`, `\par`, a `}` that does not close a
+/// simple group opened inside the call, and `{` in math mode, before the
+/// command runs, so no recording ever sees the nest change. The last hook
+/// (groups only) is the control that does replay. Expected values: TeX Live
+/// 2026 pdfTeX 1.40.29 (`pdftex -ini -etex`, macOS arm64, run by hand).
+#[test]
+fn a_call_that_leaves_its_nest_level_is_never_replayed() {
+    let probes: [(&str, &str, &str, bool); 6] = [
+        (
+            "display",
+            "\\def\\hook{\\let\\z\\relax$$\\hbox{\\vrule height 5pt width 2pt}$$ }\n\
+             \\def\\t{\\setbox2\\vbox{\\hsize=100pt \\noindent\\hook\\par}\\message{[ht \\the\\ht2]}}",
+            "[ht 5.0pt] [ht 5.0pt] [ht 5.0pt]",
+            false,
+        ),
+        (
+            "display-prevgraf",
+            "\\def\\hook{\\let\\z\\relax$$ $$ }\n\
+             \\def\\t{\\setbox2\\vbox{\\hsize=100pt \\noindent\\prevgraf=1 \\hook\\par\
+             \\message{[\\the\\prevgraf]}}}",
+            "[4] [4] [4]",
+            false,
+        ),
+        (
+            "par",
+            "\\parskip=7pt \\def\\hook{\\let\\z\\relax\\par}\n\
+             \\def\\t{\\setbox2\\vbox{\\hsize=100pt \\hrule height 1pt\\noindent\\hook\\noindent\\hook\
+             \\message{[\\the\\prevgraf]}}\\message{[ht \\the\\ht2]}}",
+            "[0] [ht 15.0pt] [0] [ht 15.0pt] [0] [ht 15.0pt]",
+            false,
+        ),
+        (
+            "egroup",
+            "\\def\\hook{\\let\\z\\relax\\eg}\n\
+             \\def\\t{\\setbox2\\vbox\\bg\\hrule height 5pt\\relax\\hook\\message{[ht \\the\\ht2]}}",
+            "[ht 5.0pt] [ht 5.0pt] [ht 5.0pt]",
+            false,
+        ),
+        (
+            "math-group",
+            "\\def\\hook{\\let\\z\\relax{}}\n\
+             \\def\\t{\\setbox2\\hbox{$\\hook\\hook$}\\message{[wd \\the\\wd2]}}",
+            "[wd 0.0pt] [wd 0.0pt] [wd 0.0pt]",
+            false,
+        ),
+        (
+            "control",
+            "\\def\\hook{\\let\\z\\relax\\begingroup\\def\\y{}\\endgroup}\n\
+             \\def\\t{\\setbox2\\hbox{\\hook}\\message{[wd \\the\\wd2]}}",
+            "[wd 0.0pt] [wd 0.0pt] [wd 0.0pt]",
+            true,
+        ),
+    ];
+    for (tag, defs, want, replays) in probes {
+        let src = format!(
+            "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+             \\fontdimen22\\nullfont=0pt \\abovedisplayskip=3pt \\belowdisplayskip=4pt\n\
+             \\let\\eg=}} \\let\\bg={{\n{defs}\n\\t\\t\\t\\end\n"
+        );
+        let s = check_in(&format!("nest-{tag}"), &src, true);
+        // the hook is run by `main_control` (not expanded by a scan), so a
+        // recording starts
+        assert!(stat(&s, "recordings") >= 1, "{tag}: {s}");
+        assert_eq!(stat(&s, "replays") > 0, replays, "{tag}: {s}");
+        let d = scratch(&format!("nest-{tag}-oracle"));
+        std::fs::write(d.join("t.tex"), &src).unwrap();
+        let log = run_in(&d, "on", "hook", true).log.replace('\n', "");
+        assert!(log.contains(want), "{tag}: {log}");
+    }
+}
