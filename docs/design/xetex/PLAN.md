@@ -382,6 +382,13 @@ Verified on mac-m1max-a against TeX Live 2026's `xetex`/`xelatex -no-pdf`:
   format was already initialised there). Cases `p001`-`p006` and xelatex
   `l010` (graphicx): P-T1 and XDV equal. One engine fix: `pic_page` is
   printed as a signed 16-bit value, as in TeX Live.
+  Since #2494 a PDF picture's page count and boxes are read through pplib
+  itself (`third_party/pplib`, TeX Live's, vendored; `crates/flashtex-xetex/pplib`
+  with `pdfimage.cpp` over it), not through xpdf: pplib refuses damaged files
+  that xpdf repairs (a wrong or missing `startxref`, bytes before `%PDF-` or
+  after `%%EOF`), so XeTeX reports "Unable to load picture or PDF file" for
+  them (16 figures of arXiv 2501.07069v1). Case `p007`. xpdf still reads the
+  included page for the output.
 - **Graphite2**: not started. It is LGPL-2.1-or-later or MPL-2.0 (or
   GPL-2.0-or-later), so it may be linked into this GPL crate (§2, DESIGN.md
   §3). Next: vendor TeX Live 2026's Graphite2 1.3.14, build HarfBuzz with

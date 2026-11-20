@@ -1013,8 +1013,13 @@ def bmp_file(w, h, bits=24, xppm=2835, yppm=2835, core=False):
             + info + palette + pixels)
 
 
-def pdf_file(objects):
-    """A PDF of `objects` (object 1 is the catalog), with a correct xref."""
+def pdf_file(objects, startxref=0, prefix=b"", suffix=b""):
+    """A PDF of `objects` (object 1 is the catalog), with a correct xref.
+    The damage XeTeX's pplib refuses and xpdf repairs (#2494): `startxref`
+    bytes added to the offset after the `startxref` keyword (None: no
+    `startxref` lines at all), `prefix` before `%PDF-` (the offsets still
+    count from `%PDF-`, where xpdf counts them from), `suffix` after
+    `%%EOF`."""
     out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
     offsets = []
     for i, body in enumerate(objects, 1):
@@ -1024,8 +1029,10 @@ def pdf_file(objects):
     out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
     for off in offsets:
         out += b"%010d 00000 n \n" % off
-    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
-    return out
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
+    if startxref is not None:
+        out += b"startxref\n%d\n" % (xref + startxref)
+    return prefix + out + b"%%EOF\n" + suffix
 
 
 pictures["p-plain.png"] = png_file(40, 30)
@@ -1063,6 +1070,20 @@ pictures["p-pages.pdf"] = pdf_file([
     b"[ 1 2 101 52 ]",
     b"30",
 ])
+
+# One page (MediaBox 200 x 300, CropBox inset by 10, Rotate 90), sound and
+# damaged four ways: xpdf (pdfTeX) reads all five, pplib (XeTeX) only the
+# first (#2494).
+ONE_PAGE = [
+    b"<< /Type /Catalog /Pages 2 0 R >>",
+    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /CropBox [10 10 190 290] /Rotate 90 >>",
+]
+pictures["p-sound.pdf"] = pdf_file(ONE_PAGE)
+pictures["p-badstartxref.pdf"] = pdf_file(ONE_PAGE, startxref=11)
+pictures["p-nostartxref.pdf"] = pdf_file(ONE_PAGE, startxref=None)
+pictures["p-junkhead.pdf"] = pdf_file(ONE_PAGE, prefix=b"junk before the header\n")
+pictures["p-trailing.pdf"] = pdf_file(ONE_PAGE, suffix=b"\n\n\0\0bytes after the end\n")
 
 PIC_FILES = ["p-plain.png", "p-300dpi.png", "p-aspect.png", "p-mixed.png", "p-late-phys.png",
              "p-jfif-dpi.jpg", "p-jfif-dpcm.jpg", "p-jfif-aspect.jpg", "p-exif.jpg",
@@ -1146,6 +1167,22 @@ pcase("p005-picture-errors", "a missing picture, a file that is no picture, a la
 \hbox{\XeTeXpicfile p-late-phys.png }
 \hbox{\XeTeXpicfile p-plain.png width -1pt }
 \hbox{\XeTeXpicfile p-plain.png height 0pt }
+}
+\lsshipbox0
+\end""", no_halt=True)
+
+pcase("p007-pdffile-damaged", "\\XeTeXpdffile and \\XeTeXpdfpagecount of PDF files pplib cannot load (a wrong or missing startxref, bytes before the header or after the end): no pages, not a picture",
+      r"""\message{[\the\XeTeXpdfpagecount p-sound.pdf ][\the\XeTeXpdfpagecount p-badstartxref.pdf ]%
+[\the\XeTeXpdfpagecount p-nostartxref.pdf ][\the\XeTeXpdfpagecount p-junkhead.pdf ]%
+[\the\XeTeXpdfpagecount p-trailing.pdf ]}
+\setbox0=\vbox{
+\hbox{\XeTeXpdffile p-sound.pdf }
+\hbox{\XeTeXpdffile p-sound.pdf media }
+\hbox{\XeTeXpdffile p-badstartxref.pdf }
+\hbox{\XeTeXpdffile p-nostartxref.pdf page 1 media }
+\hbox{\XeTeXpdffile p-junkhead.pdf }
+\hbox{\XeTeXpdffile p-trailing.pdf scaled 500 }
+\hbox{\XeTeXpicfile p-badstartxref.pdf }
 }
 \lsshipbox0
 \end""", no_halt=True)

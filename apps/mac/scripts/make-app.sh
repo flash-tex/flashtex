@@ -42,7 +42,7 @@
 # as Contents/Helpers/flashtex-host-unicode when built (--engine-host-unicode, else
 # the xetex crate's own release build), with its licence as
 # Contents/Resources/engine/LICENSE-unicode and the notices of the libraries it links
-# (HarfBuzz, FreeType, TECkit) as Contents/Resources/engine/THIRD-PARTY-NOTICES-unicode.txt;
+# (HarfBuzz, FreeType, TECkit, pplib) as Contents/Resources/engine/THIRD-PARTY-NOTICES-unicode.txt;
 # it reads the same bundle lock. Optional: without it a Unicode document says the
 # host is not found.
 # --require-engine-host (a release, .github/workflows/release.yml): a missing
@@ -316,7 +316,7 @@ if [[ -n "$ENGINE_HOST_UNICODE" ]]; then
   for f in "$XETEX_CRATE/LICENSE" "$REPO_ROOT/third_party/harfbuzz/harfbuzz-src/COPYING" \
            "$REPO_ROOT/third_party/freetype/freetype-src/LICENSE.TXT" "$REPO_ROOT/third_party/freetype/freetype-src/docs/FTL.TXT" \
            "$REPO_ROOT/third_party/teckit/TECkit-src/license/License_LGPLv21.txt" \
-           "$REPO_ROOT/third_party/icu/LICENSE"; do
+           "$REPO_ROOT/third_party/icu/LICENSE" "$REPO_ROOT/third_party/pplib/NOTICES"; do
     [[ -f "$f" ]] || die "flashtex-host-unicode: its licence or a notice is missing: $f"
   done
   echo "==> Unicode engine host: $ENGINE_HOST_UNICODE"
@@ -579,6 +579,9 @@ if [[ -n "$ENGINE_HOST_UNICODE" && -f "$ENGINE_HOST_UNICODE" ]]; then
     echo
     echo "== ICU's line-break tables and bidi algorithm (third_party/icu; the bidi port's notices are also in LICENSE-unicode) and ICU4X's segmenter and its data (Unicode License v3) =="
     cat "$REPO_ROOT/third_party/icu/LICENSE"
+    echo
+    echo "== pplib (used under the GNU GPL 2 or later, LICENSE-unicode; third_party/pplib) =="
+    cat "$REPO_ROOT/third_party/pplib/NOTICES"
   } > "$RESOURCES_DIR/engine/THIRD-PARTY-NOTICES-unicode.txt"
   ENGINE_HOST_UNICODE_BUNDLED="$HELPERS_DIR/flashtex-host-unicode"
   echo "    bundled flashtex-host-unicode from $ENGINE_HOST_UNICODE (+ Resources/engine/LICENSE-unicode, THIRD-PARTY-NOTICES-unicode.txt)"

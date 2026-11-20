@@ -70,8 +70,8 @@ flashtex-host (Classic mode, a translation of pdfTeX) or flashtex-host-unicode
 The engine hosts are free software under the GNU General Public License,
 version 2 or later. They link TeX Live 2026's kpathsea, zlib, libpng and xpdf
 (xpdf is GPL version 2 or 3 only, so the hosts are distributed under GPL
-version 2 or 3), and Unicode mode's host also HarfBuzz, FreeType, TECkit and
-ICU's data. You may have their complete corresponding source code:
+version 2 or 3), and Unicode mode's host also HarfBuzz, FreeType, TECkit,
+pplib and ICU's data. You may have their complete corresponding source code:
 
 {SOURCE_LINE}
 This build: {tree}
@@ -124,7 +124,7 @@ mod tests {
         assert!(t.contains(SOURCE_LINE));
         assert!(t.contains("This build: https://github.com/flash-tex/flashtex/tree/v9.9.9"));
         for lib in [
-            "kpathsea", "zlib", "libpng", "xpdf", "HarfBuzz", "FreeType", "TECkit",
+            "kpathsea", "zlib", "libpng", "xpdf", "HarfBuzz", "FreeType", "TECkit", "pplib",
         ] {
             assert!(t.contains(lib), "{lib}");
         }

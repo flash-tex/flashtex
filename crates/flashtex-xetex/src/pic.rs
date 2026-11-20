@@ -6,11 +6,17 @@
 //!
 //! The size of a PNG, JPEG or BMP file is read here from its header, as the
 //! C does (libpng's `png_read_info` stops at the first `IDAT`, so only the
-//! chunks before it count). A PDF file's page boxes are read through the
-//! pdfTeX engine's xpdf (`flashtex_engine::pdftex::xpdf`) with pplib's
-//! rules, which `pdfimage.cpp` uses: a box is the page's or an ancestor's
-//! (`Parent`) array of four direct numbers, `Rotate` is the page's own
-//! direct integer, and the page number is clamped to the document.
+//! chunks before it count). A PDF file's page count and page boxes are
+//! read through pplib itself, as `pdfimage.cpp` reads them
+//! (`flashtex_xetex_pplib`: TeX Live's pplib, vendored): whether a file can
+//! be read at all is pplib's decision, and it refuses files that xpdf
+//! repairs (a `startxref` that does not point at the cross-reference
+//! table, bytes before `%PDF-`; flash-tex/flashtex#2494). What the output
+//! needs of an included page ([`pdf_page`], [`dvipdfmx_page`]) is read
+//! through the pdfTeX engine's xpdf (`flashtex_engine::pdftex::xpdf`) with
+//! pplib's rules: a box is the page's or an ancestor's (`Parent`) array of
+//! four direct numbers, `Rotate` is the page's own direct integer, and the
+//! page number is clamped to the document.
 //!
 //! The C's `realrect` and `realpoint` hold `float`s; `round_f32` stores
 //! values into them as C does (here they are `f64` fields holding values
@@ -513,7 +519,8 @@ fn inherited_box(doc: &xpdf::Doc, page: &xpdf::Obj, name: &[u8]) -> Option<[f64;
     None
 }
 
-/// Opens a PDF file, as `ppdoc_load` does (None if it cannot be read).
+/// Opens a PDF file with xpdf for the output (None if it cannot be read).
+/// TeX has taken the picture by then: pplib could load the file.
 fn open_pdf(path: &str) -> Option<xpdf::Doc> {
     if !xpdf::LINKED {
         return None;
@@ -525,58 +532,10 @@ fn open_pdf(path: &str) -> Option<xpdf::Doc> {
 
 /// `pdf_get_rect`: box `pdf_box` of page `page_num` (clamped to the
 /// document; negative counts from the end), in TeX points: x, y, width,
-/// height. None for the C's -1.
+/// height. None for the C's -1: pplib cannot load the file, or the page
+/// has no box. `pdfimage.cpp` itself, over pplib (`flashtex_xetex_pplib`).
 pub fn pdf_rect(path: &str, page_num: i32, pdf_box: i32) -> Option<[f64; 4]> {
-    let doc = open_pdf(path)?;
-    let pages = doc.num_pages();
-    let mut n = page_num;
-    if n > pages {
-        n = pages;
-    }
-    if n < 0 {
-        n += pages + 1;
-    }
-    if n < 1 {
-        n = 1;
-    }
-    let (num, gen) = doc.page_ref(n)?;
-    let page = doc.fetch(num, gen);
-    if !page.is_dict() {
-        return None;
-    }
-    let first: &[u8] = match pdf_box {
-        PDFBOX_MEDIA => b"MediaBox",
-        PDFBOX_BLEED => b"BleedBox",
-        PDFBOX_TRIM => b"TrimBox",
-        PDFBOX_ART => b"ArtBox",
-        _ => b"CropBox",
-    };
-    let names: [&[u8]; 6] = [
-        first,
-        b"CropBox",
-        b"MediaBox",
-        b"BleedBox",
-        b"TrimBox",
-        b"ArtBox",
-    ];
-    let [lx, ly, rx, ry] = names
-        .iter()
-        .find_map(|name| inherited_box(&doc, &page, name))?;
-    // ppdict_get_int: the page's own Rotate, a direct integer.
-    let rot = page.dict_lookup_nf(b"Rotate");
-    let mut angle = if rot.is_int() { rot.get_int() } else { 0 } % 360;
-    if angle < 0 {
-        angle += 360;
-    }
-    let k = 72.27 / 72.0;
-    let (wd, ht) = if angle == 90 || angle == 270 {
-        (k * (ry - ly).abs(), k * (rx - lx).abs())
-    } else {
-        (k * (rx - lx).abs(), k * (ry - ly).abs())
-    };
-    // `my_fmin`.
-    let fmin = |x: f64, y: f64| if x < y { x } else { y };
-    Some([k * fmin(lx, rx), k * fmin(ly, ry), wd, ht])
+    flashtex_xetex_pplib::get_rect(path.as_bytes(), page_num, pdf_box)
 }
 
 /// A page of a PDF file as the output includes it (`pdf:image`): the page
@@ -799,9 +758,9 @@ pub fn dvipdfmx_page(path: &str, page_num: i32, pdf_box: i32) -> Option<DpxPage>
     })
 }
 
-/// `pdf_count_pages`.
+/// `pdf_count_pages`: 0 when pplib cannot load the file.
 pub fn pdf_pages(path: &str) -> i32 {
-    open_pdf(path).map_or(0, |d| d.num_pages())
+    flashtex_xetex_pplib::count_pages(path.as_bytes())
 }
 
 /// The bounds of the picture file at `path` (`find_pic_file` after the
@@ -1022,5 +981,33 @@ mod tests {
         assert_eq!(bmp_size(&b), Bmp::Error);
         b.push(0);
         assert_eq!(bmp_size(&b), Bmp::UnknownHeader);
+    }
+
+    /// flash-tex/flashtex#2494: XeTeX reads a PDF picture through pplib,
+    /// which refuses files that xpdf repairs. The files are lockstep case
+    /// p007-pdffile-damaged's (tools/xetex-lockstep/pictures), where TeX
+    /// Live's XeTeX 0.999998 reports `\XeTeXpdfpagecount` 0 and "Unable to
+    /// load picture or PDF file" for each damaged one, and 1 page and a
+    /// box of 281.05pt x 180.675pt for the sound one.
+    #[test]
+    fn a_pdf_file_pplib_cannot_load_is_no_picture() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/xetex-lockstep/pictures");
+        let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        assert_eq!(pdf_pages(&path("p-sound.pdf")), 1);
+        let [_, _, wd, ht] = pic_bounds(&path("p-sound.pdf"), 1, 1).unwrap();
+        let k = 72.27 / 72.0;
+        assert_eq!((wd, ht), (k * 280.0, k * 180.0));
+        for name in [
+            "p-badstartxref.pdf",
+            "p-nostartxref.pdf",
+            "p-junkhead.pdf",
+            "p-trailing.pdf",
+        ] {
+            assert_eq!(pdf_pages(&path(name)), 0, "{name}");
+            for pdf_box in 1..=5 {
+                assert_eq!(pic_bounds(&path(name), pdf_box, 1), None, "{name}");
+            }
+        }
     }
 }

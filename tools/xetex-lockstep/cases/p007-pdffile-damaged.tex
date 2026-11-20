@@ -1,0 +1,19 @@
+% p007-pdffile-damaged: \XeTeXpdffile and \XeTeXpdfpagecount of PDF files pplib cannot load (a wrong or missing startxref, bytes before the header or after the end): no pages, not a picture
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\message{[\the\XeTeXpdfpagecount p-sound.pdf ][\the\XeTeXpdfpagecount p-badstartxref.pdf ]%
+[\the\XeTeXpdfpagecount p-nostartxref.pdf ][\the\XeTeXpdfpagecount p-junkhead.pdf ]%
+[\the\XeTeXpdfpagecount p-trailing.pdf ]}
+\setbox0=\vbox{
+\hbox{\XeTeXpdffile p-sound.pdf }
+\hbox{\XeTeXpdffile p-sound.pdf media }
+\hbox{\XeTeXpdffile p-badstartxref.pdf }
+\hbox{\XeTeXpdffile p-nostartxref.pdf page 1 media }
+\hbox{\XeTeXpdffile p-junkhead.pdf }
+\hbox{\XeTeXpdffile p-trailing.pdf scaled 500 }
+\hbox{\XeTeXpicfile p-badstartxref.pdf }
+}
+\lsshipbox0
+\end
