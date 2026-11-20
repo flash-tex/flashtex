@@ -39,6 +39,16 @@ on:
         type: boolean
         required: false
         default: false
+      host:
+        description: "pc: the tiers above on the NixOS PC; hosted: the plan below on GitHub-hosted runners"
+        type: choice
+        options: [pc, hosted]
+        required: false
+        default: pc
+      plan:
+        description: 'hosted: a JSON list of units, each {"name": "...", "cmd": "<tools/parity/hunt/hunt.py arguments>"}'
+        required: false
+        default: '[]'
 
 permissions:
   contents: read
@@ -46,7 +56,7 @@ permissions:
 jobs:
   hunt:
     name: parity hunt (${{ inputs.tiers }})
-    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    if: inputs.host != 'hosted' && (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 720
     concurrency:
@@ -117,3 +127,114 @@ jobs:
       - name: delete the lane's cache
         if: always() && inputs.cleanup
         run: rm -rf "$HUNT_HOME" "$RUNNER_TEMP/hunt-work"
+
+  # ---- the hosted route (host: hosted) --------------------------------------------
+  # The PC has four slots for every lane, so a hunt over hundreds of documents waits
+  # for hours there. Here each unit of `plan` is one GitHub-hosted job: the engines are
+  # built once from this ref, the oracle is TeX Live 2026 from the pinned scheme-full
+  # image (nightly.yml's and unicode-m3.yml's digest: pdfTeX 1.40.29 and XeTeX), and a
+  # unit is one tools/parity/hunt/hunt.py run (parity, sound or xelatex over a slice of
+  # a corpus manifest). A report, never a gate.
+  hosted-build:
+    name: hunt engines (hosted)
+    if: inputs.host == 'hosted'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: parity-hunt-hosted
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: the engine, its host and tools; the XeTeX port
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine -p flashtex-display-list
+          (cd crates/flashtex-xetex && cargo build --release --locked --bins --example fonts_line)
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp target/release/{flashtex-initex,flashtex-host,dl3-keys,dl3-client,dl3-dump,dl3-coldopen} \
+             crates/flashtex-engine/pdftex.pool \
+             crates/flashtex-xetex/target/release/{flashtex-xetex,flashtex-host-unicode} \
+             crates/flashtex-xetex/target/release/examples/fonts_line "$RUNNER_TEMP/bin/"
+          git rev-parse HEAD > "$RUNNER_TEMP/bin/HEAD"
+          ls -l "$RUNNER_TEMP/bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hunt-bin
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+
+  hosted-unit:
+    name: hunt ${{ matrix.unit.name }}
+    needs: hosted-build
+    if: inputs.host == 'hosted'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        unit: ${{ fromJSON(inputs.plan) }}
+    env:
+      UNIT_NAME: ${{ matrix.unit.name }}
+      UNIT_CMD: ${{ matrix.unit.cmd }}
+      RUST_BACKTRACE: "1"
+      HUNT_TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.HUNT_TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: hunt-bin
+          path: ${{ runner.temp }}/hunt/bin
+      - name: tools; fonts by name for both XeTeX engines
+        run: |
+          set -euo pipefail
+          case "$UNIT_NAME" in *[!a-zA-Z0-9._-]*|'') echo "::error::a unit's name must be [a-zA-Z0-9._-]+"; exit 1 ;; esac
+          chmod +x "$RUNNER_TEMP"/hunt/bin/*
+          sudo apt-get update -qq && sudo apt-get install -y -qq qpdf poppler-utils fontconfig
+          tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"
+          python3 tools/unicode-m3/fontconfig.py --texlive "$tl" --out "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          FONTCONFIG_FILE="$RUNNER_TEMP/fonts.conf" fc-cache -f >/dev/null 2>&1 || true
+          pdftex --version | head -1; xetex --version | head -1
+          # the work directory is not a dot directory: a snap-confined qpdf cannot read ~/.cache
+          echo "HUNT_HOME=$RUNNER_TEMP/hunt" >> "$GITHUB_ENV"
+          echo "HUNT_BIN=$RUNNER_TEMP/hunt/bin" >> "$GITHUB_ENV"
+      - name: the unit
+        run: |
+          set -o pipefail
+          mkdir -p "$HUNT_HOME/out/$UNIT_NAME"
+          # shellcheck disable=SC2086 # UNIT_CMD is a list of hunt.py arguments
+          python3 tools/parity/hunt/hunt.py $UNIT_CMD 2>&1 | tee "$HUNT_HOME/out/$UNIT_NAME/unit.txt" | cut -c1-2000
+      - name: report
+        if: always()
+        run: |
+          {
+            echo "### hunt $UNIT_NAME: \`$UNIT_CMD\`"
+            echo '```'
+            tail -n 60 "$HUNT_HOME/out/$UNIT_NAME/unit.txt" | cut -c1-600 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hunt-${{ matrix.unit.name }}
+          path: ${{ runner.temp }}/hunt/out
+          if-no-files-found: ignore
+          retention-days: 14
