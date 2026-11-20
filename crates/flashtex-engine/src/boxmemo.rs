@@ -488,6 +488,13 @@ struct Entry {
     voids: Vec<i32>,
     /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
     line: Option<i32>,
+    /// When the call ran the page builder (any caller: `\par`, `\penalty`,
+    /// a box, ...): whether contributions waited at the call. With
+    /// none it did nothing, and with some it moved them (a refusal), so the
+    /// entry holds only in the same case (lane AUDIT-MATH: a replay over
+    /// waiting ones left them off the page, and `\pagetotal` after it was
+    /// the normal path's of before them).
+    contrib: Option<bool>,
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
@@ -589,6 +596,10 @@ struct Rec {
     /// after that, they hold what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
+    /// The call ran the page builder (`flashtex_bm_build_page`), and
+    /// whether contributions waited at the call (`Entry::contrib`).
+    built_page: bool,
+    contrib_waits: bool,
     /// The box registers that hold a box the call put there (or made void
     /// by moving its box out): read, they are the call's own, not inputs.
     boxes: HashSet<i32>,
@@ -2434,6 +2445,25 @@ impl Globals {
         self.bm_with_rec(|r| r.packed = true);
     }
 
+    /// A recording ran the page builder (changes/boxmemo.ch, at `build_page`'s
+    /// start): every caller, `\\par` (tex.web §1091, §1094), `\\penalty`
+    /// (§1103), a box (§1076), an insertion (§1100), `\\end` (§1054). With
+    /// nothing waiting on the contribution list it does nothing, with
+    /// something waiting it moves it, so the entry holds only over the same
+    /// case (`Entry::contrib`; REVIEW-4 on #2544: a `\\penalty0` call recorded
+    /// over none replayed as nothing over a waiting `\\vskip`).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_build_page(&mut self) {
+        self.bm_with_rec(|r| r.built_page = true);
+    }
+
+    /// Whether contributions wait on the main vertical list's contribution
+    /// list (`link(contrib_head)`), at whatever level the call runs.
+    fn bm_contrib_waits(&self) -> bool {
+        self.bm_link(CONTRIB_HEAD) != k::null
+    }
+
     /// A recording made object `n` (a `\pdfstartlink`'s `pdf_new_objnum`;
     /// changes/boxmemo.ch): a replay makes its own.
     #[cold]
@@ -2501,6 +2531,8 @@ impl Globals {
         // the state: an offer that hits builds no key.
         let hash = key_hash(&k1, &ctx, &[], &[]);
         let k4_now = self.bm_k4();
+        // contributions wait in the main vertical list (`Entry::built_page`)
+        let contrib_waits = self.bm_contrib_waits();
         // (the most recent variant whose whole key holds; whether one held
         // up to K3 or K7 but not them)
         ST.with(|s| {
@@ -2533,6 +2565,7 @@ impl Globals {
                     || e.ctx != ctx
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
+                    || !e.contrib.is_none_or(|w| w == contrib_waits)
                 {
                     continue;
                 }
@@ -2710,6 +2743,8 @@ impl Globals {
             kr: vec![],
             gwritten: HashSet::new(),
             line_read: false,
+            built_page: false,
+            contrib_waits: self.bm_contrib_waits(),
             boxes: HashSet::new(),
             box_stack: vec![],
             gboxes: vec![],
@@ -2825,6 +2860,7 @@ impl Globals {
                     trailer: None,
                     voids: rec.voids,
                     line: rec.line_read.then_some(self.line),
+                    contrib: rec.built_page.then_some(rec.contrib_waits),
                     fast: vec![],
                     new_cs: vec![],
                     last_link: None,
@@ -3926,6 +3962,7 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
+                contrib: rec.built_page.then_some(rec.contrib_waits),
                 fast: compress_groups(&rec.ops),
                 new_cs: rec
                     .ops

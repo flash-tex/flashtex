@@ -7525,6 +7525,9 @@ impl Globals {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
+            if self.bm_rec_on {
+                self.flashtex_bm_build_page();
+            }
             if ((__av_mem[crate::ix::U((contrib_head) as usize)].hh().rh() == null) || self.output_active) {
                 break 'l_exit_f;
             }
