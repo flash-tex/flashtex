@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -48,10 +49,66 @@ def read_text(path):
         return f.read().decode("utf-8", "replace")
 
 
-def run(cmd, stdin_bytes=None, env=None, timeout=300, cwd=None):
+# CPU-time limits (lane PARITY-HUNT, 2026-11-08). A run's limit is CPU seconds
+# of the process, a soft RLIMIT_CPU that `cpu_preexec` sets in the child, so
+# throttling that leaves a run waiting for the CPU does not stop it: on the
+# NixOS PC a pass of arXiv 2211.03354v2 used 25 s of CPU in 250 s. Every TeX
+# run (capture.run_engine), pdflatex's reference passes, the rasteriser and
+# qpdf use it. CPU_WALL_FACTOR times the limit in wall-clock seconds stays as
+# a backstop for a run that stops using the CPU; above that much throttling a
+# loaded host still makes a timeout. Windows has no RLIMIT_CPU (no `resource`
+# module): there the backstop alone bounds a run.
+try:
+    import resource
+except ImportError:  # Windows
+    resource = None
+CPU_WALL_FACTOR = 3
+
+
+class CpuLimitError(RuntimeError):
+    """A run's CPU-time limit cannot be set (`cpu_preexec`)."""
+
+
+def cpu_preexec(seconds, then=None):
+    """The preexec_fn of a child limited to `seconds` (at least 1) of CPU
+    time, which then runs `then` (another preexec_fn) if given; `then` alone
+    where there is no RLIMIT_CPU (Windows). The kernel sends SIGXCPU at the
+    limit and its default action ends the process (`cpu_stopped`). The child
+    only calls setrlimit, bound here, so nothing is imported or allocated
+    after the fork. A hard limit below `seconds` cannot be raised: that is a
+    harness error, raised here before the run, never a TeX exit status."""
+    if resource is None:
+        return then
+    s = max(1, int(seconds))
+    hard = resource.getrlimit(resource.RLIMIT_CPU)[1]
+    if hard != resource.RLIM_INFINITY and hard < s:
+        raise CpuLimitError(f"the hard CPU-time limit ({hard} s) is below a run's limit ({s} s)")
+    setrlimit, which, limits = resource.setrlimit, resource.RLIMIT_CPU, (s, hard)
+
+    def limit():
+        setrlimit(which, limits)
+        if then is not None:
+            then()
+    return limit
+
+
+def cpu_stopped(code):
+    """Whether a run's exit status says its CPU limit stopped it."""
+    xcpu = getattr(signal, "SIGXCPU", None)
+    return xcpu is not None and code == -xcpu
+
+
+def run(cmd, stdin_bytes=None, env=None, timeout=300, cwd=None, cpu=False):
+    """(exit code or None, stdout, stderr, seconds, timed out). With `cpu`,
+    `timeout` is CPU seconds (`cpu_preexec`) and CPU_WALL_FACTOR times it
+    the wall-clock backstop; otherwise it is wall-clock seconds."""
     t0 = time.monotonic()
+    pre, wall = (cpu_preexec(timeout), CPU_WALL_FACTOR * timeout) if cpu else (None, timeout)
     try:
-        p = subprocess.run(cmd, input=stdin_bytes, capture_output=True, env=env, timeout=timeout, cwd=cwd)
+        p = subprocess.run(cmd, input=stdin_bytes, capture_output=True, env=env, timeout=wall, cwd=cwd,
+                           preexec_fn=pre)
+        if cpu and cpu_stopped(p.returncode):
+            return None, p.stdout, p.stderr, time.monotonic() - t0, True
         return p.returncode, p.stdout, p.stderr, time.monotonic() - t0, False
     except subprocess.TimeoutExpired as e:
         return None, e.stdout or b"", e.stderr or b"", time.monotonic() - t0, True
@@ -123,7 +180,7 @@ def rasterize(rast, pdf, prefix):
                 "-dTextAlphaBits=4", "-dGraphicsAlphaBits=4", f"-sOutputFile={prefix}-%d.pgm", pdf]
     else:
         return [], [], "sips cannot select pages or write PGM; pixel comparison unavailable"
-    code, out, err, secs, timed_out = run(argv, timeout=300)
+    code, out, err, secs, timed_out = run(argv, timeout=300, cpu=True)  # CPU seconds
     if timed_out or code != 0:
         return [], argv, f"rasterizer exit {code} timeout={timed_out}: {err.decode('utf-8', 'replace')[-300:]}"
     d = os.path.dirname(prefix)

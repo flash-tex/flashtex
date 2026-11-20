@@ -94,7 +94,10 @@ POS_TOL = 0.5          # bp, per axis (L3)
 RASTER_DELTA = 64      # grey levels (L4)
 RASTER_FRACTION = 2e-4  # of a page's pixels (L4): 388 px on a 144 dpi US-letter page
 ORACLE_PASSES = 6
-ORACLE_TIMEOUT = 300
+ORACLE_TIMEOUT = 300  # CPU seconds of a pdflatex pass (harness.cpu_preexec)
+# The reference passes run in capture.TRACE_ENV (max_print_line 10000, as the
+# candidate's): a cached entry without this mark that counted errors is made again.
+LOG_ENV = "trace-env-1"
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
 # The engine under test defaults to the new engine, flashtex-initex
@@ -329,23 +332,31 @@ def oracle_reference(doc, texbin, cache, log):
     if os.path.isfile(meta_path):
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
-        meta["cached"] = True
-        pdf = os.path.join(odir, "reference.pdf")
-        return (pdf if meta.get("ok") and os.path.isfile(pdf) else None), meta
+        # made again: a pass stopped by a wall-clock limit (before capture.LIMIT_KIND), and an entry
+        # with errors counted at max_print_line 79 (before LOG_ENV; a wrapped line can start with `!`)
+        timeout = "(timeout)" in (meta.get("why") or "") and meta.get("limit") != ptiers.pcapture.LIMIT_KIND
+        if not timeout and not (meta.get("errors") and meta.get("log_env") != LOG_ENV):
+            meta["cached"] = True
+            pdf = os.path.join(odir, "reference.pdf")
+            return (pdf if meta.get("ok") and os.path.isfile(pdf) else None), meta
     work = os.path.join(odir, "work")
     shutil.rmtree(work, ignore_errors=True)
     shutil.copytree(doc["dir"], work)
-    env = dict(os.environ, SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")
+    # the candidate's environment (capture.TRACE_ENV): its dates, and its log's line lengths, so
+    # both logs' errors are counted in the same lines (at pdflatex's max_print_line of 79, an
+    # overfull box's wrapped line can begin with `! `: arXiv 1604.05044v1, PARITY-ROOT 2026-11-08)
+    env = dict(os.environ, **ptiers.pcapture.TRACE_ENV)
     stem = os.path.splitext(doc["entry"])[0]
     produced = os.path.join(work, stem + ".pdf")
     logpath = os.path.join(work, stem + ".log")
-    meta = {"ok": False, "key": key, "pdflatex": version, "argv": ["SOURCE_DATE_EPOCH=0", "FORCE_SOURCE_DATE=1",
-            "pdflatex"] + argv[1:], "passes": 0, "seconds": 0.0}
+    meta = {"ok": False, "key": key, "pdflatex": version,
+            "argv": [f"{k}={v}" for k, v in sorted(ptiers.pcapture.TRACE_ENV.items())] + ["pdflatex"] + argv[1:],
+            "passes": 0, "seconds": 0.0, "limit": ptiers.pcapture.LIMIT_KIND, "log_env": LOG_ENV}
     previous = None
     t0 = time.time()
     for _ in range(ORACLE_PASSES):
         ptiers.pcapture.drop_stale_pdf(produced)
-        code, _, _, _, timed_out = harness.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work)
+        code, _, _, _, timed_out = harness.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work, cpu=True)
         meta["passes"] += 1
         if timed_out or not ptiers.pcapture.compiled_exit(code) or not os.path.isfile(produced):
             txt = harness.read_text(logpath) if os.path.isfile(logpath) else ""
@@ -556,6 +567,11 @@ def score_pt(doc, cfg, cand, out_dir):
                                         + (cand.get("stderr_tail") or "")[:160]}
         if cand.get("trace_harness_error"):  # a harness limit, never a pass: failed, and counted as a harness error
             pt["pt1"]["harness_error"] = cand["trace_harness_error"]
+    elif not same_errors(cand, meta):
+        # as P-T2: a P-T1 pass needs the oracle's run, so its exit status and error count
+        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": f"error count {cand.get('errors')} (exit "
+                                        f"{cand.get('exit')}), pdfTeX's {meta.get('errors', 0)} "
+                                        f"(exit {meta.get('exit', 0)})"}
     elif ref_cap is not None:
         pt1 = ptiers.compare_pt1(ref_cap, cand_cap)
         pt["P-T1"], pt["pt1"] = pt1["ok"], pt1
@@ -837,6 +853,10 @@ def causes_for(result, texts):
         for d in diags:
             if d.get("code") in FONT_NOTE_CODES:
                 keys.add(f"fonts: {d.get('code')}")
+        raster = result.get("raster") or {}
+        if raster.get("available") is False:
+            # the rasteriser did not run (a timeout, a crash): L4 was not measured, nothing differs
+            return [f"harness: raster not run ({(raster.get('why') or '?')[:80]})"]
         if not keys:
             keys.add("raster: ink differs with every glyph origin in place (rules, images, outlines)")
         return sorted(keys)
