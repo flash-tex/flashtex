@@ -381,6 +381,11 @@ impl Globals {
                             .filter(|s| s.pdf_name == pdf_name && s.pdf_open == pdf_open)
                     })
                     .collect()
+            })
+            // (the same XDV is not the same images: a picture's file may
+            // have changed since the old run loaded it, #2444)
+            .filter(|snaps: &Vec<Arc<crate::ckpt::OutSnap>>| {
+                snaps.last().map_or(true, |s| s.doc.images.fresh())
             });
         if self.host.dl.on() {
             let (_, old_dl) = self.host_vs(op.id)?;
