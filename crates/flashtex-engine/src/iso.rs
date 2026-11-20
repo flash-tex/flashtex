@@ -2185,6 +2185,27 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             if (h == TEMP_HEAD || h == BACKUP_HEAD) && self.scratch_heads_dead {
                 continue;
             }
+            // The migration heads' links are dead the same way while their
+            // tails are null (#2264). `hpack` writes `link(adjust_tail)` as
+            // it moves material there, and pdftex.web reads `link(adjust_head)`
+            // and `link(pre_adjust_head)` only where the tail is not the head
+            // (tex.web §888 a paragraph's line, §1076 `box_end` after §1085's
+            // `\hbox`, §1205 a display after §1199's `hpack`), in the command
+            // that set the tail to the head; the tail is null again by the
+            // command's end (alignments' `fin_col` uses `cur_tail` and its
+            // own head instead). Each link is left pointing at the
+            // material it last moved (a paragraph's `\vadjust`, freed with
+            // its box since): two paths that freed it at different places
+            // differed there (BOX-MEMO's verifier, a false difference).
+            if (h == ADJUST_HEAD || h == PRE_ADJUST_HEAD)
+                && self.scratch_heads_dead
+                && o.sc("adjust_tail") == NULL
+                && n.sc("adjust_tail") == NULL
+                && o.sc("pre_adjust_tail") == NULL
+                && n.sc("pre_adjust_tail") == NULL
+            {
+                continue;
+            }
             // Inside an alignment the preamble (`link(align_head)`) alternates
             // tabskip glue and alignrecords, whose `info` is `end_span` or a
             // span list, not a node type (tex.web §770, §801): this walk does
