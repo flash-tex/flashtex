@@ -61,6 +61,7 @@
   "divergence-probes/min5-proof-close-shrink": 3,
   "divergence-probes/min5-url-break": 3,
   "divergence-probes/min6-dimens-primitives": 3,
+  "real-world/algorithm2e-pseudocode": 3,
   "real-world/article-twocolumn": 3,
   "real-world/beamer-blocks-columns": 3,
   "real-world/beamer-default": 3,
@@ -92,7 +93,9 @@
   "real-world/proof-practice-21242": 3,
   "real-world/ps-calculus": 3,
   "real-world/siunitx-tables": 3,
+  "real-world/tcolorbox-boxes": 3,
   "real-world/thesis-chapter": 3,
+  "real-world/tikz-libraries": 3,
   "real-world/tikzcd-shaded-notes": 3,
   "real-world/twelvept-plain": 3,
   "real-world/unicode-accents": 3
