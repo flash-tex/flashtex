@@ -7,6 +7,14 @@ with the pinned TeX Live 2026 as the oracle; macos-15, which has no TeX
 Live, for the bundle-only run and Core Graphics). Expected results come
 only from TeX Live's `xelatex`/`xetex`, never from FlashTeX.
 
+Which runs do what (hosted macOS is the scarce runner): the macOS leg runs
+on main, on a manual run (`gh workflow run unicode-m3.yml --ref <branch>`),
+on a pull request labelled `full-ci`, and on a pull request or branch push
+whose own files match the build job's `MAC_PATHS`; the `classic` job's six
+fixed U3 commits are built on a manual run only (a push or pull request
+builds this commit's `flashtex-host` alone). A branch push and its pull
+request share one concurrency group, so one run tests a head.
+
 | M3 criterion | harness |
 |---|---|
 | Unicode corpus (fontspec, unicode-math, polyglossia, xeCJK; Q2's corpus) at P-T1 100 % | `corpus.py assemble`, then `tools/xetex-lockstep/latex.py --cases-dir` (P-T1 + XDV against `xelatex -no-pdf`) |
