@@ -15,7 +15,12 @@
 //! alignment state, strings, errors, mode, list tail, scanner and output as
 //! it found them, and made no glue, shape, box or sparse-register
 //! definition, no write to a `\tracing...` parameter, no `\read`,
-//! `\openin` or `\closein`, and no `\aftergroup` at its own level
+//! `\openin` or `\closein`, no `\aftergroup` at its own level, and no
+//! write outside `eqtb` that the list's tail does not show (`\prevdepth`,
+//! `\spacefactor`, `\prevgraf`, the page builder's values, the interaction
+//! mode, font parameters, hyphenation tables, a math list's tail noad, the
+//! random generator; #2452), and no `\XeTeXdefaultencoding` or
+//! `\XeTeXlinebreaklocale`, which assign `eqtb` directly
 //! (`not_replayable.*` otherwise).
 //!
 //! An eligible call with a kept recording from the previous guarded call is
@@ -330,6 +335,20 @@ impl Globals {
             // call opens comes back at its end and its effects are recorded
             17 if p > level_one && p <= call_level => Err("AfterGroup"),
             17 => return,
+            // a write outside `eqtb`, or to `eqtb` outside `eq_define` and
+            // kin, that leaves the list's tail alone (#2452): a replay of
+            // the definitions would not make it
+            19 => Err(match p {
+                1 => "Aux",
+                2 => "PrevGraf",
+                3 => "PageState",
+                4 => "Interaction",
+                5 => "FontInfo",
+                6 => "Hyphenation",
+                7 => "MathTail",
+                8 => "Random",
+                _ => "DirectWrite",
+            }),
             _ => match k & 7 {
                 1 if [glue_ref, shape_ref, box_ref].contains(&t) => Err("GlueShapeOrBox"),
                 1 => Ok(Op::Def(p, t, self.intr_val(t, e), global)),
@@ -623,5 +642,24 @@ mod tests {
         // C is gone, the inner checkpoint stays
         assert_eq!(g.arena.checkpoint_ids(), &[inner][..]);
         assert_eq!(n, 0);
+    }
+
+    /// A `mem` word the real path changed in place (a node it found, not
+    /// one it allocated or freed) is a difference: the verifier's net for
+    /// an in-place change the recorder does not refuse. (`\limits`, which
+    /// once tested it in `tests/intrinsics_verify.rs`, is now refused,
+    /// #2452.)
+    #[test]
+    fn an_in_place_mem_write_is_a_semantic_difference() {
+        use crate::generated::types::memory_word;
+        let mut g = Globals::new();
+        g.set_intrinsics_verify(true);
+        let k = (crate::generated::consts::mem_top - 100) as usize;
+        let p = g.intr_verify_begin(&[]);
+        g.mem[k] = memory_word::from_bits(g.mem[k].to_bits() ^ 1);
+        g.intr_verify_end(p);
+        assert_eq!(g.host.intrinsics.checked, 1);
+        assert_eq!(g.host.intrinsics.differing, 1);
+        assert_eq!(g.host.intrinsics.classes.get("mem"), Some(&1));
     }
 }

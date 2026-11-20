@@ -9,7 +9,15 @@
 % dimension, 7 |out_what|, which a recording cannot hold; 16 |read_toks|
 % and |open_or_close_in|, whose input files a check does not compare; 17
 % |save_for_after| at level |p|; 18 the end of |get_next|, which reads past
-% the call when the token comes from below its body's input level), and
+% the call when the token comes from below its body's input level; 19 a
+% write outside |eqtb| that no definition or list append shows, which a
+% recording cannot hold, with |p| the site: 1 |alter_aux|, 2
+% |alter_prev_graf|, 3 |alter_page_so_far| and |alter_integer|, 4
+% |new_interaction|, 5 a font's |font_info|, |hyphen_char|, |skew_char| or
+% character protrusion, 6 the hyphenation tables, 7 a math list's tail noad
+% or |incompleat_noad| (|sub_sup|, |math_limit_switch|, |math_fraction|), 8
+% the random generator and the timer, 9 \.{\\XeTeXdefaultencoding} and
+% \.{\\XeTeXlinebreaklocale}, which assign |eqtb| directly; #2452), and
 % |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 %
@@ -17,7 +25,8 @@
 % cells a path allocated or freed (|flashtex_intr_cell|, |flashtex_intr_flush|
 % in |get_avail|, |fast_get_avail|, |free_avail|, |flush_list|, |get_node|,
 % |free_node|): an in-place change of a node the call found (|\limits|'s
-% |subtype(tail)|) is a difference.
+% |subtype(tail)|) is a difference, should a call that makes one ever be
+% kept.
 
 @x after changes/displaylist.ch - get_avail: a cell the path allocates (verify)
 dl_new_node(p);
@@ -170,6 +179,18 @@ if intr_verify_on then flashtex_intr_observe;
 intr_at_switch:=false;
 @z
 
+@x xetex.web - \.{\\uniformdeviate} and \.{\\normaldeviate} step the random generator: not replayable (kind 19)
+uniform_deviate_code:     print_int(unif_rand(cur_val));
+normal_deviate_code:      print_int(norm_rand);
+@y
+uniform_deviate_code:     begin if intr_verify_on then flashtex_intr_op(19,8,0,0);
+  print_int(unif_rand(cur_val));
+  end;
+normal_deviate_code:      begin if intr_verify_on then flashtex_intr_op(19,8,0,0);
+  print_int(norm_rand);
+  end;
+@z
+
 @x xetex.web - \.{\\read} and \.{\\readline} read a file: not replayable (kind 16)
 begin scanner_status:=defining; warning_index:=r;
 def_ref:=get_avail; token_ref_count(def_ref):=null;
@@ -177,6 +198,22 @@ def_ref:=get_avail; token_ref_count(def_ref):=null;
 begin if intr_verify_on then flashtex_intr_op(16,0,0,0);
 scanner_status:=defining; warning_index:=r;
 def_ref:=get_avail; token_ref_count(def_ref):=null;
+@z
+
+@x xetex.web - \.{\\hyphenation} writes the hyphenation tables: not replayable (kind 19)
+begin scan_left_brace; {a left brace must follow \.{\\hyphenation}}
+@y
+begin if intr_verify_on then flashtex_intr_op(19,6,0,0);
+scan_left_brace; {a left brace must follow \.{\\hyphenation}}
+@z
+
+@x xetex.web - \.{\\patterns} writes the hyphenation tables: not replayable (kind 19)
+begin if trie_not_ready then
+  begin set_cur_lang; scan_left_brace; {a left brace must follow \.{\\patterns}}
+@y
+begin if intr_verify_on then flashtex_intr_op(19,6,0,0);
+if trie_not_ready then
+  begin set_cur_lang; scan_left_brace; {a left brace must follow \.{\\patterns}}
 @z
 
 @x after changes/checkpoint.ch - observe the main-control entry
@@ -188,11 +225,99 @@ if intr_verify_on then flashtex_intr_switch;
 intr_at_switch:=intr_verify_on; get_x_token; intr_at_switch:=false;@/
 @z
 
+@x xetex.web - \.{\\limits} and \.{\\nolimits} change the tail noad in place: not replayable (kind 19)
+procedure math_limit_switch;
+label exit;
+begin if head<>tail then if type(tail)=op_noad then
+@y
+procedure math_limit_switch;
+label exit;
+begin if intr_verify_on then flashtex_intr_op(19,7,0,0);
+if head<>tail then if type(tail)=op_noad then
+@z
+
+@x xetex.web - a script can fill a field of the tail noad in place: not replayable (kind 19)
+@!p:pointer; {field to be filled by |scan_math|}
+begin t:=empty; p:=null;
+@y
+@!p:pointer; {field to be filled by |scan_math|}
+begin if intr_verify_on then flashtex_intr_op(19,7,0,0);
+t:=empty; p:=null;
+@z
+
+@x xetex.web - a fraction sets |incompleat_noad|, on an empty list with the tail unchanged: not replayable (kind 19)
+var c:small_number; {the type of generalized fraction we are scanning}
+begin c:=cur_chr;
+@y
+var c:small_number; {the type of generalized fraction we are scanning}
+begin if intr_verify_on then flashtex_intr_op(19,7,0,0);
+c:=cur_chr;
+@z
+
+@x xetex.web - \.{\\prevdepth} and \.{\\spacefactor} write |cur_list|: not replayable (kind 19)
+var c:halfword; {|hmode| or |vmode|}
+begin if cur_chr<>abs(mode) then report_illegal_case
+@y
+var c:halfword; {|hmode| or |vmode|}
+begin if intr_verify_on then flashtex_intr_op(19,1,0,0);
+if cur_chr<>abs(mode) then report_illegal_case
+@z
+
+@x xetex.web - \.{\\prevgraf} writes the enclosing vertical list's |nest| entry: not replayable (kind 19)
+var p:0..nest_size; {index into |nest|}
+begin nest[nest_ptr]:=cur_list; p:=nest_ptr;
+@y
+var p:0..nest_size; {index into |nest|}
+begin if intr_verify_on then flashtex_intr_op(19,2,0,0);
+nest[nest_ptr]:=cur_list; p:=nest_ptr;
+@z
+
+@x xetex.web - \.{\\pagegoal} etc.\ write |page_so_far|: not replayable (kind 19)
+var c:0..7; {index into |page_so_far|}
+begin c:=cur_chr; scan_optional_equals; scan_normal_dimen;
+@y
+var c:0..7; {index into |page_so_far|}
+begin if intr_verify_on then flashtex_intr_op(19,3,0,0);
+c:=cur_chr; scan_optional_equals; scan_normal_dimen;
+@z
+
+@x xetex.web - \.{\\deadcycles}, \.{\\insertpenalties}, \.{\\interactionmode}: not replayable (kind 19)
+  {0 for \.{\\deadcycles}, 1 for \.{\\insertpenalties}, etc.}
+begin c:=cur_chr; scan_optional_equals; scan_int;
+@y
+  {0 for \.{\\deadcycles}, 1 for \.{\\insertpenalties}, etc.}
+begin if intr_verify_on then flashtex_intr_op(19,3,0,0);
+c:=cur_chr; scan_optional_equals; scan_int;
+@z
+
 @x xetex.web - \wd, \ht, \dp write |mem|: not replayable (kind 6)
 begin c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
 @y
 begin if intr_verify_on then flashtex_intr_op(6,0,0,0);
 c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
+@z
+
+@x xetex.web - \.{\\fontdimen} writes |font_info|: not replayable (kind 19)
+assign_font_dimen: begin find_font_dimen(true); k:=cur_val;
+@y
+assign_font_dimen: begin if intr_verify_on then flashtex_intr_op(19,5,0,0);
+  find_font_dimen(true); k:=cur_val;
+@z
+
+@x xetex.web - \.{\\hyphenchar}, \.{\\skewchar}, \.{\\lpcode}, \.{\\rpcode} write a font's arrays: not replayable (kind 19)
+assign_font_int: begin n:=cur_chr; scan_font_ident; f:=cur_val;
+@y
+assign_font_int: begin if intr_verify_on then flashtex_intr_op(19,5,0,0);
+  n:=cur_chr; scan_font_ident; f:=cur_val;
+@z
+
+@x xetex.web - \.{\\batchmode} etc.\ set the interaction mode: not replayable (kind 19)
+procedure new_interaction;
+begin print_ln;
+@y
+procedure new_interaction;
+begin if intr_verify_on then flashtex_intr_op(19,4,0,0);
+print_ln;
 @z
 
 @x xetex.web - \.{\\openin} and \.{\\closein}: not replayable (kind 16)
@@ -204,6 +329,26 @@ c:=cur_chr; scan_four_bit_int; n:=cur_val;
 if read_open[n]<>closed then
 @z
 
+@x xetex.web - \.{\\setrandomseed} resets the random generator: not replayable (kind 19)
+@<Implement \.{\\setrandomseed}@>=
+begin
+  scan_int;
+@y
+@<Implement \.{\\setrandomseed}@>=
+begin if intr_verify_on then flashtex_intr_op(19,8,0,0);
+  scan_int;
+@z
+
+@x xetex.web - \.{\\resettimer} resets the timer: not replayable (kind 19)
+@ @<Implement \.{\\resettimer}@>=
+begin
+  seconds_and_micros(epochseconds,microseconds);
+@y
+@ @<Implement \.{\\resettimer}@>=
+begin if intr_verify_on then flashtex_intr_op(19,8,0,0);
+  seconds_and_micros(epochseconds,microseconds);
+@z
+
 @x after changes/filenames.ch - \immediate output: not replayable (kind 7)
     @!old_setting:0..max_selector;
 begin case subtype(p) of
@@ -211,6 +356,26 @@ begin case subtype(p) of
     @!old_setting:0..max_selector;
 begin if intr_verify_on then flashtex_intr_op(7,0,0,0);
 case subtype(p) of
+@z
+
+@x xetex.web - \.{\\XeTeXdefaultencoding} writes |eqtb| outside |eq_word_define|: not replayable (kind 19)
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@y
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin if intr_verify_on then flashtex_intr_op(19,9,0,0);
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@z
+
+@x xetex.web - \.{\\XeTeXlinebreaklocale} writes |eqtb| outside |eq_word_define|: not replayable (kind 19)
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin
+  scan_file_name; {scan a filename-like arg for the locale name}
+@y
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin if intr_verify_on then flashtex_intr_op(19,9,0,0);
+  scan_file_name; {scan a filename-like arg for the locale name}
 @z
 
 @x xetex.web - a sparse-array definition ends a recording's replayability

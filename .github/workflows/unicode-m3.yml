@@ -225,6 +225,14 @@ jobs:
         run: |
           set -o pipefail
           cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || true  # known red: #2132 (cancels_are_never_lost)
+      - name: "host: tests/intrinsics_verify.rs with TeX Live (they skip without it, as in ci.yml)"
+        if: matrix.part == 'host' && !cancelled()
+        working-directory: crates/flashtex-xetex
+        env:
+          FLASHTEX_REQUIRE_TEXLIVE: "1"
+        run: |
+          set -o pipefail
+          cargo test --release --locked --test intrinsics_verify -- --test-threads=2 2>&1 | tee "$OUT/intrinsics-tests.txt"
       - name: report
         if: always()
         run: |

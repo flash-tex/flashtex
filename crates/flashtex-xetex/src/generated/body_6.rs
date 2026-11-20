@@ -751,6 +751,9 @@ impl Globals {
         let mut q: trie_pointer = 0; // §1014
         let mut first_child: bool = false; // §1014
         let mut c: UTF16_code = 0; // §1014
+        if self.intr_verify_on {
+            self.flashtex_intr_op(19i32, 6i32, 0i32, 0i32);
+        }
         if self.trie_not_ready {
             {
                 'l_done_f: {
@@ -2514,6 +2517,9 @@ impl Globals {
         let mut v: pool_pointer = 0; // §988
         'l_exit_f: {
             'l_not_found1_f: {
+                if self.intr_verify_on {
+                    self.flashtex_intr_op(19i32, 6i32, 0i32, 0i32);
+                }
                 self.scan_left_brace();
                 if (self.eqtb[crate::ix::U(((7892314i32) - 1) as usize)].int() <= 0i32) {
                     self.cur_lang = 0i32;
