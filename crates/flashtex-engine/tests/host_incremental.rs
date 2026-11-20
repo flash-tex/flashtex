@@ -3000,6 +3000,103 @@ fn a_pdf_image_box_is_sent_in_bp() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// An image rewritten in place with other bytes of the same size and its
+/// old modification time put back (`cp -p`, an archive unpacked over it):
+/// its path, size, mtime and inode are the same, and only the status-change
+/// time says it changed. The next compile's `IMAGE` key is a new one (the
+/// preview keys its image cache by it, protocol §5.2), and it is the key a
+/// fresh host sends for the file (#2445's review, the #2296 ruling).
+#[test]
+fn an_image_rewritten_with_its_size_and_mtime_gets_a_new_key() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-imgkey");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let hand =
+        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/pdf-hand.pdf"))
+            .unwrap();
+    // (the same file with a byte of its binary comment line changed: the
+    // same size and page, other bytes)
+    let mut hand2 = hand.clone();
+    assert_eq!(&hand2[9..11], b"%\xe2");
+    hand2[10] = 0xe3;
+    let fig = proj.join("hand.pdf");
+    let t = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let write = |bytes: &[u8]| {
+        std::fs::write(&fig, bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&fig)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    };
+    write(&hand);
+    let main = "main.tex";
+    std::fs::write(
+        proj.join(main),
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\
+         \\includegraphics{hand}\n\nText.\n\\end{document}\n",
+    )
+    .unwrap();
+    let key = |images: &[Json]| -> Option<String> {
+        images
+            .iter()
+            .rev()
+            .find(|m| m.str_field("file").is_some_and(|f| f.ends_with("hand.pdf")))
+            .and_then(|m| m.str_field("key").map(str::to_string))
+    };
+    let host = start_host("imgkey");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    let k1 = key(&view.images).expect("an IMAGE for hand.pdf");
+    let before = std::fs::metadata(&fig).unwrap();
+    // (past the file system's timestamp granularity: Linux takes the
+    // status-change time from a coarse clock)
+    std::thread::sleep(Duration::from_millis(50));
+    write(&hand2);
+    let after = std::fs::metadata(&fig).unwrap();
+    {
+        use std::os::unix::fs::MetadataExt;
+        // the case: nothing but the status-change time differs
+        assert_eq!(
+            (
+                before.len(),
+                before.mtime(),
+                before.mtime_nsec(),
+                before.ino()
+            ),
+            (after.len(), after.mtime(), after.mtime_nsec(), after.ino())
+        );
+        assert_ne!(
+            (before.ctime(), before.ctime_nsec()),
+            (after.ctime(), after.ctime_nsec())
+        );
+    }
+    let n = view.images.len();
+    let o = compile(&mut c, &mut view, &req(2, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    let k2 = key(&view.images[n..]).expect("an IMAGE for the rewritten hand.pdf");
+    assert_ne!(k1, k2, "the rewritten image's key");
+    let _ = c.bye();
+    // a fresh host on the same file sends the same key
+    let host2 = start_host("imgkey2");
+    let mut c2 = Client::connect(&host2.1).unwrap();
+    let mut view2 = View::default();
+    let o = compile(&mut c2, &mut view2, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    assert_eq!(key(&view2.images), Some(k2), "a fresh host's key");
+    let _ = c2.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// #1294: an `export` of the same job in the same directory rewrites the
 /// output files the resident engine's checkpoints hold (the PDF compressed,
 /// the log). The next compile must not restore on top of them: its PDF and

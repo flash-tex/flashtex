@@ -2385,22 +2385,28 @@ impl Globals {
         let img = img?;
         let info = self.dl_image_info(img);
         let file = info.str_field("file").map(str::to_string);
-        let (size, mtime) = file
+        // The file's identity (protocol §5.2): its size, modification and
+        // status-change times, inode and device. A file rewritten in place
+        // with bytes of the same size and its old modification time put
+        // back (`cp -p`) has a new status-change time, which no user call
+        // can set (#2445's review, the #2296 ruling).
+        let stat = file
             .as_deref()
             .and_then(|f| std::fs::metadata(f).ok())
-            .map(|m| {
-                let t = m
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
-                (m.len(), t.map(|d| d.as_nanos()).unwrap_or(0))
-            })
-            .unwrap_or((0, 0));
+            .map(|m| crate::os::file_stat(&m));
         let mut h = Sha256::new();
         h.update(b"display-list-v3 image\0");
         h.update(info.to_string().as_bytes());
-        h.update(&size.to_le_bytes());
-        h.update(&mtime.to_le_bytes());
+        match stat {
+            Some(s) => {
+                h.update(&s.size.to_le_bytes());
+                h.update(&s.mtime_ns.to_le_bytes());
+                h.update(&s.ctime_ns.to_le_bytes());
+                h.update(&s.ino.to_le_bytes());
+                h.update(&s.dev.to_le_bytes());
+            }
+            None => h.update(&[0]),
+        }
         let key = h.finish();
         with(|st| {
             st.images.entry(key).or_insert(info);
