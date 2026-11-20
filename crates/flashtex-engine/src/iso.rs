@@ -2046,6 +2046,16 @@ const DEAD_SCALARS: &[&str] = &[
     // tex.web §494: set by `pass_text` when skipping begins, read only by
     // the "Incomplete \if" message of that skip
     "skip_line",
+    // the file name just scanned (tex.web §512): every reader runs after a
+    // `scan_file_name` or an explicit setting in the same command
+    // (`start_input`, `new_font`, `\openin`, `\openout` and `write_out`,
+    // `prompt_file_name` with filenames.ch's saved copies, pdfTeX's file
+    // objects). `new_font` reusing a loaded font sets `cur_name` to that
+    // font's name, which a replayed BOX-MEMO call (LaTeX's `\pickup@font`)
+    // does not (lane AUDIT-MATH)
+    "cur_name",
+    "cur_area",
+    "cur_ext",
     // §305, §389, §473: set by `macro_call` and `scan_toks` before the scan
     // whose runaway message prints it
     "warning_index",
