@@ -24,7 +24,8 @@
 %   there (|flashtex_bm_popped|), before the token after the call is read.
 %
 % * |bm_rec_on|: the recording's observers. The control sequences read
-%   (|get_next|, |\csname|, |\ifcsname|), the assignments and groups
+%   (|get_next|, |\csname|, |\ifcsname|, the active character a math
+%   character of math code |"8000| stands for), the assignments and groups
 %   (|eq_define|, |eq_word_define|, |geq_define|, |geq_word_define|, e-TeX's
 %   |sa_def| family, |new_save_level|, |unsave|), the box registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
@@ -318,6 +319,15 @@ box_code: begin scan_register_num; fetch_box(cur_box);
 box_code: begin scan_register_num; fetch_box(cur_box);
   change_box(null); {the box becomes void, at the same level}
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
+@z
+
+@x pdftex.web l.30768 - a character of math code "8000 reads its active character's meaning
+begin cur_cs:=cur_chr+active_base;
+cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+@y
+begin cur_cs:=cur_chr+active_base;
+if bm_rec_on then flashtex_bm_read(cur_cs);
+cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 @z
 
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
