@@ -1612,6 +1612,9 @@ impl Globals {
                 } else {
                     {
                         self.print_esc((p).wrapping_sub(257i32));
+                        if self.intr_rec_on {
+                            self.flashtex_intr_read(((cat_code_base).wrapping_add(p)).wrapping_sub(257i32));
+                        }
                         if (__av_eqtb[crate::ix::U(((((cat_code_base).wrapping_add(p)).wrapping_sub(257i32)) - 1) as usize)].hh().rh() == letter) {
                             self.print_char(32i32);
                         }
