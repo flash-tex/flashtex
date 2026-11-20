@@ -167,3 +167,114 @@ q\n1 0 0 1 72 146.989 cm\n0 0 9.963 4.981 re f\nQ\n\nendstream";
         String::from_utf8_lossy(&pdf)
     );
 }
+
+/// The pool-filling probe of #2515: `k` control-sequence names of 1000
+/// characters, then one of `l` characters, so that `l` sets the room left in
+/// the string pool.
+fn pool_fill(k: u32, l: usize) -> String {
+    format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6 \\scrollmode \\def\\X{{{x}}}\
+         \\count1=10000 \\def\\fill{{\\ifnum\\count1<{end} \\advance\\count1 1 \
+         \\expandafter\\let\\csname\\the\\count1 \\X\\endcsname\\relax \\expandafter\\fill\\fi}}\\fill \
+         \\expandafter\\let\\csname {y}\\endcsname\\relax ",
+        x = "x".repeat(995),
+        end = 10000 + k,
+        y = "y".repeat(l),
+    )
+}
+
+/// One run of a pool probe with argv[0] `pdftex`, so that `pdftex_fail`
+/// names the program as TeX Live's does: exit status, terminal, stderr.
+#[cfg(unix)]
+fn initex_as_pdftex(dir: &Path, args: &[&str]) -> (Option<i32>, String, String) {
+    use std::os::unix::process::CommandExt;
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .arg0("pdftex")
+        .args(args)
+        .current_dir(dir)
+        .env("FLASHTEX_POOL", pool)
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run flashtex-initex");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// `maketexstring`'s failure as TeX Live 2026's pdftex prints it on the
+/// terminal (`pdftex -ini -etex`, 2026-11-15, exit status 1): utils.c's
+/// `check_buf(poolptr + l, poolsize)`.
+#[cfg(unix)]
+const MAKETEXSTRING_FAIL: &str =
+    "\n!pdfTeX error: pdftex: buffer overflow at file ../../../texk/web2c/pdftexdir/ut\n\
+     ils.c, line 183\n ==> Fatal error occurred, no output PDF file produced!\n";
+
+/// Sweeps the room left in the pool across the window where a string that
+/// web2c's C parts make (`maketexstring`) no longer fits but what TeX made
+/// before it did (#2515). TeX Live 2026's pdftex stops there with utils.c's
+/// `pdftex_fail` (6212 names: `l` = 1050 to 1100 before a 100-letter
+/// `\input` name, 1100 to 1200 before a 200-letter `-jobname`; FlashTeX's
+/// INITEX pool has 409 characters more, #2208, hence the wide sweep).
+/// FlashTeX wrote past the pool's end and panicked (exit 101). Every run
+/// must end as pdftex's can (those lines, `TeX capacity exceeded`, or a
+/// normal end), and the window must be hit.
+#[cfg(unix)]
+fn sweep_maketexstring(tag: &str, run: impl Fn(&Path, usize) -> (Option<i32>, String, String)) {
+    let d = scratch(tag);
+    let mut failed = 0;
+    for l in (1000..=1900).step_by(15) {
+        for f in std::fs::read_dir(&d).unwrap() {
+            let _ = std::fs::remove_file(f.unwrap().path());
+        }
+        let (code, term, err) = run(&d, l);
+        assert!(
+            !err.contains("panicked") && code != Some(101),
+            "l={l}: exit {code:?}\nstderr:\n{err}\nterminal:\n{term}"
+        );
+        if term.contains("buffer overflow") {
+            assert_eq!(code, Some(1), "l={l}");
+            assert!(term.ends_with(MAKETEXSTRING_FAIL), "l={l}:\n{term}");
+            failed += 1;
+        } else {
+            assert!(
+                code == Some(0) || term.contains("! TeX capacity exceeded, sorry [pool size="),
+                "l={l}: exit {code:?}\n{term}"
+            );
+        }
+    }
+    assert!(failed > 0, "no run hit maketexstring's pool check");
+}
+
+/// `makefullnamestring` (`\input`'s full name) with the pool nearly full.
+#[cfg(unix)]
+#[test]
+fn input_full_name_past_the_pool_is_maketexstrings_failure() {
+    let name = "a".repeat(100);
+    sweep_maketexstring("maketexstring-input", |d, l| {
+        std::fs::write(d.join(format!("{name}.tex")), "\\message{[in]}\n").unwrap();
+        let t = format!(
+            "{}\n\\input {name} \n\\message{{[survived]}}\n\\end\n",
+            pool_fill(6212, l)
+        );
+        std::fs::write(d.join("t.tex"), t).unwrap();
+        initex_as_pdftex(d, &["-ini", "-etex", "t.tex"])
+    });
+}
+
+/// `getjobname` (`-jobname`, made when `\end` opens the log) with the pool
+/// nearly full.
+#[cfg(unix)]
+#[test]
+fn jobname_past_the_pool_is_maketexstrings_failure() {
+    let job = format!("-jobname={}", "j".repeat(200));
+    sweep_maketexstring("maketexstring-jobname", |d, l| {
+        let first = format!("{}\\end", pool_fill(6212, l));
+        initex_as_pdftex(d, &["-ini", "-etex", &job, &first])
+    });
+}

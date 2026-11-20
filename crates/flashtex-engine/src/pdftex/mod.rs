@@ -262,9 +262,24 @@ impl Globals {
         }
     }
 
-    /// `maketexstring`: a new pool string with these bytes.
+    /// `maketexstring` (pdftexdir/utils.c): a new pool string with these
+    /// bytes, or `""` (`getnullstr`) for none. Unlike the appends above, it
+    /// does not leave a string that does not fit to the next `str_room`: its
+    /// `check_buf(poolptr + l, poolsize)` stops the run with `pdftex_fail`
+    /// (utils.c line 183 in TeX Live 2026, which the message names). Every
+    /// string web2c's C parts make goes through it: the full name of each
+    /// `\input` file, `-jobname`, the banner, the C parts' file names.
     pub fn make_tex_string(&mut self, bytes: &[u8]) -> i32 {
-        self.pool_append(bytes);
+        if bytes.is_empty() {
+            return self.null_str();
+        }
+        if self.pool_ptr as usize + bytes.len() > crate::generated::consts::pool_size as usize {
+            self.check_buf_fail("utils.c", 183);
+        }
+        for &b in bytes {
+            self.str_pool[self.pool_ptr as usize] = b as i32;
+            self.pool_ptr += 1;
+        }
         self.make_string()
     }
 
