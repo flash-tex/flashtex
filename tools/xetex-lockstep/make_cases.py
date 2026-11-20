@@ -1043,6 +1043,10 @@ pictures["p-info.bmp"] = bmp_file(30, 20)
 pictures["p-topdown.bmp"] = bmp_file(30, -20, xppm=3780, yppm=3780)
 pictures["p-palette.bmp"] = bmp_file(16, 16, bits=8)
 pictures["p-core.bmp"] = bmp_file(25, 15, core=True)
+# a BITMAPV3INFOHEADER (56 bytes): bmpimage.c knows the 12, 40, 64, 108 and
+# 124 byte headers, says "Unknown BMP header type." for any other and exits
+pictures["p-v3.bmp"] = (lambda b: b[:10] + struct.pack("<I", 14 + 56) + struct.pack("<I", 56) + b[18:54]
+                        + b"\0" * 16 + b[54:])(bmp_file(30, 20))
 pictures["p-notimage.png"] = b"this is not a picture\n"
 pictures["p-pages.pdf"] = pdf_file([
     b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -1137,6 +1141,15 @@ pcase("p004-texlive-pictures", "pictures found through kpathsea in TeX Live (mwe
 \message{[\the\XeTeXpdfpagecount example-image.pdf ]}
 \lsshipbox0
 \end""")
+
+pcase("p009-picfile-bmp-exit", "\\XeTeXpicfile of a BMP file whose header bmpimage.c does not know: XeTeX exits with 1, and what it wrote to the log before is in the log",
+      r"""\message{before the picture}
+\setbox0=\hbox{\XeTeXpicfile p-plain.png }
+\lsshipbox0
+\setbox0=\hbox{\XeTeXpicfile p-v3.bmp }
+\message{never reached}
+\lsshipbox0
+\end""", no_halt=True)
 
 pcase("p005-picture-errors", "a missing picture, a file that is no picture, a late pHYs, and bad sizes",
       r"""\setbox0=\vbox{
