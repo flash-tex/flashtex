@@ -123,8 +123,10 @@ extension ShellModel {
         // Durable ledger first: the helper's document is the authoritative source.
         if let ledger {
             let store = ledgerStore ?? EditLedgerClient.storeDirectory(under: storeDirectory, documentURL: documentURL)
+            // The helper takes a while to answer: what is typed meanwhile is read again (`currentSource`).
             let outcome = await session.openLedger(executable: ledger.executable, arguments: ledger.arguments, store: store,
-                                                   path: activePath, currentText: activeText, currentRevision: editorRevision)
+                                                   path: activePath, currentText: activeText, currentRevision: editorRevision,
+                                                   currentSource: { (self.activeText, self.editorRevision) })
             guard bridge === session else { return false }
             switch outcome {
             case .fresh(let r), .aligned(let r), .bufferReplacedStore(let r):

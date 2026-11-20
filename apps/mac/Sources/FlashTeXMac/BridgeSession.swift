@@ -285,7 +285,8 @@ final class BridgeSession {
             guard let launch = ledgerLaunch, let context = documentContext ?? shadowContext() else { return }
             let source = context.currentSource()
             let outcome = await openLedger(executable: launch.executable, arguments: launch.arguments, store: launch.store,
-                                           path: context.path, currentText: source.text, currentRevision: source.revision)
+                                           path: context.path, currentText: source.text, currentRevision: source.revision,
+                                           currentSource: context.currentSource)
             guard !detached else { return }
             relaunchCount[.ledger, default: 0] += 1
             note("relaunched \(launch.executable.lastPathComponent) (relaunch \(relaunchCount[.ledger]!)): \(ledgerStatus)")
@@ -460,8 +461,19 @@ final class BridgeSession {
 
     /// Launches the helper on `store` and aligns it with the editor. Returns
     /// the revision the editor must be at (only ever advancing it).
+    ///
+    /// `currentText` and `currentRevision` are the source as the open began,
+    /// which decides whose text stands (the buffer's, or a durable document
+    /// with receipts owed). `currentSource` reads the source as it is now:
+    /// the helper takes a while to start and answer, `durable` is nil until
+    /// it has, and `edited` persists nothing without it, so what the user
+    /// types meanwhile is written to the store here (`followSource`). Without
+    /// it those edits were lost to the store, which then "matched the buffer"
+    /// at the same revision number with the older text, and the next edit or
+    /// capture found it diverged.
     func openLedger(executable: URL, arguments: [String] = [], store: URL, path: String,
-                    currentText: String, currentRevision: Int, timeout: TimeInterval = 15) async -> LedgerOpen {
+                    currentText: String, currentRevision: Int,
+                    currentSource: (() -> (text: String, revision: Int))? = nil, timeout: TimeInterval = 15) async -> LedgerOpen {
         ledger?.terminate()
         ledger = nil
         ledgerError = nil
@@ -479,10 +491,12 @@ final class BridgeSession {
             let st = try await l.status(timeout: timeout)
             for tx in st.pendingReceipts { transactions[tx.edit.editId] = tx }
             guard let existing = st.document else {
-                durable = try await l.initialize(.init(projectId: projectId, path: path, revision: currentRevision, text: currentText))
-                ledgerStatus = "edit ledger: fresh store at revision \(currentRevision)"
+                let made = try await l.initialize(.init(projectId: projectId, path: path, revision: currentRevision, text: currentText))
+                let doc = try await followSource(l, from: made, atLeast: currentRevision, source: currentSource)
+                durable = doc
+                ledgerStatus = "edit ledger: fresh store at revision \(doc.revision)"
                 onChange()
-                return .fresh(revision: currentRevision)
+                return .fresh(revision: doc.revision)
             }
             guard existing.projectId == projectId, existing.path == path else {
                 ledgerError = "edit ledger store holds \(existing.projectId)/\(existing.path), not \(projectId)/\(path)"
@@ -492,8 +506,17 @@ final class BridgeSession {
             }
             durable = existing
             if existing.text == currentText {
-                let target = max(existing.revision, currentRevision)
-                try await alignStore(to: target)
+                let target: Int
+                if let currentSource {
+                    // The store and the buffer agreed when the open began: what was typed since is an ordinary edit.
+                    durable = nil
+                    let doc = try await followSource(l, from: existing, atLeast: currentRevision, source: currentSource)
+                    durable = doc
+                    target = doc.revision
+                } else {
+                    target = max(existing.revision, currentRevision)
+                    try await alignStore(to: target)
+                }
                 ledgerStatus = "edit ledger: store matches the buffer at revision \(target)"
                 onChange()
                 return .aligned(revision: target)
@@ -507,9 +530,17 @@ final class BridgeSession {
                 return .adoptDurable(text: existing.text, revision: target)
             }
             // No receipts owed: the buffer (the user's current source) replaces the durable text.
-            durable = try await l.replaceDocument(expectedRevision: existing.revision, expectedSha256: existing.sourceSha256, text: currentText)
-            let target = max(durable!.revision, currentRevision)
-            try await alignStore(to: target)
+            let target: Int
+            if let currentSource {
+                durable = nil
+                let doc = try await followSource(l, from: existing, atLeast: currentRevision, source: currentSource)
+                durable = doc
+                target = doc.revision
+            } else {
+                durable = try await l.replaceDocument(expectedRevision: existing.revision, expectedSha256: existing.sourceSha256, text: currentText)
+                target = max(durable!.revision, currentRevision)
+                try await alignStore(to: target)
+            }
             ledgerStatus = "edit ledger: buffer replaced the stored document (revision \(target))"
             onChange()
             return .bufferReplacedStore(revision: target)
@@ -520,6 +551,29 @@ final class BridgeSession {
             note(ledgerStatus)
             onChange()
             return .unavailable(ledgerError!)
+        }
+    }
+
+    /// Brings the store from `start` to the editor's source as it is now, and
+    /// to revision `atLeast` (`openLedger`). The source is read again after
+    /// every await, and the caller sets `durable` to the result in the same
+    /// turn, so no edit falls between the two: until then `durable` is nil and
+    /// `edited` persists nothing. Without a `source` only the revision moves.
+    private func followSource(_ l: EditLedgerClient, from start: EditLedgerV1.Document, atLeast: Int,
+                              source: (() -> (text: String, revision: Int))?) async throws -> EditLedgerV1.Document {
+        var doc = start
+        var steps = 0
+        while true {
+            let now = source?()
+            if let now, now.text != doc.text {
+                doc = try await l.replaceDocument(expectedRevision: doc.revision, expectedSha256: doc.sourceSha256, text: now.text)
+            } else if doc.revision < max(atLeast, now?.revision ?? atLeast) {
+                doc = try await l.replaceDocument(expectedRevision: doc.revision, expectedSha256: doc.sourceSha256, text: doc.text)
+            } else {
+                return doc
+            }
+            steps += 1
+            if steps > 10_000 { throw LineProcessFailure.undecodable("revision alignment exceeded 10000 steps") }
         }
     }
 

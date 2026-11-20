@@ -479,6 +479,54 @@ final class BridgeRecoveryTests: XCTestCase {
         model.detachBridge()
     }
 
+    // MARK: edits while the ledger helper is starting
+
+    /// The helper takes a while to start and to answer `status`, and until it has the session has
+    /// no durable document to persist an edit to. What is typed in that time must still reach the
+    /// store when the open completes. It did not: the store was compared with the text as the
+    /// attach began, "matched the buffer", and was left with the older text at the editor's own
+    /// revision number, so the next edit found it diverged and capture insertion was disabled
+    /// until a reattach. (main, run 42912571683: `testEditsDuringReconciliation...` on a runner
+    /// slow enough for its 300 ms sleep to end here.)
+    func testEditsWhileTheLedgerOpensReachTheDurableStore() async throws {
+        let store = try BridgeClientTests.tempStore()
+        let ledgerStore = store.appendingPathComponent("documents/doc")
+        let model = ShellModel()
+        model.autoCompile = false
+        let text = model.activeText
+        // A store that holds the buffer's text, nothing pending: the open finds them in agreement.
+        _ = try await seedPendingTransactions(store: ledgerStore, captureIds: [], text: text)
+        let attachTask = Task { await self.attach(model, store: store, ledgerStore: ledgerStore) }
+        // The attach runs to its first wait, inside openLedger: the helper is launched and has not answered.
+        for _ in 0 ..< 100_000 where model.bridge == nil { await Task.yield() }
+        let opening = try XCTUnwrap(model.bridge)
+        XCTAssertNil(opening.durable, "the helper had answered before the edits: not the case under test")
+        model.updateActiveText("typed while the ledger opened\n")
+        model.updateActiveText("typed twice while the ledger opened\n")
+        let attached = await attachTask.value
+        XCTAssertTrue(attached, model.captureNote ?? model.bridgeStatus)
+        let bridge = try XCTUnwrap(model.bridge)
+        XCTAssertTrue(bridge === opening)
+        XCTAssertNil(bridge.ledgerError, bridge.ledgerError ?? "")
+        // The editor, the session's mirror, the helper's own store and the bridge agree.
+        XCTAssertEqual(model.activeText, "typed twice while the ledger opened\n")
+        XCTAssertEqual(bridge.durable?.text, "typed twice while the ledger opened\n")
+        XCTAssertEqual(bridge.durable?.revision, model.editorRevision)
+        let st = try await bridge.ledger!.status()
+        XCTAssertEqual(st.document?.text, "typed twice while the ledger opened\n")
+        XCTAssertEqual(st.document?.revision, model.editorRevision)
+        XCTAssertEqual(bridge.shadow["main.tex"]?.text, "typed twice while the ledger opened\n")
+        XCTAssertEqual(bridge.shadow["main.tex"]?.revision, model.editorRevision)
+        // The next ordinary edit is persisted on top of it: the store has not diverged.
+        model.updateActiveText("and once more\n")
+        XCTAssertNil(bridge.ledgerError, bridge.ledgerError ?? "")
+        let st2 = try await bridge.ledger!.status()
+        XCTAssertEqual(st2.document?.text, "and once more\n")
+        XCTAssertEqual(st2.document?.revision, model.editorRevision)
+        XCTAssertNil(bridge.ledgerError, bridge.ledgerError ?? "")
+        model.detachBridge()
+    }
+
     // MARK: edits while reconciliation is awaiting the bridge
 
     func testEditsDuringReconciliationAreCarriedByTheInitialOpen() async throws {
@@ -490,8 +538,11 @@ final class BridgeRecoveryTests: XCTestCase {
         let text = model.activeText
         _ = try await seedPendingTransactions(store: ledgerStore, captureIds: ["stall-1-e"], text: text, undoAfterwards: true)
         let attachTask = Task { await self.attach(model, store: store, ledgerStore: ledgerStore) }
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertNotNil(model.bridge)
+        // Reconciliation starts in the turn that opened the ledger (`durable` set) and then waits
+        // for the bridge: capture_status of "stall-1-e" takes a second. (A fixed 300 ms sleep put
+        // the edits there only when both helpers had started by then; on a slow runner they came
+        // while the ledger was still opening, the case of the next test: main, run 42912571683.)
+        try await T.waitUntil { model.bridge?.durable != nil }
         model.updateActiveText("edited while reconciling\n")
         model.updateActiveText("edited twice while reconciling\n")
         let revisionDuring = model.editorRevision
