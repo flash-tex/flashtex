@@ -2718,17 +2718,31 @@ fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
 }
 
 impl Globals {
-    /// `name_of_file`, trimmed. `name_length` is authoritative when set, but
-    /// §51 opens the pool file without setting it.
+    /// `name_of_file`. `name_length` is authoritative when set, but §51
+    /// opens the pool file without setting it: then the blank-padded buffer
+    /// is trimmed. A name with its length set keeps its spaces, as the C
+    /// string does: `\openin1={ b}` looks for ` b.tex`, not `b.tex`.
     /// Its bytes are the file system's (UTF-8 names come out as they went
     /// in); a name that is not UTF-8 is read with replacement characters.
+    ///
+    /// This is the name as web2c's C side sees it (`nameoffile + 1`, a C
+    /// string), so it ends at a NUL (`^^@`) in the name: pdfTeX's
+    /// `\input b^^@zz` reads `b.tex`, `\openout1=w^^@x.tex` writes `w`, and
+    /// `\openin1=^^@x` opens what the empty name opens. The string TeX
+    /// itself keeps (and prints, as in `\openout1 = `w^^@x.tex'`) is whole.
     fn raw_file_name(&self) -> String {
         let raw: &[u8] = if self.name_length > 0 {
             &self.name_of_file[..self.name_length as usize]
         } else {
             &self.name_of_file[..]
         };
-        String::from_utf8_lossy(raw).trim().to_string()
+        let raw = raw.split(|&b| b == 0).next().unwrap_or_default();
+        let s = String::from_utf8_lossy(raw);
+        if self.name_length > 0 {
+            s.into_owned()
+        } else {
+            s.trim().to_string()
+        }
     }
 
     /// Split off a `tex.web` device name (§§514, 520: `TeXinputs:`,
