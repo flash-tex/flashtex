@@ -1733,6 +1733,9 @@ impl Globals {
                 i = i.wrapping_add(1);
             }
         }
+        if self.bm_on {
+            self.flashtex_bm_font_new(k, self.width_base[crate::ix::U((k) as usize)]);
+        }
         auto_expand_font = k;
         auto_expand_font
     }
@@ -1903,9 +1906,15 @@ impl Globals {
                 k = self.pdf_font_elink[crate::ix::U((k) as usize)];
             }
         }
+        if self.bm_rec_on {
+            self.flashtex_bm_abort(2i32);
+        }
         k = self.load_expand_font(f, e);
         { let __v658 = self.pdf_font_elink[crate::ix::U((f) as usize)]; self.pdf_font_elink[crate::ix::U((k) as usize)] = __v658; }
         self.pdf_font_elink[crate::ix::U((f) as usize)] = k;
+        if self.bm_on {
+            self.flashtex_bm_font_set((4i32).wrapping_neg(), f, k, e);
+        }
         get_expand_font = k;
         get_expand_font
     }
@@ -2220,6 +2229,9 @@ impl Globals {
                 self.c = self.c.wrapping_add(1);
             }
         }
+        if self.bm_on {
+            self.flashtex_bm_font_new(k, (self.char_base[crate::ix::U((k) as usize)]).wrapping_add(self.font_bc[crate::ix::U((k) as usize)]));
+        }
         letter_space_font = k;
         letter_space_font
     }
@@ -2369,6 +2381,9 @@ impl Globals {
             }
         }
         self.fmem_ptr = (self.fmem_ptr).wrapping_add(lf);
+        if self.bm_on {
+            self.flashtex_bm_font_new(k, (self.char_base[crate::ix::U((k) as usize)]).wrapping_add(self.font_bc[crate::ix::U((k) as usize)]));
+        }
         copy_font_info = k;
         copy_font_info
     }
