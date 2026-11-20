@@ -128,9 +128,16 @@ class JobText(unittest.TestCase):
         self.assertIn("\\pdfmapline{=cmr10 <<cmr10.pfb}", text)
         self.assertIn("\\font\\x=cmr10", text)
 
+    # #2054: an already-whole (<<) entry gets no map rewrite but is still
+    # typeset and shipped out, alongside a rewritten neighbour.
     def test_full_still_typesets_already_whole_fonts(self):
-        text = type1_sweep.job_text([("cmr10", "cmr10 <<cmr10.pfb", "<<cmr10.pfb")], "full")
-        self.assertIn("\\font\\x=cmr10", text)
+        text = type1_sweep.job_text([("augie8r", "augie8r Augie <<augie8r.pfb", "<<augie8r.pfb"),
+                                     ("cmr10", "cmr10 <cmr10.pfb", "<cmr10.pfb")], "full")
+        self.assertEqual(text.count("\\pdfmapline"), 1)
+        self.assertIn("\\pdfmapline{=cmr10 <<cmr10.pfb}", text)
+        self.assertNotIn("augie8r <<", text.split("\\font")[0])
+        self.assertIn("\\font\\x=augie8r ", text)
+        self.assertEqual(text.count("\\shipout"), 2)
 
 
 class AgainstPdftex(unittest.TestCase):
