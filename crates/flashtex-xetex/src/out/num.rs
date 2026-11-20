@@ -212,9 +212,54 @@ pub(crate) fn fmt_num_std(v: f64, digits: usize) -> String {
     s
 }
 
+/// dvipdfmx's `p_dtoa` (pdfdev.c), as `pdf_new_number` values are written:
+/// the fraction rounded half up to `prec` digits (`(int32_t)(f * 10^prec
+/// + 0.5)`), trailing zeros dropped, and no `0` before the point (`.5`).
+pub fn p_dtoa(value: f64, prec: usize) -> String {
+    let p = 10f64.powi(prec as i32);
+    let mut out = String::new();
+    let v = if value < 0.0 {
+        out.push('-');
+        -value
+    } else {
+        value
+    };
+    let mut i = v.trunc();
+    let f = v - i;
+    let mut g = (f * p + 0.5) as i32;
+    if g as f64 == p {
+        g = 0;
+        i += 1.0;
+    }
+    if i != 0.0 {
+        out.push_str(&format!("{i:.0}"));
+    } else if g == 0 {
+        return "0".into();
+    }
+    if g != 0 {
+        let digits = format!("{g:0prec$}");
+        out.push('.');
+        out.push_str(digits.trim_end_matches('0'));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `p_dtoa`'s text (pdfdev.c): half up, not to even, and no leading
+    /// `0` (TeX Live 2026 writes `/Ascent .00195313` for `1 512 div`).
+    #[test]
+    fn p_dtoa_is_dvipdfmxs() {
+        assert_eq!(p_dtoa(1.0 / 512.0, 8), ".00195313");
+        assert_eq!(p_dtoa(1281.0 / 512.0, 8), "2.50195313");
+        assert_eq!(p_dtoa(683.5, 8), "683.5");
+        assert_eq!(p_dtoa(-369.0, 8), "-369");
+        assert_eq!(p_dtoa(-1e-10, 8), "0");
+        assert_eq!(p_dtoa(0.999999999, 8), "1");
+        assert_eq!(p_dtoa(-1.0 / 3.0, 8), "-.33333333");
+    }
 
     /// splitmix64
     struct Rng(u64);

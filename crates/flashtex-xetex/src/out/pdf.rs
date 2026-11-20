@@ -1293,6 +1293,8 @@ impl<'a> Writer<'a> {
         let d = format!(" /Length1 {length1} /Length2 {length2} /Length3 {length3}");
         self.stream(ff, d.as_bytes(), bytes, true);
         let bbox = t1.font_bbox().unwrap_or([0, -250, 1000, 750]);
+        let (cap_height, ascent, descent) =
+            type1_vertical_metrics(&t1).map_err(|e| format!("{ps_name}: {e}"))?;
         let fd = self.alloc();
         let d = format!(
             "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
@@ -1306,9 +1308,9 @@ impl<'a> Writer<'a> {
             bbox[2],
             bbox[3],
             t1.italic_angle().unwrap_or("0"),
-            bbox[3],
-            bbox[1],
-            bbox[3],
+            super::num::p_dtoa(ascent, 8),
+            super::num::p_dtoa(descent, 8),
+            super::num::p_dtoa(cap_height, 8),
             t1.std_vw().unwrap_or(80)
         );
         self.object(fd, d.as_bytes());
@@ -2353,6 +2355,52 @@ fn type1_force_bold(pfb: &[u8]) -> bool {
         at += 6 + len;
     }
     false
+}
+
+/// A Type 1 font's `/CapHeight`, `/Ascent` and `/Descent` as xdvipdfmx's
+/// `get_font_attr` (type1.c) finds them: the top of the bounding box
+/// (`t1char_get_metrics`, [`super::t1char`]) of glyph `H`, the bottom of
+/// `p` and the top of `b`; `FontBBox`'s top, bottom and top without them
+/// (680, -190 and 690 without a `FontBBox`). As in the C, only the first
+/// name of each of its lists (`H P Pi Rho`, `p q mu eta`, `b h lambda`)
+/// counts: `cff_glyph_lookup` gives glyph 0, `.notdef`, for a name the
+/// font lacks, so a font without `p` takes `.notdef`'s box (measured:
+/// CMSY10's `/Ascent 0 /Descent 0 /CapHeight 683`).
+fn type1_vertical_metrics(t1: &flashtex_pdf::type1::Type1Font) -> Result<(f64, f64, f64), String> {
+    let (mut cap, mut asc, mut desc) = match t1.font_bbox() {
+        Some(b) => (b[3] as f64, b[3] as f64, b[1] as f64),
+        None => (680.0, 690.0, -190.0),
+    };
+    let subr = |i: usize| t1.decrypted_subr(i);
+    let mut warn = Vec::new();
+    let mut bbox = |name: &str| -> Result<Option<[f64; 4]>, String> {
+        let Some(cs) = t1
+            .decrypted_charstring(name)
+            .or_else(|| t1.decrypted_charstring(".notdef"))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            super::t1char::metrics(&cs, &subr, t1.subr_count(), &mut warn)?.bbox,
+        ))
+    };
+    // t1_load.c `parse_charstrings`: a font without `.notdef` does not
+    // load ("No .notdef glyph???"); `get_font_attr` interprets "space"
+    // (for `defaultWidthX`) first, so an error there is fatal too
+    if t1.decrypted_charstring(".notdef").is_none() {
+        return Err("No .notdef glyph???".into());
+    }
+    bbox("space")?;
+    if let Some(b) = bbox("H")? {
+        cap = b[3];
+    }
+    if let Some(b) = bbox("p")? {
+        desc = b[1];
+    }
+    if let Some(b) = bbox("b")? {
+        asc = b[3];
+    }
+    Ok((cap, asc, desc))
 }
 
 /// Glyph `name`'s `/Widths` entry as xdvipdfmx's `add_metrics` (type1.c)
