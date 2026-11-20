@@ -361,6 +361,13 @@ struct Context {
     /// `\prevdepth`) at the call: a draw call's first spaces and lines
     /// depend on it.
     aux: u64,
+    /// Whether pdfTeX's `save_tail` is null at the call. It names the node
+    /// before the last auto kern (`\pdfappendkern`, `\pdfprependkern`),
+    /// which `adjust_interword_glue` reads through for a space after the
+    /// kern. A call changes it only by appending a character (to null) or
+    /// an auto kern (to a node of its own), so what it leaves depends on
+    /// this alone ([`Entry::clear_save_tail`]).
+    save_tail_null: bool,
 }
 
 /// How K2 keeps the value at one `eqtb` location.
@@ -449,6 +456,7 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
         ctx.hyph_version,
         ctx.aux as i32,
         (ctx.aux >> 32) as i32,
+        ctx.save_tail_null as i32,
         k1.len() as i32,
         k2.len() as i32,
         k4.len() as i32,
@@ -496,6 +504,10 @@ struct Entry {
     /// and the list's `aux` after them.
     frag: Option<crate::boxfrag::Frag>,
     aux: u64,
+    /// The call set `save_tail` to null where it was not (it appended a
+    /// character, in a box of its own or in its output): a replay does too
+    /// ([`Context::save_tail_null`]).
+    clear_save_tail: bool,
     /// A last `\\ignorespaces` (its token), run after the replay.
     trailer: Option<i32>,
     ops: Vec<Op>,
@@ -543,6 +555,8 @@ struct Frame {
     nest_ptr: i32,
     mode: i32,
     tail: i32,
+    /// pdfTeX's `save_tail` ([`Context::save_tail_null`]).
+    save_tail: i32,
     page: Vec<i64>,
     fonts: (i32, i32),
     font_glue: Vec<i32>,
@@ -2064,6 +2078,7 @@ impl Globals {
             font_version: self.bm_font_version,
             hyph_version: self.bm_hyph_version,
             aux: self.cur_list.aux_field.0,
+            save_tail_null: self.save_tail == 0,
         }
     }
 
@@ -2117,6 +2132,7 @@ impl Globals {
             nest_ptr: self.nest_ptr,
             mode: self.cur_list.mode_field,
             tail: self.cur_list.tail_field,
+            save_tail: self.save_tail,
             page,
             fonts: (self.font_ptr, self.fmem_ptr),
             font_glue,
@@ -2822,6 +2838,7 @@ impl Globals {
                     holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                     frag: None,
                     aux: 0,
+                    clear_save_tail: false,
                     trailer: None,
                     voids: rec.voids,
                     line: rec.line_read.then_some(self.line),
@@ -3559,6 +3576,23 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
+        } else if c == k::ital_corr
+            || ((c == k::spacer || c == k::ex_space)
+                && self
+                    .bm_eq(INT_BASE + k::pdf_adjust_interword_glue_code)
+                    .int()
+                    > 0)
+        {
+            // `\\/` reads its list's tail (tex.web §1113): before the call's
+            // first node there, that is a node from before the call, which
+            // no key holds (#2267). So does a space under
+            // `\\pdfadjustinterwordglue` (pdftex.web's "Append a normal
+            // inter-word space": `adjust_interword_glue(tail, temp_ptr)`
+            // widens the glue by the `\\knbscode`, `\\stbscode` and
+            // `\\shbscode` of the character at the tail, or of the one
+            // before an auto kern there, through `save_tail`)
+            let start_tail = self.bm_with_rec(|r| r.start.tail).unwrap_or(0);
+            !(self.nest_ptr == outer && self.cur_list.tail_field == start_tail)
         } else if c == k::make_box {
             if chr == k::vsplit_code {
                 false
@@ -3573,6 +3607,19 @@ impl Globals {
         if !ok {
             self.bm_abort("Command");
         }
+    }
+
+    /// Whether node `q` is one the call appended to its list, whose tail
+    /// at the call's start was `tail0`.
+    fn bm_appended(&self, tail0: i32, q: i32) -> bool {
+        let mut p = self.bm_link(tail0);
+        while p != 0 {
+            if p == q {
+                return true;
+            }
+            p = self.bm_link(p);
+        }
+        false
     }
 
     /// The save-stack entries a call left at its own level: only those of
@@ -3661,6 +3708,16 @@ impl Globals {
             Some("Fonts")
         } else if end.marks != start.marks {
             Some("Marks")
+        } else if end.save_tail != 0
+            && (end.save_tail != start.save_tail || self.bm_appended(start.tail, end.save_tail))
+        {
+            // the call's last auto kern (`\\pdfappendkern`,
+            // `\\pdfprependkern`) left `save_tail` at a node of its own,
+            // which a space after the call reads through
+            // (`adjust_interword_glue`): a replay makes that node again
+            // somewhere else. Null, the replay sets
+            // (`Entry::clear_save_tail`); as it was, the call did not set it
+            Some("SaveTail")
         } else if !self
             .bm_with_rec(|r| {
                 // only the links' objects, made one after the other: counted
@@ -3923,6 +3980,8 @@ impl Globals {
                 holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                 frag,
                 aux,
+                // (`bm_finish` let it through: null, or as it was)
+                clear_save_tail: self.save_tail == 0 && rec.start.save_tail != 0,
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
@@ -4373,15 +4432,21 @@ impl Globals {
             self.cur_list.aux_field = crate::generated::types::memory_word(aux);
         }
         let n = ops.len() as u64;
-        ST.with(|s| {
+        let clear_save_tail = ST.with(|s| {
             let mut s = s.borrow_mut();
+            let mut clear = false;
             if let Some(e) = s.store.get_mut(&cs).and_then(|v| v.get_mut(i)) {
                 e.fast = ops;
                 e.rs_locs = rs_locs;
+                clear = e.clear_save_tail;
             }
             s.stats.hits += 1;
             s.stats.replayed_ops += n;
+            clear
         });
+        if clear_save_tail {
+            self.save_tail = 0;
+        }
         if debug() {
             eprintln!(
                 "boxmemo: replayed \\{} ({n} ops) in {:?}",

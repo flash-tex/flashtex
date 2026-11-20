@@ -224,6 +224,76 @@ fn draw_calls_replay_with_their_hole() {
 }
 
 #[test]
+fn an_italic_correction_of_the_tail_before_the_call_never_replays() {
+    // (lane AUDIT-GROUPS, #2267) `\\/` reads its list's tail (tex.web
+    // §1113): as a draw call's first node, the tail from before the call,
+    // which no key holds. On main the kern of the recording's `f` was
+    // replayed after an `x` and after a box. After the call's own `f` it
+    // reads only the call's node, and replays
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "italcorr",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\f=cmr10 \\f\n\
+         \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure{1pt}}\\showbox1 }\n\
+         \\def\\measure#1{\\/\\kern#1\\relax}\n\
+         \\one{f}\\one{f}\\one{x}\\one{\\hbox{}}\n\
+         \\def\\measure#1{f\\/\\kern#1\\relax}\n\
+         \\one{f}\\one{x}\\one{\\hbox{}}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_space_adjusted_by_the_tail_before_the_call_never_replays() {
+    // (REVIEW-D on #2283) under `\pdfadjustinterwordglue` a space reads
+    // its list's tail too: `adjust_interword_glue` widens the glue by the
+    // `\knbscode` of the character there, or of the one before an auto
+    // kern there, which it finds through `save_tail`.
+    // 1. The call's first node is a space: on main the glue after the
+    //    recording's `y` was replayed after an `x`.
+    // 2. After the call's own `x` the space reads only the call's node,
+    //    and replays.
+    // 3. The call ends in `x` and its auto kern (`\pdfappendkern`): the
+    //    space after the call reads `save_tail`, which a replay left null.
+    // 4. The call sets a character in a box of its own, which makes
+    //    `save_tail` null; the space after it then leaves the auto kern
+    //    from before the call alone. On main a replay left `save_tail` at
+    //    the `x`, and the glue was widened.
+    // (The first `\hbox{y y}` makes the font's glue, `font_glue`: a call
+    // that makes it is abandoned for that, `Fonts`.)
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "interword-glue",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\f=cmr10 \\f \\pdfadjustinterwordglue=1 \\knbscode\\f`x=500\n\
+         \\setbox1\\hbox{y y}\n\
+         \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure{1pt} y}\\showbox1 }\n\
+         \\def\\measure#1{ \\kern#1\\relax}\n\
+         \\one{y}\\one{y}\\one{x}\n\
+         \\def\\measure#1{x \\kern#1\\relax}\n\
+         \\one{y}\\one{y}\\one{x}\n\
+         \\pdfappendkern=1 \\knaccode\\f`x=100\n\
+         \\def\\measure#1{\\kern#1 x\\relax}\n\
+         \\one{}\\one{}\\one{}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{y\\kern#1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\one{x}\\one{x}\\one{x}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    // (cases 2 and 4 replay)
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
+#[test]
 fn calls_ending_in_expansions_replay() {
     // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
     // `\end`: `\if@endpe ... \fi` and its hooks after the last
