@@ -245,7 +245,7 @@ tiers:
 | `push` to `main` | **all** (post-merge) | the [post-merge set](#after-the-merge-and-main-red), plus the gate's cheap jobs again |
 | `workflow_dispatch` | **all** | everything |
 | `pull_request` (any fork, any branch) | **pr** | the [pull-request set](#the-pull-request-set) |
-| `push` to a branch other than `main` | **pr** | the same |
+| `push` to a branch other than `main` | — | nothing (since 2026-11-01); a branch without a pull request runs `gh workflow run ci.yml --ref <branch> [-f gate_only=true]` |
 
 Parity stays gated before merge (parity > speed): the merge queue never lands
 an engine change whose lockstep, P-T1/P-T2 or engine tests are red. What moved
@@ -253,12 +253,13 @@ out of the queue is everything a regression there can be *fixed forward* from:
 the Mac app, the iPad companion, the Rust workspace on both systems, the
 standalone crates and every macOS leg.
 
-`plan` also **deduplicates**. An in-repo branch with an open pull request gets two
-events for the same commit; the `pull_request` run is the one that carries the
-required checks, so the `push` run stands down (`plan` asks
-`repos/.../pulls?state=open&head=…`). A branch with no pull request still gets the
-whole pr set from its push, which is what makes `git push` a useful signal on
-its own. `plan` writes its decision into the run summary, so "why did this run
+**Branch pushes run nothing.** Until 2026-11-01 every in-repo branch push ran
+the pr set, and `plan` stood a push run down when its branch had an open pull
+request. Branches without one still queued about 40 hosted jobs at a time,
+ahead of the merge queue's gate on the org's hosted runners (free plan, about
+ten at once; gate jobs of four minutes waited up to 64). Now `push` fires for
+`main` only: a branch with a pull request is tested by `pull_request`, and a
+scratch branch that needs CI dispatches it by hand. `plan` writes its decision into the run summary, so "why did this run
 do nothing" is one click, not an investigation.
 
 ### The merge-queue gate
