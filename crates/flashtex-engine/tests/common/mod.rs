@@ -99,3 +99,47 @@ pub fn link_engine(target: &std::path::Path, link: &std::path::Path) {
         link.display()
     );
 }
+
+/// INITEX files that reach a capacity limit of TeX's inside a call of the
+/// macro `m` (lane AUDIT-OVERFLOW, #2308), for BOX-MEMO's and D9's tests:
+/// the call (`body`, then the part that needs room) runs three times with
+/// room to spare, so it is recorded and replayed; then the room left is less
+/// than it needs, and it runs once more. Each pair is (the start of the
+/// message pdfTeX stops with, the file). The pool's call reads a macro of
+/// `big` characters, after `fill` names of about 1004 characters leave
+/// less room than that: 20000 and 6183, or 3000 and 6188 where the
+/// recording keeps what the macro it reads holds (D9).
+#[allow(dead_code)]
+pub fn capacity_cases(m: &str, body: &str, big: usize, fill: usize) -> Vec<(&'static str, String)> {
+    let h = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\%=14 \\scrollmode\n";
+    let calls = format!("\\{m}\\{m}\\{m}\n");
+    // the buffer: the call's `\csname` of a 50-letter name, on a line of
+    // 199970 characters (buf_size=200000)
+    let name = "a".repeat(50);
+    let mut line = format!("\\{m}\\message{{[survived]}}%");
+    line.push_str(&"x".repeat(199_970 - line.len()));
+    let buffer = format!(
+        "{h}\\def\\{name}{{}}\n\
+         \\def\\{m}{{\\begingroup{body}\\expandafter\\ifx\\csname {name}\\endcsname\\relax\\fi\\endgroup}}\n\
+         {calls}{line}\n\\end\n"
+    );
+    // the pool: the call's `\meaning` of `\big` (in `\pdfstrcmp`'s
+    // argument, so that no recording keeps it) (pool_size=6250000)
+    let pool = format!(
+        "{h}\\def\\big{{{}}}\n\
+         \\def\\{m}{{\\begingroup{body}\\ifnum\\pdfstrcmp{{\\meaning\\big}}{{}}=0 \\fi\\endgroup}}\n{calls}\
+         \\def\\X{{{}}}\n\
+         \\count1=0 \\def\\fill{{\\ifnum\\count1<{fill} \\advance\\count1 1 \
+         \\expandafter\\let\\csname\\the\\count1 \\X\\endcsname\\relax \\expandafter\\fill\\fi}}\n\
+         \\fill\\relax\\{m}\\message{{[survived]}}\n\\end\n",
+        "y".repeat(big),
+        "x".repeat(1000)
+    );
+    vec![
+        (
+            "! TeX capacity exceeded, sorry [buffer size=200000]",
+            buffer,
+        ),
+        ("! TeX capacity exceeded, sorry [pool size=", pool),
+    ]
+}

@@ -38,6 +38,8 @@ pub mod bibtex;
 pub mod boxfrag;
 #[cfg(not(feature = "tex82"))]
 pub mod boxmemo;
+#[cfg(not(feature = "tex82"))]
+pub mod capacity;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub use flashtex_runtime::bundle;
 #[cfg(not(feature = "tex82"))]
