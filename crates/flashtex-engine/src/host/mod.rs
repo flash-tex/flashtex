@@ -1437,6 +1437,8 @@ pub fn read_s0(
             }
         }
         g.fill_scalars();
+        // (its version words are its writer's: `boxmemo::opened`)
+        crate::boxmemo::opened(&mut g);
         let load_s = t2.elapsed().as_secs_f64();
 
         let t3 = Instant::now();

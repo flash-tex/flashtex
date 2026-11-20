@@ -655,6 +655,8 @@ impl File {
             g.arena.write_through(off as usize, &v.to_le_bytes());
         }
         g.fill_scalars();
+        // (its version words are its writer's: `boxmemo::opened`)
+        crate::boxmemo::opened(g);
         crate::displaylist::restored();
         for (p, len, d, _) in &h.outputs {
             match d {
