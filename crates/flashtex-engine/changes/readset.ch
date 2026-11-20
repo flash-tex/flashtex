@@ -10,7 +10,10 @@
 % a \.{\\noexpand}ed one), and |id_lookup|, which \.{\\csname} and e-TeX's
 % \.{\\ifcsname} use (a name looked up and not found is a read too: a
 % changed .aux may define it), and e-TeX's \.{\\ifcsname} of an empty or
-% one-character name, which tests a meaning without |id_lookup|.
+% one-character name, which tests a meaning without |id_lookup|, and the
+% active character a math character of math code |"8000| stands for, whose
+% meaning |set_math_char| and |scan_math| read without |get_next|
+% (tex.web \S1152).
 %
 % While |rs_on| (the host turns it on at the .aux point, before the .aux is
 % read) each site calls the hand-written |flashtex_cs_read| or
@@ -66,6 +69,15 @@ begin cur_cs:=info(loc)-cs_token_flag; loc:=null;@/
 cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 @y
 begin cur_cs:=info(loc)-cs_token_flag; loc:=null;@/
+cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+@z
+
+@x pdftex.web l.30768 - a character of math code "8000 reads its active character's meaning
+begin cur_cs:=cur_chr+active_base;
+cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+@y
+begin cur_cs:=cur_chr+active_base;
 cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
 @z

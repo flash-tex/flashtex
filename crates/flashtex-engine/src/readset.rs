@@ -3,14 +3,16 @@
 //!
 //! * **Recording.** From the `.aux` point on (`rs_on`), `changes/readset.ch`
 //!   calls [`Globals::flashtex_cs_read`] the first time `get_next` reads a
-//!   control sequence's meaning, and [`Globals::flashtex_id_read`] for
-//!   every `id_lookup` (`\csname`, `\ifcsname`, a name scanned from a file),
-//!   found or not. Each first read appends an [`Event`] (the name, keyed by
-//!   its bytes, and the `eqtb` slot) to the [`ReadSet`] in the checkpoint
-//!   layer; `rs_seen` (in the word space, so restores put it back) marks
-//!   the slots already logged. Every checkpoint records the log's length
-//!   (`ExtRecord::rs`), so "the checkpoints before the first read of any of
-//!   these names" is a prefix of the chain.
+//!   control sequence's meaning, or tex.web §1152 reads the meaning of the
+//!   active character a math character of math code `"8000` stands for,
+//!   and [`Globals::flashtex_id_read`] for every `id_lookup` (`\csname`,
+//!   `\ifcsname`, a name scanned from a file), found or not. Each first
+//!   read appends an [`Event`] (the name, keyed by its bytes, and the
+//!   `eqtb` slot) to the [`ReadSet`] in the checkpoint layer; `rs_seen` (in
+//!   the word space, so restores put it back) marks the slots already
+//!   logged. Every checkpoint records the log's length (`ExtRecord::rs`),
+//!   so "the checkpoints before the first read of any of these names" is a
+//!   prefix of the chain.
 //! * **What a changed `.aux` changes.** A pass whose `.aux` differs from the
 //!   one the old run read re-runs the `.aux` read alone (from the `.aux`
 //!   point to the first `big_switch` after the file closes, `Point::AuxDone`)

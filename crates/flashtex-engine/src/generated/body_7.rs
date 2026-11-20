@@ -884,8 +884,16 @@ impl Globals {
                                     // §1330
                                     {
                                         self.cur_cs = (self.cur_chr).wrapping_add(1i32);
+                                        if self.bm_rec_on {
+                                            self.flashtex_bm_read(self.cur_cs);
+                                        }
                                         self.cur_cmd = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                                         self.cur_chr = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                        if self.rs_on {
+                                            if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                self.flashtex_cs_read(self.cur_cs);
+                                            }
+                                        }
                                         self.x_token();
                                         self.back_input();
                                     }
@@ -961,8 +969,16 @@ impl Globals {
             // §1330
             {
                 self.cur_cs = (self.cur_chr).wrapping_add(1i32);
+                if self.bm_rec_on {
+                    self.flashtex_bm_read(self.cur_cs);
+                }
                 self.cur_cmd = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                 self.cur_chr = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                if self.rs_on {
+                    if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                        self.flashtex_cs_read(self.cur_cs);
+                    }
+                }
                 self.x_token();
                 self.back_input();
             }
