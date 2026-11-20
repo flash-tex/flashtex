@@ -3983,6 +3983,14 @@ impl Session {
         s1: Option<Result<host::s1::File, String>>,
         stop_at: Option<usize>,
     ) -> Result<Report, String> {
+        // #2291 (Commander ruling): with `-recorder` every run is from the
+        // format, with a `.fls` of its own; an open of S₀ would list only
+        // the body's files, so it is refused and the caller compiles
+        // (`compile_pass`: cold). Refused before S₀ is read, so nothing is
+        // recorded for it.
+        if self.run_options.recorder {
+            return Err("-recorder: S0 is not opened, every run is cold (#2291)".into());
+        }
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
         let first_line = self.first_line.clone();
@@ -5275,6 +5283,11 @@ impl Session {
         debug_assert!(self.paused.is_none(), "a pass began with a run paused");
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
+        }
+        // #2291 (Commander ruling): with `-recorder` every pass runs from the
+        // format, so its `.fls` lists every file a from-scratch run opens
+        if system::run().recorder {
+            return self.cold(t0, stop_at, Some("-recorder".into()));
         }
         let (clock, first_line) = (self.clock, self.first_line.clone());
         let Some(s0) = self.s0.as_mut() else {
@@ -6926,6 +6939,8 @@ impl Session {
         self.reemit_from = None;
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
+        // (a new run: a new `.fls`, #2291)
+        system::reset_recorder();
         system::truncate_terminal(0);
         crate::diag::reset();
         system::truncate_external_effects(0);

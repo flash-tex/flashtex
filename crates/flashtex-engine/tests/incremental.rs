@@ -5924,10 +5924,13 @@ fn a_stored_s0_with_images_reopens() {
 /// directory as pdfTeX does (`INPUT defs.tex` for `\input`, not
 /// `./defs.tex`: `system::record_file_as`; `INPUT ./defs.tex` for the
 /// `\pdffilesize` of LaTeX's `\IfFileExists`), while the incremental
-/// journal keeps the path found. So a host with `-recorder` makes the same restarts as one
-/// without, for a body edit (S₀ kept), an edit of a file the preamble read
-/// (S₀'s key fails) and of one the body read, and stores and reopens the
-/// same S₀; every compile equals scratch runs.
+/// journal keeps the path found. Without `-recorder` the steps restart as
+/// they say: a body edit keeps S₀, an edit of a file the preamble read
+/// fails S₀'s key, and a stored S₀ reopens. With it (#2291, Commander
+/// ruling) every compile runs from the format with a `.fls` of its own,
+/// and an `open` of the stored S₀ is refused (the caller compiles, cold)
+/// before anything is recorded: no stray `pdflatex<pid>.fls` is left.
+/// Every compile equals scratch runs.
 #[test]
 fn the_recorder_leaves_the_journal_keys_alone() {
     let Some(e) = env() else {
@@ -5972,7 +5975,6 @@ fn the_recorder_leaves_the_journal_keys_alone() {
         "converged_at",
         "revalidated",
     ];
-    let mut seen: Vec<Vec<String>> = vec![];
     for recorder in [false, true] {
         let dir = e.dir.join(format!("recorder-{recorder}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -6000,6 +6002,10 @@ fn the_recorder_leaves_the_journal_keys_alone() {
             assert!(r.contains("\"saved\""), "recorder {recorder}: {r}");
         }
         if recorder {
+            // #2291: every pass from the format, a body edit included
+            for g in &got {
+                assert!(g.contains("mode=\"cold\""), "-recorder: not cold: {got:?}");
+            }
             let fls = std::fs::read_to_string(dir.join("doc.fls")).unwrap_or_default();
             assert!(
                 // (`\input`'s `open_input` spelling, and LaTeX's
@@ -6008,31 +6014,50 @@ fn the_recorder_leaves_the_journal_keys_alone() {
                     && fls.lines().any(|l| l == "INPUT ./defs.tex"),
                 "doc.fls does not list the files as pdfTeX does:\n{fls}"
             );
+        } else {
+            // (the steps test what they say: S₀ kept, then its key failing)
+            assert!(
+                got[1].contains("mode=\"incremental\" restart_preamble=false"),
+                "{got:?}"
+            );
+            assert!(got[2].contains("restart_preamble=true"), "{got:?}");
         }
+        let fls_files = |d: &Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .map(|x| x.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".fls"))
+                .collect();
+            v.sort();
+            v
+        };
         let mut h = Host::start_engine(&e, &dir, &[], engine, &[], Stdio::null());
         let reference = dir.with_extension("ref");
         copy_dir(&dir, &reference);
-        let r = h.cmd(&format!("open {}", s0.display()));
-        assert!(
-            r.contains("\"mode\":\"open\""),
-            "recorder {recorder}: not opened from S0: {r}"
-        );
-        check_against(&e, &dir, &reference, &r, "the open");
-        got.push(format!("open: mode={}", field(&r, "mode")));
-        seen.push(got);
+        let before = fls_files(&dir);
+        // (not `cmd`: an error is an answer here)
+        writeln!(h.stdin, "open {}", s0.display()).unwrap();
+        h.stdin.flush().unwrap();
+        let mut r = String::new();
+        h.stdout.read_line(&mut r).unwrap();
+        if recorder {
+            assert!(
+                r.contains("\"error\"") && r.contains("-recorder"),
+                "-recorder: S0 opened: {r}"
+            );
+            assert_eq!(fls_files(&dir), before, "the refused open left a .fls");
+            let r = compile_and_check(&e, &mut h, &dir, &[], "after the refused open");
+            assert!(r.contains("\"mode\":\"cold\""), "{r}");
+            assert_eq!(fls_files(&dir), ["doc.fls"], "a stray .fls");
+        } else {
+            assert!(
+                r.contains("\"mode\":\"open\""),
+                "recorder {recorder}: not opened from S0: {r}"
+            );
+            check_against(&e, &dir, &reference, &r, "the open");
+        }
     }
-    assert_eq!(seen[0], seen[1], "-recorder changed the restarts");
-    // (the steps test what they say: S₀ kept, then its key failing)
-    assert!(
-        seen[1][1].contains("mode=\"incremental\" restart_preamble=false"),
-        "{:?}",
-        seen[1]
-    );
-    assert!(
-        seen[1][2].contains("restart_preamble=true"),
-        "{:?}",
-        seen[1]
-    );
 }
 
 /// Lane COLD-OPEN: a beamer document (its preamble declares the navigation
@@ -7703,4 +7728,91 @@ fn an_earlier_reading_closed_at_the_old_end_saw_the_appended_text() {
         &[("chap.tex", &format!("{chap}Paragraph appended.\n"))],
         "text appended to a file read twice",
     );
+}
+
+/// `.fls` text without its `PWD` line, with `from` (the reference
+/// directory's path) read as `to`.
+fn fls_text(path: &Path, from: &Path, to: &Path) -> String {
+    let t = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    t.lines()
+        .filter(|l| !l.starts_with("PWD "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(&*from.to_string_lossy(), &to.to_string_lossy())
+}
+
+/// #2291 (Commander ruling): with `-recorder`, each compile of a resident
+/// host starts a new `.fls` and runs from the format, so the `.fls` is the
+/// one a from-scratch run writes (the last of the scratch chain's runs),
+/// before and after an edit.
+#[test]
+fn recorder_fls_equals_a_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("recorder");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let args: Vec<&str> = std::iter::once("-recorder")
+        .chain(ARGS.iter().copied())
+        .collect();
+    let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
+    c.arg("iserve").arg("--").args(&args).current_dir(&dir);
+    engine_env(&mut c, &e);
+    let mut child = c
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut h = Host {
+        child,
+        stdin,
+        stdout,
+    };
+    let body: String = (0..20).map(|i| para(i, "alpha")).collect();
+    let doc = "\\documentclass{article}\n\\begin{document}\n\\section{One}\\label{one}\n\
+               See page~\\pageref{one}.\n\\input{body}\n\\end{document}\n";
+    let edited = body.replacen(
+        "Paragraph 12 with the word alpha",
+        "Paragraph 12 with the word alphb",
+        1,
+    );
+    assert_ne!(edited, body);
+    for (what, b) in [("first", &body), ("edit", &edited)] {
+        std::fs::write(dir.join("doc.tex"), doc).unwrap();
+        std::fs::write(dir.join("body.tex"), b).unwrap();
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let report = h.cmd("compile");
+        let mut seen = vec![];
+        for _ in 0..5 {
+            seen.push(dir_state(&reference));
+            let mut c = Command::new(e.fmt.join("pdftex"));
+            c.args(&args).current_dir(&reference);
+            engine_env(&mut c, &e);
+            c.env("FLASHTEX_PREVIEW", "1");
+            c.stdin(Stdio::null()).stdout(Stdio::null());
+            c.status().unwrap();
+            if seen.contains(&dir_state(&reference)) {
+                break;
+            }
+        }
+        let x = fls_text(&dir.join("doc.fls"), &reference, &dir);
+        let y = fls_text(&reference.join("doc.fls"), &reference, &dir);
+        assert!(
+            x == y,
+            "{what}: doc.fls differs from a scratch run's\nhost:\n{x}\nscratch:\n{y}\n{report}"
+        );
+        for ext in ["pdf", "aux"] {
+            assert!(
+                std::fs::read(dir.join(format!("doc.{ext}"))).ok()
+                    == std::fs::read(reference.join(format!("doc.{ext}"))).ok(),
+                "{what}: doc.{ext} differs from a scratch run's\n{report}"
+            );
+        }
+    }
 }
