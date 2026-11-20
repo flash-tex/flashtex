@@ -204,7 +204,10 @@ later.
 - **The outer list.** Touching it at all: a node appended at the call's nest level, `\unskip`,
   `\unkern`, `\unpenalty` or `\lastbox` there, `\lastskip`, `\lastpenalty`, `\lastkern` or
   `\lastnodetype` read there, `\prevdepth`, `\spacefactor` or `\prevgraf` read or set at or below
-  it, or a mode change of that level.
+  it, or a mode change of that level. Leaving the call's nest level is refused where it happens
+  (`pop_nest`), even when the level is pushed again before the end: on an empty paragraph,
+  `init_math` pops it and `push_math` pushes the display at the same level, `after_math` appends the
+  display below and `resume_par` pushes the paragraph again, with the same head (#2495).
 - **The page builder.** `\pagegoal` and the other `\page...` dimensions, `\deadcycles`,
   `\insertpenalties`, `\interactionmode`. At the end, the page and contribution lists, `page_so_far`,
   `last_glue`/`last_penalty`/`last_kern`, `output_active` and `insert_penalties` must be as at the
