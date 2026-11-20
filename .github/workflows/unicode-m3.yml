@@ -190,7 +190,7 @@ jobs:
           set -o pipefail
           python3 tools/unicode-m3/notex_corpus.py --mode texlive --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
             --client "$RUNNER_TEMP/bin/dl3-client" --cases-dir "$OUT/corpus" --out "$OUT/texlive" \
-            --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true  # known red: R1 metric counts xelatex-error cases (see PR body)
+            --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || "$GITHUB_WORKSPACE/scripts/ci/report-only.sh" host-texlive $? "known red: R1 metric counts xelatex-error cases (see PR body)"
       - name: "host: edit sweep (spares against cold)"
         if: matrix.part == 'host'
         run: |
@@ -206,9 +206,9 @@ jobs:
           set -o pipefail
           python3 tools/unicode-m3/latency.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
             --host "$RUNNER_TEMP/bin/flashtex-host-unicode" --client "$RUNNER_TEMP/bin/dl3-client" \
-            --json "$OUT/latency-linux.json" 2>&1 | tee "$OUT/latency-linux.txt" || true  # measurement only: hosted timing is noisy, never gates
+            --json "$OUT/latency-linux.json" 2>&1 | tee "$OUT/latency-linux.txt" || "$GITHUB_WORKSPACE/scripts/ci/report-only.sh" latency-linux $? "measurement only: hosted timing is noisy, never gates"
           python3 tools/unicode-m3/host_startup.py --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
-            --json "$OUT/startup-unicode-linux.json" 2>&1 | tee "$OUT/startup-unicode-linux.txt" || true  # measurement only: hosted timing is noisy, never gates
+            --json "$OUT/startup-unicode-linux.json" 2>&1 | tee "$OUT/startup-unicode-linux.txt" || "$GITHUB_WORKSPACE/scripts/ci/report-only.sh" startup-unicode-linux $? "measurement only: hosted timing is noisy, never gates"
       - uses: dtolnay/rust-toolchain@stable
         if: matrix.part == 'host' && !cancelled()
       - uses: Swatinem/rust-cache@v2
@@ -224,7 +224,7 @@ jobs:
         working-directory: crates/flashtex-xetex
         run: |
           set -o pipefail
-          cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || true  # known red: #2132 (cancels_are_never_lost)
+          cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || "$GITHUB_WORKSPACE/scripts/ci/report-only.sh" host-tests $? "known red: #2132 (cancels_are_never_lost)"
       - name: report
         if: always()
         run: |
@@ -304,12 +304,12 @@ jobs:
           python3 tools/unicode-m3/notex_corpus.py --mode notex \
             --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
             --cases-dir "$OUT/corpus" --out "$OUT/notex" --compare-with "$RUNNER_TEMP/cmp" \
-            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true  # known red: R1 metric counts xelatex-error cases (see PR body)
+            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || "$GITHUB_WORKSPACE/scripts/ci/report-only.sh" notex $? "known red: R1 metric counts xelatex-error cases (see PR body)"
       - name: "export: Core Graphics at 2x and 3x (the Linux PDFs)"
         run: |
           set -o pipefail
           python3 tools/unicode-m3/visual.py --pdf-dir "$RUNNER_TEMP/linux-export/pdf" --scales 2 3 \
-            --json "$OUT/visual.json" 2>&1 | tee "$OUT/visual.txt" || true  # measurement only: pixel counts, never gates
+            --json "$OUT/visual.json" 2>&1 | tee "$OUT/visual.txt" || "$GITHUB_WORKSPACE/scripts/ci/report-only.sh" visual $? "measurement only: pixel counts, never gates"
       - name: report
         if: always()
         run: |

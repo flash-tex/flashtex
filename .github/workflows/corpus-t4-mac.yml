@@ -262,3 +262,16 @@ jobs:
               echo "pruning $d/$x"; rm -rf "${d:?}/$x"
             done
           done
+
+  # The job above needs a self-hosted runner. Without one it is skipped, and
+  # a run that measured nothing would end green; this job says so (#2116).
+  corpus-t4-mac-not-run:
+    name: "T4 nightly-5k not run (no self-hosted Mac)"
+    if: ${{ vars.FLASHTEX_SELFHOSTED_MAC != '1' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: say that nothing ran
+        run: |
+          echo "::warning::T4 nightly-5k on the heavy Mac did not run: FLASHTEX_SELFHOSTED_MAC is not 1, so no runner can take it; nothing was measured"
+          echo "T4 nightly-5k on the heavy Mac did not run: FLASHTEX_SELFHOSTED_MAC is not 1, so no runner can take it; nothing was measured." >> "$GITHUB_STEP_SUMMARY"
