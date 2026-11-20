@@ -227,6 +227,35 @@
 % loaded or restored, or a name removed, the check reads the state as it is
 % now. Neither routine writes the word space; the hooks after found
 % (read-sets, BOX-MEMO, intrinsics) run as before, with the same j, l, p.
+%
+% [10] scan_general_text (section 1683): a balanced text's tokens, read in
+% place.
+%
+% e-TeX's \detokenize and \unexpanded (the_toks), \showtokens, \scantokens
+% and pdfTeX's string primitives absorb their balanced text here, token by
+% token: get_token, then a brace test, then store_new_token(cur_tok). On
+% the 13 e-prints of arxiv-2025-01 shard 0/12 the loop was 2.6 % of the
+% engine's instructions (lane THROUGHPUT). As in [7], while no intrinsic
+% and no box memo is being recorded, a token of a token list that [3]'s
+% fast path would take (loc<>null; a control sequence whose eq_type is
+% below outer_call and not tab_mark..car_ret while align_state=0; a
+% character token that is not out_param and not tab_mark while
+% align_state=0) and that is not a brace (tt>=right_brace_limit; every
+% control sequence token is) is read in place: loc moves on, the read-set
+% hook runs for a control sequence as in [3], and the token is stored as
+% the loop stores it (store_new_token(tt): get_token's cur_tok is tt for
+% both kinds of token). Such a token takes no other step of the loop: its
+% brace test fails. cur_cs, cur_cmd, cur_chr and cur_tok are not stored
+% for it: the loop reads only cur_tok and cur_cmd, each right after the
+% get_token that sets it, and the procedure ends only on a brace, which
+% get_token reads (from the state it would have found), so they are what
+% the original leaves whenever they are read. get_token's
+% no_new_control_sequence:=false ... true is not done; it is true outside
+% get_token and \csname's own lookup, so the pair changes nothing here.
+% get_next's exit hooks (flashtex_intr_next, flashtex_bm_next) run only
+% while a recording is in progress, when every token goes through
+% get_token. Every other token, and the end of a list, goes to get_token
+% as before.
 
 @x [18] m.259 l.6566 - id_lookup: a direct-mapped index in front of the chain walk [9]
 @p function id_lookup(@!j,@!l:integer):pointer; {search the hash table}
@@ -613,6 +642,54 @@ var q, r, t: longinteger;
     t := t * ten_pow[dd];
     q := t div m;
     r := t mod m;
+@z
+
+@x [53a] m.1683 - scan_general_text: a balanced text's tokens, read in place [10]
+procedure scan_general_text;
+label found;
+@y
+procedure scan_general_text;
+label found, done;
+@z
+
+@x [53a] m.1683 - scan_general_text: a balanced text's tokens, read in place [10]
+@!unbalance:halfword; {number of unmatched left braces}
+begin s:=scanner_status; w:=warning_index; d:=def_ref;
+@y
+@!unbalance:halfword; {number of unmatched left braces}
+@!tt:halfword; {a token read in place}
+@!c:integer; {its command code}
+begin s:=scanner_status; w:=warning_index; d:=def_ref;
+@z
+
+@x [53a] m.1683 - scan_general_text: a balanced text's tokens, read in place [10]
+loop@+  begin get_token;
+  if cur_tok<right_brace_limit then
+    if cur_cmd<right_brace then incr(unbalance)
+@y
+loop@+  begin if not intr_rec_on then if not bm_rec_on then
+    loop@+  begin if state<>token_list then goto done;
+      if loc=null then goto done;
+      tt:=info(loc);
+      if tt>=cs_token_flag then
+        begin c:=eq_type(tt-cs_token_flag);
+        if c>=outer_call then goto done;
+        if (c<=car_ret)and(c>=tab_mark)and(align_state=0) then goto done;
+        loc:=link(loc);
+        if rs_on then if not rs_seen[tt-cs_token_flag] then
+          flashtex_cs_read(tt-cs_token_flag);
+        end
+      else  begin c:=tt div @'400;
+        if c=out_param then goto done;
+        if (c=tab_mark)and(align_state=0) then goto done;
+        if tt<right_brace_limit then goto done;
+        loc:=link(loc);
+        end;
+      store_new_token(tt);
+      end;
+  done: get_token;
+  if cur_tok<right_brace_limit then
+    if cur_cmd<right_brace then incr(unbalance)
 @z
 
 @x [54] tex.ch's search_string: the scan by flashtex_search_pool [8]

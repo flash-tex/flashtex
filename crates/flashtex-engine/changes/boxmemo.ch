@@ -31,7 +31,7 @@
 %   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
 %   outside its model. While a recording is in progress, the tokens that
 %   changes/throughput.ch reads in place ([4] skipped conditional text, [5]
-%   a delimited argument, [6] a group, [7] a definition's body; [9] tests
+%   a delimited argument, [6] a group, [7] a definition's body; [10] tests
 %   |bm_rec_on| itself) go through |get_next| as they did before those
 %   changes, so that |flashtex_bm_next| sees each control sequence read.
 %
