@@ -140,6 +140,24 @@ else begin if intr_rec_on then flashtex_intr_next;
   goto restart; {resume previous level}
 @z
 
+@x pdftex.web l.8836 (after changes/intrinsics.ch) - ... and the end of a file: its \.{\\everyeof} would land at the recording's own level (#2199)
+      if intr_rec_on then flashtex_intr_next;
+      begin_token_list(every_eof,every_eof_text); goto restart;
+@y
+      if intr_rec_on then flashtex_intr_next;
+      if bm_rec_on then flashtex_bm_next;
+      begin_token_list(every_eof,every_eof_text); goto restart;
+@z
+
+@x pdftex.web l.8845 (after changes/intrinsics.ch)
+    if intr_rec_on then flashtex_intr_next;
+    begin_token_list(every_eof,every_eof_text); goto restart;
+@y
+    if intr_rec_on then flashtex_intr_next;
+    if bm_rec_on then flashtex_bm_next;
+    begin_token_list(every_eof,every_eof_text); goto restart;
+@z
+
 @x pdftex.web l.8961 (after changes/intrinsics.ch) - every expansion a recording makes is checked
 reswitch: intr_at_switch:=false;
 if intr_rec_on then flashtex_intr_expand;

@@ -2401,6 +2401,12 @@ impl Globals {
                                                             {
                                                                 self.cur_input.limit_field = (self.first).wrapping_sub(1i32);
                                                                 { let __ix246 = self.cur_input.index_field; let __v247 = true; self.eof_seen[crate::ix::U(((__ix246) - 1) as usize)] = __v247; }
+                                                                if self.intr_rec_on {
+                                                                    self.flashtex_intr_next();
+                                                                }
+                                                                if self.bm_rec_on {
+                                                                    self.flashtex_bm_next();
+                                                                }
                                                                 self.begin_token_list(__av_eqtb[crate::ix::U(((every_eof_loc) - 1) as usize)].hh().rh(), every_eof_text);
                                                                 break 'l_restart_f;
                                                             }
@@ -2418,6 +2424,12 @@ impl Globals {
                                                             {
                                                                 self.cur_input.limit_field = (self.first).wrapping_sub(1i32);
                                                                 { let __ix248 = self.cur_input.index_field; let __v249 = true; self.eof_seen[crate::ix::U(((__ix248) - 1) as usize)] = __v249; }
+                                                                if self.intr_rec_on {
+                                                                    self.flashtex_intr_next();
+                                                                }
+                                                                if self.bm_rec_on {
+                                                                    self.flashtex_bm_next();
+                                                                }
                                                                 self.begin_token_list(__av_eqtb[crate::ix::U(((every_eof_loc) - 1) as usize)].hh().rh(), every_eof_text);
                                                                 break 'l_restart_f;
                                                             }
