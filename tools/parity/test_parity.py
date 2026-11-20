@@ -2880,6 +2880,81 @@ while True:
             live.wait()
 
 
+@unittest.skipUnless(shutil.which("qpdf") and os.name == "posix", "needs qpdf and a POSIX shell")
+class QpdfConfined(unittest.TestCase):
+    """P-T2 where qpdf may not open what Python can. Ubuntu 26.04's AppArmor profile of
+    /usr/bin/qpdf allows, under $HOME, only `[^.]**.pdf`: nothing under a hidden directory,
+    which is where the oracle cache is by default (~/.cache/flashtex-parity). On the hosted
+    board every document's P-T2 failed on "oracle PDF: qpdf exit 2: open ...: Permission
+    denied" (p5-scoreboard 43723688890). The `qpdf` first on PATH here refuses what that
+    profile refuses, in its words, and otherwise runs the real one."""
+
+    PDF = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
+           b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
+           b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
+
+    def setUp(self):
+        self.d = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.d, True)
+        real = shutil.which("qpdf")
+        bin_ = os.path.join(self.d, "bin")
+        os.makedirs(bin_)
+        with open(os.path.join(bin_, "qpdf"), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n"
+                    "# as /etc/apparmor.d/qpdf: no file under a hidden directory, and only *.pdf\n"
+                    "for a in \"$@\"; do\n"
+                    "  case \"$a\" in\n"
+                    "    -*) ;;\n"
+                    "    */.*|*[!f]) echo \"qpdf: open $a: Permission denied\" >&2; exit 2 ;;\n"
+                    "  esac\n"
+                    "done\n"
+                    "exec '%s' \"$@\"\n" % real)
+        os.chmod(os.path.join(bin_, "qpdf"), 0o755)
+        old = os.environ["PATH"]
+        os.environ["PATH"] = bin_ + os.pathsep + old
+        self.addCleanup(os.environ.__setitem__, "PATH", old)
+        # the oracle's PDF, in a cache under a hidden directory; the work directory is not hidden
+        self.cached = os.path.join(self.d, ".cache", "flashtex-parity", "pt-oracle", "ab", "ab" + "0" * 62, "reference.pdf")
+        os.makedirs(os.path.dirname(self.cached))
+        with open(self.cached, "wb") as f:
+            f.write(self.PDF)
+        self.work = os.path.join(self.d, "work")
+        os.makedirs(self.work)
+
+    def test_the_stand_in_refuses_the_cache_as_the_profile_does(self):
+        p = subprocess.run(["qpdf", "--qdf", self.cached, os.path.join(self.work, "o.pdf")], capture_output=True)
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(b"Permission denied", p.stderr)
+        plain = os.path.join(self.work, "plain.pdf")
+        shutil.copyfile(self.cached, plain)
+        p = subprocess.run(["qpdf", "--qdf", plain, os.path.join(self.work, "o.pdf")], capture_output=True)
+        self.assertIn(p.returncode, (0, 3), p.stderr)
+
+    def test_pt2_reads_an_oracle_pdf_from_a_hidden_cache(self):
+        cand = os.path.join(self.work, "candidate.pdf")
+        shutil.copyfile(self.cached, cand)
+        rec = tiers.compare_pt2(self.cached, cand, os.path.join(self.work, "pt2"))
+        self.assertTrue(rec["ok"], rec)
+        self.assertEqual(rec["pages"], [1, 1])
+        # nothing of it is left: not beside the output, and the cache entry is as it was
+        self.assertEqual(os.listdir(os.path.join(self.work, "pt2")), [])
+        self.assertEqual(os.listdir(os.path.dirname(self.cached)), ["reference.pdf"])
+
+    def test_the_type3_question_is_answered_for_a_pdf_in_a_hidden_cache(self):
+        # "it can't be told" (True) is what a refused open gave: every v1 entry was made again
+        self.assertFalse(tiers.embeds_type3(self.cached))
+        self.assertEqual(os.listdir(os.path.dirname(self.cached)), ["reference.pdf"])
+
+    def test_the_link_is_removed_when_qpdf_fails(self):
+        bad = os.path.join(os.path.dirname(self.cached), "bad.pdf")
+        with open(bad, "wb") as f:
+            f.write(b"not a PDF\n")
+        out = os.path.join(self.work, "bad.qdf.pdf")
+        with self.assertRaises(tiers.pdftext.PdfError):
+            tiers.normalise_pdf(bad, out)
+        self.assertEqual([n for n in os.listdir(self.work) if n.endswith(".in.pdf")], [])
+
+
 @unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
 class PT2SizeCap(unittest.TestCase):
     """P5-BOARD-T4: a PDF whose qdf copy is over the cap is a harness error (unmeasured),

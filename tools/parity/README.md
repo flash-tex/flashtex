@@ -694,6 +694,19 @@ and the document is a **harness error**: unmeasured, never a pass or a fail.
 Its tier reads partial, so the gate stays red. This is a harness limit, to be
 lifted by a normaliser that leaves image data compressed.
 
+**qpdf may be confined.** Ubuntu 26.04 runs `/usr/bin/qpdf` under an enforced
+AppArmor profile (`/etc/apparmor.d/qpdf`): under `$HOME` it may open only
+`[^.]**.pdf` (also `.json`, `.qdf`, `.in`, `.out`), so nothing under a hidden
+directory, and `/tmp/**.pdf`. The oracle cache is `~/.cache/flashtex-parity` by
+default, and on the hosted board every P-T2 read "oracle PDF: qpdf exit 2:
+open ...: Permission denied" from the day `ubuntu-latest` became 26.04
+(2026-11-13; p5-scoreboard 43723688890: P-T2 0 of 4110, P-T1 100 %, L0-L3
+99.9 to 100 %). `tiers.py` now
+hands qpdf a hard link to its input, named `*.pdf`, beside the file it writes
+(`qpdf_readable`), so the cache may be anywhere. The work directory is where
+qpdf writes: on such a host it must not be under a hidden directory of `$HOME`
+(`$RUNNER_TEMP` and `/tmp` are fine).
+
 **Issues and the gate.** `--issues apply` opens or updates one issue per red
 tier, on complete runs only: a row behind v1, below a target (arXiv L1, T2's
 unexpected failures) or below the owner's bar (`ISSUE_VERDICTS`). It carries
