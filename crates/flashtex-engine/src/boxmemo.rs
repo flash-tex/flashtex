@@ -556,6 +556,15 @@ struct Frame {
     outputs: (i32, i32, u64, usize, usize),
     /// The line-shift journal (`crate::lineshift::journal_mark`).
     lines: (u64, Vec<(i32, i32)>, bool),
+    /// The call's list's `aux` and `eTeX_aux`, and in math mode the words of
+    /// its tail noad: commands that change the list in place, appending
+    /// nothing (#2266). `\over` on an empty math list sets
+    /// `incompleat_noad` (tex.web §1181); `\limits` sets the tail op noad's
+    /// subtype (§1159), and `^`, `_` fill its scripts (§1176, §1186); a
+    /// letter the font lacks sets `space_factor` (§1034, §1036).
+    aux: u64,
+    eaux: i32,
+    tail_noad: Vec<u64>,
 }
 
 /// An existing object a recording referred to: its type, its number, and
@@ -2132,7 +2141,36 @@ impl Globals {
                 crate::system::external_effects_len(),
             ),
             lines: crate::lineshift::journal_mark(),
+            aux: self.cur_list.aux_field.0,
+            eaux: self.cur_list.eTeX_aux_field,
+            tail_noad: self.bm_tail_noad(),
         }
+    }
+
+    /// The words of the current list's tail noad, in math mode ([`Frame`]).
+    ///
+    /// A tail that is no noad (a style, a choice, glue, a kern, a penalty,
+    /// a whatsit) has no words here, and needs none: no command changes
+    /// such a tail in place at the call's own level. `sub_sup` (tex.web
+    /// §1176) and `math_limit_switch` (§1159) test for a noad first, and
+    /// otherwise append one or complain; `build_choices` (§1174),
+    /// `\\middle` and `\\right` (§1191) change their lists only through an
+    /// `unsave` of a group older than the call, which is `Group`.
+    fn bm_tail_noad(&self) -> Vec<u64> {
+        let l = &self.cur_list;
+        if l.mode_field.abs() != k::mmode || l.tail_field == l.head_field {
+            return vec![];
+        }
+        let p = l.tail_field;
+        let t = self.mem[p as usize].hh().b0();
+        let size = match t {
+            t if t == k::fraction_noad => k::fraction_noad_size,
+            t if t == k::radical_noad => k::radical_noad_size,
+            t if t == k::accent_noad => k::accent_noad_size,
+            t if (k::ord_noad..=k::right_noad).contains(&t) => k::noad_size,
+            _ => return vec![],
+        };
+        (p..p + size).map(|i| self.mem[i as usize].0).collect()
     }
 }
 
@@ -3650,6 +3688,12 @@ impl Globals {
             // only in restricted horizontal mode may a call append: no
             // paragraph, no page builder
             Some("OuterList")
+        } else if end.eaux != start.eaux
+            || end.tail_noad != start.tail_noad
+            || (end.aux != start.aux && start.mode.abs() == k::mmode)
+        {
+            // (a scalar `aux` the replay sets: `Entry::aux`)
+            Some("OuterList")
         } else if self
             .bm_with_rec(|r| r.pending_box.is_some())
             .unwrap_or(false)
@@ -4371,6 +4415,13 @@ impl Globals {
                 self.cur_list.tail_field = last;
             }
             self.cur_list.aux_field = crate::generated::types::memory_word(aux);
+        } else if let Some((_, None, aux, _, _)) = draw {
+            // a scalar `aux` the call changed in place (a letter the font
+            // lacks sets `space_factor`, appending nothing: #2266); math
+            // mode's is a pointer, which the call left as it was
+            if self.cur_list.mode_field.abs() != k::mmode {
+                self.cur_list.aux_field = crate::generated::types::memory_word(aux);
+            }
         }
         let n = ops.len() as u64;
         ST.with(|s| {
