@@ -1632,6 +1632,13 @@ impl Globals {
                     self.print_esc(592i32);
                 } else {
                     {
+                        if self.intr_rec_on {
+                            if (p >= frozen_null_font) {
+                                if (p < undefined_control_sequence) {
+                                    self.flashtex_intr_abort(6i32);
+                                }
+                            }
+                        }
                         if ((p >= prim_eqtb_base) && (p < frozen_null_font)) {
                             self.print_esc((self.prim[crate::ix::U(((p).wrapping_sub(15526i32)) as usize)].rh()).wrapping_sub(1i32));
                         } else {

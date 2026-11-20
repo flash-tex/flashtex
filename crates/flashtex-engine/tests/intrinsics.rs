@@ -171,6 +171,26 @@ fn tracing_falls_back() {
     assert_eq!(stat(&s, "Tracing"), 1, "{s}");
 }
 
+/// A font identifier's name (`font_id_text`) is no `eqtb` entry, so no
+/// watch record holds it, and `\font` changes it: a `\font` whose file is
+/// not found names the null font's identifier after its own (tex.web
+/// §1257), as `\font\b=cmr10` after `\font\a=cmr10` names that font's `\b`.
+/// A run that prints such a token (`\meaning` of a macro holding what
+/// `\the\font` made) is therefore not recorded. Before, the hook kept
+/// replaying `\nullfont` after the identifier was `\renamed`.
+#[test]
+fn a_printed_font_identifier_is_not_pure() {
+    let s = check(
+        "fontname",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\edef\\x{\\the\\font}\\def\\hook{\\edef\\y{\\meaning\\x}}\n\
+         \\hook\\message{[\\y]}\\hook\\message{[\\y]}\\font\\renamed=nosuchfontfile \\relax\n\
+         \\hook\\message{[\\y]}\\hook\\message{[\\y]}\\end\n",
+    );
+    assert_eq!(stat(&s, "replays"), 0, "{s}");
+    assert!(stat(&s, "Region") >= 1, "{s}");
+}
+
 /// In `error_stop_mode` an error answered with an empty line changes no
 /// count (`error` returns before `incr(error_count)`), `history` is already
 /// `error_message_issued` after an earlier error, and before the log is

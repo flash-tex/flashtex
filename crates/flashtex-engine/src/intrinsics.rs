@@ -435,6 +435,7 @@ impl Why {
             3 => Why::Sparse,
             4 => Why::Checkpoint,
             5 => Why::Error,
+            6 => Why::Region,
             _ => Why::State,
         }
     }

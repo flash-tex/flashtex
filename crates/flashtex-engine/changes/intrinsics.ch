@@ -62,6 +62,17 @@ if intr_on then flashtex_intr_new_cs(p);
 end
 @z
 
+@x pdftex.web l.6702 - a font identifier's name is no |eqtb| entry: a recorded run never prints one
+  if (p>=prim_eqtb_base)and(p<frozen_null_font) then
+    print_esc(prim_text(p-prim_eqtb_base)-1) else print_esc(text(p));
+@y
+  if intr_rec_on then if p>=frozen_null_font then if p<undefined_control_sequence then
+    flashtex_intr_abort(6);
+    {|font_id_text|, which \.{\\font} of a font loaded before changes}
+  if (p>=prim_eqtb_base)and(p<frozen_null_font) then
+    print_esc(prim_text(p-prim_eqtb_base)-1) else print_esc(text(p));
+@z
+
 @x pdftex.web l.7122 - a recorded run opens a group
 @p procedure new_save_level(@!c:group_code); {begin a new level of grouping}
 begin check_full_save_stack;

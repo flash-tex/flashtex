@@ -394,6 +394,82 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
 
+/// A font identifier's name is no `eqtb` entry (`font_id_text`, the text
+/// of the frozen location `\the\font`'s token names), and `\font` changes
+/// it: `\font\b=cmr10` after `\font\a=cmr10` finds the font loaded and
+/// names its identifier `\b` (tex.web §1260, §1257); a `\font` whose file
+/// is not found does the same to the null font's. `\string`, `\meaning` and
+/// every printed token list show that name. Before, nothing in the key held
+/// it, and the calls after the `\font` replayed the old name.
+#[test]
+fn a_font_identifiers_name_is_part_of_the_key() {
+    // the null font, renamed by a \font that finds no file (an error, the
+    // same on every path); \relax ends the scan for `at`/`scaled`, which
+    // would otherwise expand the call inside \font. \show resets \y, which
+    // the call's \xdef keys on, so that the second call of each pair hits.
+    let s = check(
+        "fontname",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\begingroup\\edef\\x{\\the\\font}\\setbox0\\hbox{}%\n\
+         \\xdef\\y{\\meaning\\x/\\expandafter\\string\\x/\\detokenize\\expandafter{\\x}}\\endgroup}\n\
+         \\def\\show{\\message{[\\y]}\\global\\let\\y\\relax}\\let\\y\\relax\n\
+         \\measure\\show\\measure\\show\\font\\renamed=nosuchfontfile \\relax\n\
+         \\measure\\show\\measure\\show\\font\\again=nosuchfontfile \\relax\n\
+         \\measure\\show\\measure\\show\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 3, "{s}");
+    assert_eq!(stat(&s, "recordings"), 3, "{s}");
+    // a font loaded before, found again under another name; the same name
+    // again changes nothing
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "fontname-tfm",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\fa=cmr10 \\fa\n\
+         \\def\\measure{\\begingroup\\edef\\x{\\the\\font}\\setbox0\\hbox{\\expandafter\\string\\x}%\n\
+         \\global\\dimen1=\\wd0 \\xdef\\y{\\meaning\\x}\\endgroup}\n\
+         \\def\\show{\\message{[\\y|\\the\\dimen1]}\\global\\let\\y\\relax}\\let\\y\\relax\n\
+         \\measure\\show\\measure\\show\\font\\longername=cmr10 \\relax\n\
+         \\measure\\show\\measure\\show\\font\\longername=cmr10 \\relax\n\
+         \\measure\\show\\font\\fa=cmr10 \\relax\\measure\\show\\measure\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert_eq!(stat(&s, "hits"), 4, "{s}");
+    assert_eq!(stat(&s, "recordings"), 3, "{s}");
+}
+
+/// A call that renames a font loaded before (`\font\x=cmr10` when the
+/// font is `\a`'s) is not recorded: a replay redoes the call's `eqtb`
+/// defines but not `font_id_text`, nor the move of the fonts' version, so
+/// in the host a replay at the recorded version (an edit's restore to
+/// before the call) would leave the identifier named `\a` where pdfTeX has
+/// `\x` (REVIEW-4 of #2518). The same name again is no rename, and a call
+/// that makes it is recorded and replayed.
+#[test]
+fn a_call_that_renames_a_font_is_not_recorded() {
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "fontname-in-call",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\a=cmr10 \\a\n\
+         \\def\\measure{\\begingroup\\font\\x=cmr10 \\setbox0\\hbox{x}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\show{\\message{[\\expandafter\\meaning\\the\\font|\\the\\dimen1]}}\n\
+         \\measure\\show\\font\\a=cmr10 \\relax\\measure\\show\\font\\a=cmr10 \\relax\\measure\\show\n\
+         \\measure\\show\\measure\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    // the first three calls find the font named \a and rename it: none is kept
+    assert_eq!(stat(&s, "FontName"), 3, "{s}");
+    // the fourth finds \x already, is recorded, and the fifth replays it
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+}
+
 /// `\\toks0` (and `\\toks4`): `\\kern.1pt` (`0 `) doubled 15 (16) times,
 /// lists longer than the key's `MAX_LIST` (65,536 tokens).
 const LONG_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\

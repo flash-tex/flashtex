@@ -2272,6 +2272,9 @@ impl Globals {
         self.scan_int();
         f = { let __a688_0 = u; let __a688_1 = k; let __a688_2 = self.fix_int(self.cur_val, (1000i32).wrapping_neg(), 1000i32); self.letter_space_font(__a688_0, __a688_1, __a688_2) };
         __av_eqtb[crate::ix::U(((u) - 1) as usize)].set_hh_rh(f);
+        if self.bm_on {
+            self.flashtex_bm_font_named(f, t);
+        }
         { let __v689 = __av_eqtb[crate::ix::U(((u) - 1) as usize)]; __av_eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v689; }
         self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].set_rh(t);
     }
@@ -2420,6 +2423,9 @@ impl Globals {
         k = self.cur_val;
         f = self.copy_font_info(k);
         __av_eqtb[crate::ix::U(((u) - 1) as usize)].set_hh_rh(f);
+        if self.bm_on {
+            self.flashtex_bm_font_named(f, t);
+        }
         { let __v713 = __av_eqtb[crate::ix::U(((u) - 1) as usize)]; __av_eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v713; }
         self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].set_rh(t);
     }

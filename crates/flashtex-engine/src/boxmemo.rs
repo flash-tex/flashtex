@@ -846,6 +846,36 @@ fn next_version(parent: i32, change: [i32; 4]) -> i32 {
         .or_insert_with(fresh_version)
 }
 
+/// The number that names a font identifier's name `name`: the same number
+/// for the same characters and another for any others (an interned table,
+/// as `next_version`'s is: a string's number in the pool names it in one
+/// timeline only, and no hash stands for a key, BOX-MEMO.md §3).
+fn font_name_number(name: &[i32]) -> i32 {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static TABLE: Mutex<Option<HashMap<Box<[i32]>, i32>>> = Mutex::new(None);
+    let mut t = TABLE.lock().unwrap_or_else(|e| e.into_inner());
+    let t = t.get_or_insert_with(HashMap::new);
+    let n = t.len() as i32;
+    *t.entry(name.into()).or_insert(n)
+}
+
+thread_local! {
+    /// The name the first font made at each font number on this thread got,
+    /// by its number (`font_name_number`; `Globals::flashtex_bm_font_named`).
+    /// An entry is never replaced: a version in which no font made at `f`
+    /// was named otherwise says that `f`, if it is there, has this name.
+    ///
+    /// Nor is the table cleared (`flashtex_bm_loaded` included): the
+    /// versions (`next_version`'s table) and the store outlive a document,
+    /// so a second document on this thread whose first font at `f` gets
+    /// another name must count that as a rename, or one version would name
+    /// two states. That costs such a document a miss, never a wrong replay,
+    /// and the table holds at most one entry per font number (`font_max`).
+    static FONT_NAMED_FIRST: RefCell<std::collections::HashMap<i32, i32>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
 thread_local! {
     /// Where BOX-MEMO may record (replays are allowed everywhere): `None`
     /// (the command line) anywhere; in the host, only in an edit's window,
@@ -2449,6 +2479,61 @@ impl Globals {
     #[inline(never)]
     pub fn flashtex_bm_font_set(&mut self, n: i32, a: i32, b: i32, v: i32) {
         self.bm_font_version = next_version(self.bm_font_version, [n, a, b, v]);
+    }
+
+    /// Font `f`'s identifier is about to be named by string `t`
+    /// (changes/boxmemo.ch: `\\font`, `\\letterspacefont` and
+    /// `\\pdfcopyfont`, before they write `eqtb[font_id_base+f]` and
+    /// `font_id_text(f)`; lane AUDIT-MATH). The name is what `\\string`,
+    /// `\\meaning` and every printed token list show for the token
+    /// `\\the\\font` makes, and no `eqtb` entry holds it: `\\font\\b=cmr10`
+    /// after `\\font\\a=cmr10` finds the font loaded and renames it
+    /// (tex.web §1260, §1257), and a `\\font` whose file is not found
+    /// renames the null font. So a name that changes is a change of the
+    /// fonts, named by the font and the new name's characters.
+    ///
+    /// A font being made (its identifier is no `set_font` yet) had no name
+    /// to read. The first one made at each number on this thread leaves the
+    /// version alone, as its making does; one made there under another name
+    /// (an edit's restore took the first away, and the run after it named
+    /// the font otherwise) is a change, so that two states with one version
+    /// have the same names at the same numbers.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_font_named(&mut self, f: i32, t: i32) {
+        let p = k::font_id_base + f;
+        let id = font_name_number(self.bm_str(t));
+        if self.bm_eq(p).hh().b0() != k::set_font {
+            let first = FONT_NAMED_FIRST.with(|m| *m.borrow_mut().entry(f).or_insert(id) == id);
+            if first {
+                return;
+            }
+        } else if self.bm_str(self.hash[(p - k::hash_base) as usize].rh()) == self.bm_str(t) {
+            return;
+        }
+        self.bm_font_version = next_version(self.bm_font_version, [-4, f, id, 0]);
+        // A replay redoes a call's `eqtb` defines but not `font_id_text(f)`
+        // nor this move of the version (REVIEW-4 of #2518): a call that
+        // renames a font is not recorded, nor is an intrinsic hook's run.
+        if self.bm_rec_on {
+            self.bm_abort("FontName");
+        }
+        if self.intr_rec_on {
+            self.flashtex_intr_abort(6);
+        }
+    }
+
+    /// The characters of string `t` (none for a number that names no
+    /// string).
+    fn bm_str(&self, t: i32) -> &[i32] {
+        if t < 0 || t >= self.str_ptr {
+            return &[];
+        }
+        let (a, b) = (
+            self.str_start[t as usize] as usize,
+            self.str_start[t as usize + 1] as usize,
+        );
+        &self.str_pool[a..b]
     }
 
     #[cold]
