@@ -34,6 +34,10 @@
 %   a delimited argument, [6] a group, [7] a definition's body; [9] tests
 %   |bm_rec_on| itself) go through |get_next| as they did before those
 %   changes, so that |flashtex_bm_next| sees each control sequence read.
+%   A control sequence |get_next| delivers to a caller that looks only at
+%   the token (|intr_weak|, |matching|, |skipping|) is keyed by whether it
+%   is \.{\\outer}, a \.\# or an alignment tab, or an \.{\\if} or \.{\\fi}
+%   (BOX-MEMO.md \S17).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
@@ -320,6 +324,12 @@ box_code: begin scan_register_num; fetch_box(cur_box);
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
 @z
 
+@x pdftex.web l.29995 - a recording notes that it ended a paragraph (|end_graf| sets |error_count| to 0)
+  error_count:=0;
+@y
+  error_count:=0; if bm_rec_on then flashtex_bm_end_graf;
+@z
+
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
 if intr_rec_on then flashtex_intr_command;
 case cur_cmd of
@@ -531,6 +541,7 @@ procedure flashtex_bm_font_changed; external;
 procedure flashtex_bm_font_set(@!n:integer;@!a:integer;@!b:integer;@!v:integer); external;
 procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
+procedure flashtex_bm_end_graf; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
 
