@@ -311,6 +311,15 @@ if intr_rec_on then flashtex_intr_command;
 if bm_rec_on then flashtex_bm_command;
 @z
 
+@x pdftex.web l.29733 - every box context a recording makes is checked (\.{\\lastbox}, \.{\\vsplit})
+@!n:halfword; {a box number}
+begin case cur_chr of
+@y
+@!n:halfword; {a box number}
+begin if bm_rec_on then flashtex_bm_begin_box;
+case cur_chr of
+@z
+
 @x pdftex.web l.29735 - a box a recording moves out of its register
 box_code: begin scan_register_num; fetch_box(cur_box);
   change_box(null); {the box becomes void, at the same level}
@@ -521,6 +530,7 @@ procedure flashtex_bm_internal; external;
 procedure flashtex_bm_pop_cond; external;
 procedure flashtex_bm_switch; external;
 procedure flashtex_bm_command; external;
+procedure flashtex_bm_begin_box; external;
 procedure flashtex_bm_box(@!n:integer); external;
 procedure flashtex_bm_box_use(@!n:integer;@!k:integer); external;
 procedure flashtex_bm_reg_read(@!t:integer;@!n:integer); external;
