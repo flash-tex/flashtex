@@ -132,6 +132,15 @@ else begin if intr_rec_on then flashtex_intr_next;
   end;
 @z
 
+@x pdftex.web l.8527 (after changes/intrinsics.ch) - ... and one that ends an alignment entry (#2183)
+if cur_cmd<=car_ret then if cur_cmd>=tab_mark then if align_state=0 then
+  begin if intr_rec_on then flashtex_intr_next;
+@y
+if cur_cmd<=car_ret then if cur_cmd>=tab_mark then if align_state=0 then
+  begin if intr_rec_on then flashtex_intr_next;
+  if bm_rec_on then flashtex_bm_next;
+@z
+
 @x pdftex.web l.8764 - a recording ends where |big_switch|'s |get_x_token| leaves its last level
   end_token_list; goto restart; {resume previous level}
 @y
