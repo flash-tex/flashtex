@@ -1100,13 +1100,21 @@ impl Globals {
     /// `pdftex_fail` (utils.c): the same layout as pdftex.web's `pdf_error`,
     /// then the run ends.
     pub fn pdftex_fail(&mut self, msg: &str) -> ! {
+        self.pdftex_fail_bytes(msg.as_bytes())
+    }
+
+    /// [`Globals::pdftex_fail`] of a message that need not be UTF-8 (font
+    /// lines, glyph and file names are bytes).
+    pub fn pdftex_fail_bytes(&mut self, msg: &[u8]) -> ! {
         if super::images::probing() {
-            super::images::probe_fail(msg.to_string());
+            super::images::probe_fail(String::from_utf8_lossy(msg).into_owned());
         }
-        // safe_print: `print` of each character code
+        // safe_print: `print(*c)` of each `const char`, which is signed on
+        // macOS and x86-64 Linux, so a byte from 0x80 up is a negative
+        // character code and tex.web's `print` writes "???" for it
         fn safe_print(g: &mut Globals, s: &[u8]) {
             for &c in s {
-                g.print(c as i32);
+                g.print(c as std::ffi::c_char as i32);
             }
         }
         self.print_ln();
@@ -1119,7 +1127,7 @@ impl Globals {
             safe_print(self, b")");
         }
         safe_print(self, b": ");
-        safe_print(self, super::output::printf_cut(msg.as_bytes()));
+        safe_print(self, super::output::printf_cut(msg));
         self.print_ln();
         self.remove_pdffile();
         safe_print(

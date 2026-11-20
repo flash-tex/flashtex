@@ -629,23 +629,28 @@ impl Globals {
 
     /// `copyOtherResources`: every resource but fonts and procedure sets.
     fn copy_other_resources(&mut self, cx: &mut Ctx, obj: &Obj, key: &[u8]) {
-        let k = String::from_utf8_lossy(key).into_owned();
+        // (the key is the name's bytes, which need not be UTF-8)
+        let warn = |what: &[u8]| {
+            [
+                what,
+                b" (key '",
+                key,
+                b"', type <",
+                &obj.type_name(),
+                b">); ignored.",
+            ]
+            .concat()
+        };
         // if Subtype is present, it must be a name
         if key == b"Subtype" {
             if !obj.is_name() {
-                let t = String::from_utf8_lossy(&obj.type_name()).into_owned();
-                self.pdftex_warn(&format!(
-                    "PDF inclusion: Subtype in Resources dict is not a name \
-                     (key '{k}', type <{t}>); ignored."
-                ));
+                let msg = warn(b"PDF inclusion: Subtype in Resources dict is not a name");
+                self.pdftex_warn_bytes(&msg);
                 return;
             }
         } else if !obj.is_dict() {
-            let t = String::from_utf8_lossy(&obj.type_name()).into_owned();
-            self.pdftex_warn(&format!(
-                "PDF inclusion: invalid other resource which is no dict \
-                 (key '{k}', type <{t}>); ignored."
-            ));
+            let msg = warn(b"PDF inclusion: invalid other resource which is no dict");
+            self.pdftex_warn_bytes(&msg);
             return;
         }
         self.copy_name(key);
@@ -850,25 +855,25 @@ impl Globals {
             msg.extend_from_slice(b">, but at most version <");
             msg.extend_from_slice(&super::cfmt::fmt_f(1, wanted as f64));
             msg.extend_from_slice(b"> allowed");
-            let msg = String::from_utf8_lossy(&msg).into_owned();
             if pdf_inclusion_errorlevel > 0 {
-                self.pdftex_fail(&msg);
+                self.pdftex_fail_bytes(&msg);
             } else if pdf_inclusion_errorlevel < 0 {
                 // do nothing
             } else {
                 // = 0, give warning
-                self.pdftex_warn(&msg);
+                self.pdftex_warn_bytes(&msg);
             }
         }
         let num_pages = doc.num_pages();
         if let Some(name) = page_name {
             // get page by name
-            let shown = String::from_utf8_lossy(name).into_owned();
             match doc.find_dest_page(name) {
-                -1 => self.pdftex_fail(&format!("PDF inclusion: invalid destination <{shown}>")),
-                0 => self.pdftex_fail(&format!(
-                    "PDF inclusion: destination is not a page <{shown}>"
-                )),
+                -1 => self.pdftex_fail_bytes(
+                    &[b"PDF inclusion: invalid destination <", name, b">"].concat(),
+                ),
+                0 => self.pdftex_fail_bytes(
+                    &[b"PDF inclusion: destination is not a page <", name, b">"].concat(),
+                ),
                 p => page_num = p,
             }
         } else if page_num <= 0 || page_num > num_pages {

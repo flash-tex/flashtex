@@ -74,7 +74,7 @@ impl Line {
     }
 
     /// The line for an error message (`remove_eol`).
-    pub fn quoted(&self) -> String {
+    pub fn quoted(&self) -> &[u8] {
         without_eol(&self.bytes)
     }
 
@@ -120,9 +120,9 @@ pub(super) fn end_line(s: &mut Vec<u8>) {
 }
 
 /// `remove_eol`: a line for an error message, without its LF.
-pub(super) fn without_eol(s: &[u8]) -> String {
+pub(super) fn without_eol(s: &[u8]) -> &[u8] {
     let s = c_str(s);
-    String::from_utf8_lossy(s.strip_suffix(b"\n").unwrap_or(s)).into_owned()
+    s.strip_suffix(b"\n").unwrap_or(s)
 }
 
 /// `append_char_to_buf` (ptexmac.h): tab to blank, CR and end of file to
@@ -160,7 +160,11 @@ pub(super) fn scan_num(line: &[u8], p: usize) -> Result<(f32, usize)> {
     let p = if line.get(p) == Some(&b' ') { p + 1 } else { p };
     let rest = c_str(line.get(p..).unwrap_or_default());
     let Some(value) = crate::pdftex::cfmt::scan_float(rest) else {
-        return Err(Fail(format!("a number expected: `{}'", without_eol(line))));
+        return Err(Fail::of(&[
+            b"a number expected: `",
+            without_eol(line),
+            b"'",
+        ]));
     };
     let len = line[p.min(line.len())..]
         .iter()
@@ -395,7 +399,7 @@ impl<'a> Reader<'a> {
         }
         let left = self.segment_left();
         if !(left == 0 && matches!(c, Some(b'\n' | b'\r'))) {
-            return Err(Fail(format!(
+            return Err(Fail::from(format!(
                 "{} bytes more than expected",
                 left.wrapping_add(1)
             )));
@@ -513,7 +517,10 @@ mod tests {
         while r.eexec == Eexec::Before {
             r.read_line(false).unwrap();
         }
-        r.start_eexec().err().map(|e| e.0).unwrap_or_default()
+        r.start_eexec()
+            .err()
+            .map(|e| String::from_utf8(e.0).unwrap())
+            .unwrap_or_default()
     }
 
     #[test]
@@ -563,7 +570,10 @@ mod tests {
         assert!(r.line.bytes.starts_with(b"/a 2147483647 RD "));
         // two bytes from the three hexadecimal digits left, then LF
         assert_eq!(r.line.bytes.len(), b"/a 2147483647 RD ".len() + 2 + 1);
-        assert_eq!(r.read_line(true).err().unwrap().0, "unexpected end of file");
+        assert_eq!(
+            r.read_line(true).err().unwrap().0,
+            b"unexpected end of file"
+        );
     }
 
     #[test]
