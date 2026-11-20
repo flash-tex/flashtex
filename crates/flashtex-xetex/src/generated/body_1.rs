@@ -19,7 +19,7 @@ impl Globals {
         let mut r: halfword = 0; // §145
         if (p != (268435455i32).wrapping_neg()) {
             {
-                if self.intr_verify_on {
+                if self.intr_churn {
                     self.flashtex_intr_flush(p);
                 }
                 r = p;
@@ -135,7 +135,7 @@ impl Globals {
             if __goto_1 <= 1 { // found
                 self.mem[crate::ix::U((r) as usize)].set_hh_rh((268435455i32).wrapping_neg());
                 self.dl_new_node(r);
-                if self.intr_verify_on {
+                if self.intr_churn {
                     self.flashtex_intr_cell(r, s);
                 }
                 self.var_used = (self.var_used).wrapping_add(s);
@@ -162,8 +162,8 @@ impl Globals {
     // §152
     pub fn free_node(&mut self, mut p: halfword, mut s: halfword) {
         let mut q: halfword = 0; // §152
-        if self.intr_verify_on {
-            self.flashtex_intr_cell(p, s);
+        if self.intr_churn {
+            self.flashtex_intr_cell(p, (s).wrapping_neg());
         }
         self.mem[crate::ix::U((p) as usize)].set_hh_lh(s);
         self.mem[crate::ix::U((p) as usize)].set_hh_rh(empty_flag);
@@ -1867,8 +1867,8 @@ impl Globals {
                 q = self.mem[crate::ix::U((p) as usize)].hh().rh();
                 if (p >= self.hi_mem_min) {
                     {
-                        if self.intr_verify_on {
-                            self.flashtex_intr_cell(p, 1i32);
+                        if self.intr_churn {
+                            self.flashtex_intr_cell(p, (1i32).wrapping_neg());
                         }
                         { let __v67 = self.avail; self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v67); }
                         self.avail = p;
@@ -2239,8 +2239,8 @@ impl Globals {
         self.mem[crate::ix::U((q) as usize)].set_hh_rh((268435455i32).wrapping_neg());
         q = self.mem[crate::ix::U((h) as usize)].hh().rh();
         {
-            if self.intr_verify_on {
-                self.flashtex_intr_cell(h, 1i32);
+            if self.intr_churn {
+                self.flashtex_intr_cell(h, (1i32).wrapping_neg());
             }
             { let __v96 = self.avail; self.mem[crate::ix::U((h) as usize)].set_hh_rh(__v96); }
             self.avail = h;
@@ -2330,8 +2330,8 @@ impl Globals {
     // §243
     pub fn pop_nest(&mut self) {
         {
-            if self.intr_verify_on {
-                self.flashtex_intr_cell(self.cur_list.head_field, 1i32);
+            if self.intr_churn {
+                self.flashtex_intr_cell(self.cur_list.head_field, (1i32).wrapping_neg());
             }
             { let __ix99 = self.cur_list.head_field; let __v100 = self.avail; self.mem[crate::ix::U((__ix99) as usize)].set_hh_rh(__v100); }
             self.avail = self.cur_list.head_field;

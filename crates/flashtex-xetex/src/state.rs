@@ -418,7 +418,16 @@ impl Globals {
 
     /// Drop checkpoint `id` (the verifier's), keeping the others. The
     /// newest goes as if never taken (`Arena::retain` keeps the newest).
+    ///
+    /// Precondition (`Arena::drop_newest`'s): `id` is the intrinsics
+    /// verifier's own, taken within the current command; no page
+    /// checkpoint, restart point, S₀ or detached branch refers to it.
     pub(crate) fn drop_checkpoint(&mut self, id: flashtex_engine::arena::CheckpointId) {
+        let own = self.host.intrinsics.take_verifier_checkpoint(id);
+        debug_assert!(
+            own,
+            "drop_checkpoint({id:?}): not the intrinsics verifier's checkpoint"
+        );
         if self.arena.checkpoint_ids().last() == Some(&id) {
             self.arena.drop_newest();
         } else {
