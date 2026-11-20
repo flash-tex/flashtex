@@ -13,12 +13,16 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <png.h>
 
 typedef struct {
     png_structp png;
     png_infop info;
     FILE *file;
+    /* ftpng_open_mem: the file's bytes, and how many were read */
+    const unsigned char *mem;
+    size_t mem_len, mem_pos;
 } ftpng;
 
 static void warn(png_structp png_ptr, png_const_charp msg)
@@ -78,6 +82,59 @@ ftpng *ftpng_open(const char *name, int *err)
     png_read_info(p->png, p->info);
     *err = 0;
     return p;
+}
+
+static void read_mem(png_structp png_ptr, png_bytep out, png_size_t n)
+{
+    ftpng *p = (ftpng *) png_get_io_ptr(png_ptr);
+    if (n > p->mem_len - p->mem_pos)
+        png_error(png_ptr, "Read Error");
+    memcpy(out, p->mem + p->mem_pos, n);
+    p->mem_pos += n;
+}
+
+/* ftpng_open on a file's bytes, `len` at `data`, which the caller keeps
+ * until ftpng_close (writepng.rs's pre-compression worker: what it
+ * compresses is then exactly the bytes it hashed). `*err` as ftpng_open's
+ * but for 1. */
+ftpng *ftpng_open_mem(const unsigned char *data, size_t len, int *err)
+{
+    ftpng *p = (ftpng *) calloc(1, sizeof(ftpng));
+    if (!p) {
+        *err = 2;
+        return NULL;
+    }
+    p->mem = data;
+    p->mem_len = len;
+    if ((p->png = png_create_read_struct(PNG_LIBPNG_VER_STRING,
+                                         NULL, NULL, warn)) == NULL) {
+        *err = 2;
+        ftpng_close(p);
+        return NULL;
+    }
+    if ((p->info = png_create_info_struct(p->png)) == NULL) {
+        *err = 3;
+        ftpng_close(p);
+        return NULL;
+    }
+    if (setjmp(png_jmpbuf(p->png))) {
+        *err = 4;
+        ftpng_close(p);
+        return NULL;
+    }
+#if PNG_LIBPNG_VER >= 10603
+    png_set_option(p->png, PNG_MAXIMUM_INFLATE_WINDOW, PNG_OPTION_ON);
+#endif
+    png_set_read_fn(p->png, p, read_mem);
+    png_read_info(p->png, p->info);
+    *err = 0;
+    return p;
+}
+
+/* The descriptor of the file a handle reads (-1: none, or in memory). */
+int ftpng_fd(ftpng *p)
+{
+    return p && p->file ? fileno(p->file) : -1;
 }
 
 /* The png_get_* queries writepng.c makes (none of them fails). */

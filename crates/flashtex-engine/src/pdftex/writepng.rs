@@ -29,6 +29,8 @@ struct PngColor {
 
 super::xpdf::linked_or_unlinked! {
     fn ftpng_open(name: *const c_char, err: *mut c_int) -> *mut FtPng;
+    fn ftpng_open_mem(data: *const u8, len: usize, err: *mut c_int) -> *mut FtPng;
+    fn ftpng_fd(p: *mut FtPng) -> c_int;
     fn ftpng_close(p: *mut FtPng);
     fn ftpng_get(p: *mut FtPng, what: c_int) -> c_ulong;
     fn ftpng_valid(p: *mut FtPng, flag: c_ulong) -> c_ulong;
@@ -293,17 +295,109 @@ impl Pixel {
     }
 }
 
+/// What `write_png` reads of the run to decide how an image is written:
+/// the PDF version and the image parameters `check_pdfversion` fixed (with
+/// `\pdfimagehicolor` off below PDF 1.5, as `write_png` sets it).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct PngParams {
+    major: i32,
+    minor: i32,
+    hicolor: bool,
+    apply_gamma: i32,
+    gamma: i32,
+    image_gamma: i32,
+}
+
+impl PngParams {
+    fn of(g: &Globals) -> PngParams {
+        PngParams {
+            major: g.fixed_pdf_major_version,
+            minor: g.fixed_pdf_minor_version,
+            hicolor: g.fixed_image_hicolor
+                && !(g.fixed_pdf_major_version == 1 && g.fixed_pdf_minor_version < 5),
+            apply_gamma: g.fixed_image_apply_gamma,
+            gamma: g.fixed_gamma,
+            image_gamma: g.fixed_image_gamma,
+        }
+    }
+}
+
+/// `write_png`'s transformations of the decoded image (transparency to
+/// alpha, alpha stripped below PDF 1.4, 16 bits stripped without hicolor,
+/// gamma; then the interlace handling and the info update), in its order;
+/// `Ok((png_copy, int_file_gamma))`, or `Err` when libpng fails.
+fn png_prepare(png: &PngImage, p: &PngParams) -> Result<(bool, i64), ()> {
+    let tr = |what: c_int, a: f64, b: f64| {
+        // SAFETY: a live handle; errors come back as -1.
+        if unsafe { ftpng_transform(png.h(), what, a, b) } != 0 {
+            Err(())
+        } else {
+            Ok(())
+        }
+    };
+    let mut png_copy = true;
+    let mut gamma = 0.0f64;
+    let mut int_file_gamma: i64 = 0;
+    // simple transparency support
+    if png.valid(PNG_INFO_TRNS) {
+        tr(TRNS_TO_ALPHA, 0.0, 0.0)?;
+        png_copy = false;
+    }
+    // alpha channel support
+    if p.major == 1 && p.minor < 4 && png.color_type() & PNG_COLOR_MASK_ALPHA != 0 {
+        tr(STRIP_ALPHA, 0.0, 0.0)?;
+        png_copy = false;
+    }
+    // 16 bit depth support
+    if png.bit_depth() == 16 && !p.hicolor {
+        tr(STRIP_16, 0.0, 0.0)?;
+        png_copy = false;
+    }
+    // gamma support
+    if png.valid(PNG_INFO_GAMA) {
+        (gamma, int_file_gamma) = png.gamma();
+    }
+    if p.apply_gamma != 0 {
+        let screen = p.gamma as f64 / 1000.0;
+        if png.valid(PNG_INFO_GAMA) {
+            tr(SET_GAMMA, screen, gamma)?;
+        } else {
+            let file = 1000.0 / p.image_gamma as f64;
+            tr(SET_GAMMA, screen, file)?;
+        }
+        png_copy = false;
+    }
+    // reset structure
+    tr(INTERLACE_HANDLING, 0.0, 0.0)?;
+    tr(UPDATE_INFO, 0.0, 0.0)?;
+    Ok((png_copy, int_file_gamma))
+}
+
+/// `write_png`'s test for copying the file's IDAT data unchanged.
+fn png_copy_ok(png: &PngImage, png_copy: bool, p: &PngParams, int_file_gamma: i64) -> bool {
+    let ct = png.color_type();
+    png_copy
+        && (p.major > 1 || p.minor > 1)
+        && png.interlace_type() == PNG_INTERLACE_NONE
+        && (ct == PNG_COLOR_TYPE_GRAY || ct == PNG_COLOR_TYPE_RGB)
+        && p.apply_gamma == 0
+        && (!png.valid(PNG_INFO_GAMA) || int_file_gamma == PNG_FP_1)
+        && !png.valid(
+            PNG_INFO_CHRM
+                | PNG_INFO_ICCP
+                | PNG_INFO_SBIT
+                | PNG_INFO_SRGB
+                | PNG_INFO_BKGD
+                | PNG_INFO_HIST
+                | PNG_INFO_TRNS
+                | PNG_INFO_SPLT,
+        )
+}
+
 impl Globals {
     /// "libpng: internal error": libpng longjmp'ed.
     fn png_internal_error(&mut self) -> ! {
         self.pdftex_fail("libpng: internal error")
-    }
-
-    fn png_transform(&mut self, p: &PngImage, what: c_int, a: f64, b: f64) {
-        // SAFETY: a live handle; errors come back as -1.
-        if unsafe { ftpng_transform(p.h(), what, a, b) } != 0 {
-            self.png_internal_error();
-        }
     }
 
     /// `read_png_info`.
@@ -325,6 +419,7 @@ impl Globals {
             raw: std::cell::Cell::new(raw),
             name: cname,
         };
+        let ahead_key = ahead::key(self, &png);
         // resolution support
         e.width = png.width() as i32;
         e.height = png.height() as i32;
@@ -354,6 +449,9 @@ impl Globals {
             e.group_ref = self.pdf_page_group_val;
         }
         e.data = ImageData::Png(png);
+        if let Some(k) = ahead_key {
+            ahead::start(k);
+        }
     }
 
     /// Put `bytes` at `pdfptr` (room made by the caller), as the C code
@@ -420,11 +518,7 @@ impl Globals {
                 self.png_write_row(&row, px, smask);
             }
         } else {
-            if (height as u64).wrapping_mul(rowbytes as u64) >= 10240000 {
-                self.pdftex_warn(
-                    "large interlaced PNG might cause out of memory (use non-interlaced PNG to fix this)",
-                );
-            }
+            self.png_interlace_warning(png);
             let mut rows: Vec<Vec<u8>> = (0..height).map(|_| vec![0u8; rowbytes]).collect();
             let mut ptrs: Vec<*mut u8> = rows.iter_mut().map(|r| r.as_mut_ptr()).collect();
             // SAFETY: `height` row pointers of rowbytes bytes each.
@@ -433,6 +527,39 @@ impl Globals {
             }
             for row in &rows {
                 self.png_write_row(row, px, smask);
+            }
+        }
+    }
+
+    /// `write_interlaced`'s warning about a large interlaced image.
+    fn png_interlace_warning(&mut self, png: &PngImage) {
+        if png.interlace_type() != PNG_INTERLACE_NONE
+            && png.height().wrapping_mul(png.rowbytes() as u64) >= 10240000
+        {
+            self.pdftex_warn(
+                "large interlaced PNG might cause out of memory (use non-interlaced PNG to fix this)",
+            );
+        }
+    }
+
+    /// A stream of rows: the bytes `ahead` compressed if the stream takes
+    /// them (`pdf_stream_compressed`; the warning `png_write_rows` would
+    /// give is given), else `png_write_rows`. True for the first.
+    fn png_rows_or(
+        &mut self,
+        png: &PngImage,
+        px: Pixel,
+        smask: &mut Vec<u8>,
+        pre: Option<&[u8]>,
+    ) -> bool {
+        match pre {
+            Some(b) if self.pdf_stream_compressed(b) => {
+                self.png_interlace_warning(png);
+                true
+            }
+            _ => {
+                self.png_write_rows(png, px, smask);
+                false
             }
         }
     }
@@ -459,7 +586,7 @@ impl Globals {
     }
 
     /// `write_png_palette`.
-    fn write_png_palette(&mut self, png: &PngImage, cs_ref: i32) {
+    fn write_png_palette(&mut self, png: &PngImage, cs_ref: i32, pre: Option<&ahead::Streams>) {
         let palette = png.palette();
         self.pdf_create_obj(0, 0);
         let palette_objnum = self.obj_ptr;
@@ -476,7 +603,7 @@ impl Globals {
             );
         }
         self.pdf_begin_stream();
-        self.png_write_rows(png, Pixel::Simple, &mut Vec::new());
+        self.png_rows_or(png, Pixel::Simple, &mut Vec::new(), ahead::plain(pre));
         self.pdf_end_stream();
         if palette_objnum > 0 {
             self.png_write_palette_obj(palette_objnum, &palette);
@@ -484,16 +611,29 @@ impl Globals {
     }
 
     /// `write_png_gray` and `write_png_rgb`.
-    fn write_png_plain(&mut self, png: &PngImage, cs_ref: i32, device: &[u8]) {
+    fn write_png_plain(
+        &mut self,
+        png: &PngImage,
+        cs_ref: i32,
+        device: &[u8],
+        pre: Option<&ahead::Streams>,
+    ) {
         self.png_colorspace(cs_ref, device);
         self.pdf_begin_stream();
-        self.png_write_rows(png, Pixel::Simple, &mut Vec::new());
+        self.png_rows_or(png, Pixel::Simple, &mut Vec::new(), ahead::plain(pre));
         self.pdf_end_stream();
     }
 
     /// `write_png_gray_alpha` and `write_png_rgb_alpha`: the colour into
     /// the image, the alpha channel into its `/SMask`.
-    fn write_png_alpha(&mut self, png: &PngImage, cs_ref: i32, rgb: bool) {
+    fn write_png_alpha(
+        &mut self,
+        png: &PngImage,
+        cs_ref: i32,
+        rgb: bool,
+        pre: Option<&ahead::Streams>,
+    ) {
+        let (pre_colour, pre_mask) = ahead::alpha(pre);
         self.png_colorspace(
             cs_ref,
             if rgb {
@@ -515,7 +655,7 @@ impl Globals {
             (true, true) => Pixel::Rgb16,
         };
         self.pdf_begin_stream();
-        self.png_write_rows(png, px, &mut smask);
+        let colour_ahead = self.png_rows_or(png, px, &mut smask, pre_colour);
         self.pdf_end_stream();
         self.pdf_flush();
         // C's mask buffer has exactly smask_size bytes
@@ -536,6 +676,20 @@ impl Globals {
             );
             self.pdf_puts(b"/ColorSpace /DeviceGray\n");
             self.pdf_begin_stream();
+            if colour_ahead {
+                // the mask compressed ahead with the colour; else (it never
+                // is, both streams being in the same state) the rows that
+                // fill `smask` are read now
+                if pre_mask.is_some_and(|b| self.pdf_stream_compressed(b)) {
+                    self.pdf_end_stream();
+                    return;
+                }
+                match ahead::rows(png, px) {
+                    Some((_, m)) => smask = m,
+                    None => self.png_internal_error(),
+                }
+                smask.resize(smask_size, 0);
+            }
             // C: `pdfroom(8)` whenever i % 8 == 0, then the byte, with i
             // stepping by 2 (the high bytes) for 16 bits; so eight indices
             // at a time
@@ -666,53 +820,17 @@ impl Globals {
         let ImageData::Png(png) = &e.data else {
             self.pdftex_fail("unknown type of image");
         };
-        let mut png_copy = true;
-        let mut gamma = 0.0f64;
-        let mut int_file_gamma: i64 = 0;
         st.last_png_needs_page_group = false;
         let palette = png.palette();
         if self.fixed_pdf_major_version == 1 && self.fixed_pdf_minor_version < 5 {
             self.fixed_image_hicolor = false;
         }
         self.pdf_puts(b"/Type /XObject\n/Subtype /Image\n");
-        // simple transparency support
-        if png.valid(PNG_INFO_TRNS) {
-            self.png_transform(png, TRNS_TO_ALPHA, 0.0, 0.0);
-            png_copy = false;
-        }
-        // alpha channel support
-        if self.fixed_pdf_major_version == 1
-            && self.fixed_pdf_minor_version < 4
-            && png.color_type() & PNG_COLOR_MASK_ALPHA != 0
-        {
-            self.png_transform(png, STRIP_ALPHA, 0.0, 0.0);
-            png_copy = false;
-        }
-        // 16 bit depth support
-        if self.fixed_pdf_major_version == 1 && self.fixed_pdf_minor_version < 5 {
-            self.fixed_image_hicolor = false;
-        }
-        if png.bit_depth() == 16 && !self.fixed_image_hicolor {
-            self.png_transform(png, STRIP_16, 0.0, 0.0);
-            png_copy = false;
-        }
-        // gamma support
-        if png.valid(PNG_INFO_GAMA) {
-            (gamma, int_file_gamma) = png.gamma();
-        }
-        if self.fixed_image_apply_gamma != 0 {
-            let screen = self.fixed_gamma as f64 / 1000.0;
-            if png.valid(PNG_INFO_GAMA) {
-                self.png_transform(png, SET_GAMMA, screen, gamma);
-            } else {
-                let file = 1000.0 / self.fixed_image_gamma as f64;
-                self.png_transform(png, SET_GAMMA, screen, file);
-            }
-            png_copy = false;
-        }
-        // reset structure
-        self.png_transform(png, INTERLACE_HANDLING, 0.0, 0.0);
-        self.png_transform(png, UPDATE_INFO, 0.0, 0.0);
+        // transparency, alpha, 16 bits, gamma; reset structure
+        let params = PngParams::of(self);
+        let Ok((png_copy, int_file_gamma)) = png_prepare(png, &params) else {
+            self.png_internal_error();
+        };
 
         self.pdf_printf(
             format!(
@@ -726,23 +844,7 @@ impl Globals {
         self.pdf_puts(b"/ColorSpace ");
         let ct = png.color_type();
         let apply_gamma = self.fixed_image_apply_gamma != 0;
-        if png_copy
-            && (self.fixed_pdf_major_version > 1 || self.fixed_pdf_minor_version > 1)
-            && png.interlace_type() == PNG_INTERLACE_NONE
-            && (ct == PNG_COLOR_TYPE_GRAY || ct == PNG_COLOR_TYPE_RGB)
-            && !apply_gamma
-            && (!png.valid(PNG_INFO_GAMA) || int_file_gamma == PNG_FP_1)
-            && !png.valid(
-                PNG_INFO_CHRM
-                    | PNG_INFO_ICCP
-                    | PNG_INFO_SBIT
-                    | PNG_INFO_SRGB
-                    | PNG_INFO_BKGD
-                    | PNG_INFO_HIST
-                    | PNG_INFO_TRNS
-                    | PNG_INFO_SPLT,
-            )
-        {
+        if png_copy_ok(png, png_copy, &params, int_file_gamma) {
             // Copy PNG
             let mut palette_objnum = 0;
             if cs_ref != 0 {
@@ -813,24 +915,40 @@ impl Globals {
                 }
             }
             let alpha_ok = self.fixed_pdf_minor_version >= 4 || self.fixed_pdf_major_version > 1;
+            let t0 = std::time::Instant::now();
+            let pre = if ahead::buffer_ok(self) {
+                ahead::key(self, png).and_then(|k| ahead::take(&k))
+            } else {
+                None
+            };
+            if std::env::var_os("FLASHTEX_PNG_AHEAD_DEBUG").is_some() {
+                // (stderr only: nothing the run writes changes)
+                eprintln!(
+                    "png-ahead: {} {}, waited {:.1} ms",
+                    png.name.to_string_lossy(),
+                    if pre.is_some() { "ahead" } else { "not ahead" },
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
+            }
+            let pre = pre.as_deref().map(|d| &d.streams);
             match ct {
-                PNG_COLOR_TYPE_PALETTE => self.write_png_palette(png, cs_ref),
-                PNG_COLOR_TYPE_GRAY => self.write_png_plain(png, cs_ref, b"/DeviceGray\n"),
+                PNG_COLOR_TYPE_PALETTE => self.write_png_palette(png, cs_ref, pre),
+                PNG_COLOR_TYPE_GRAY => self.write_png_plain(png, cs_ref, b"/DeviceGray\n", pre),
                 PNG_COLOR_TYPE_GRAY_ALPHA => {
                     if alpha_ok {
-                        self.write_png_alpha(png, cs_ref, false);
+                        self.write_png_alpha(png, cs_ref, false, pre);
                         st.last_png_needs_page_group = true;
                     } else {
-                        self.write_png_plain(png, cs_ref, b"/DeviceGray\n");
+                        self.write_png_plain(png, cs_ref, b"/DeviceGray\n", pre);
                     }
                 }
-                PNG_COLOR_TYPE_RGB => self.write_png_plain(png, cs_ref, b"/DeviceRGB\n"),
+                PNG_COLOR_TYPE_RGB => self.write_png_plain(png, cs_ref, b"/DeviceRGB\n", pre),
                 PNG_COLOR_TYPE_RGB_ALPHA => {
                     if alpha_ok {
-                        self.write_png_alpha(png, cs_ref, true);
+                        self.write_png_alpha(png, cs_ref, true, pre);
                         st.last_png_needs_page_group = true;
                     } else {
-                        self.write_png_plain(png, cs_ref, b"/DeviceRGB\n");
+                        self.write_png_plain(png, cs_ref, b"/DeviceRGB\n", pre);
                     }
                 }
                 _ => self.pdftex_fail(&format!("unsupported type of color_type <{ct}>")),
@@ -838,6 +956,553 @@ impl Globals {
         }
         self.pdf_flush();
         self.write_additional_png_objects(st);
+    }
+}
+
+/// PNG streams compressed ahead (lane THROUGHPUT, DESIGN.md §5.6 item 7:
+/// "compress ... in parallel at export. zlib is deterministic, so the PDF
+/// stays byte-identical").
+///
+/// A PNG that `write_png` decodes (not copied) is decoded and its streams
+/// compressed twice over in pdfTeX's order: libpng's rows, then zlib's
+/// level-9 deflate of every stream byte, on the engine's thread, when the
+/// page that uses it is shipped out. Here `\pdfximage` (`read_png_info`)
+/// starts a worker thread that does that work on a handle of its own: the
+/// same transformations (`png_prepare`, with the parameters
+/// `check_pdfversion` has already fixed), the same rows, the colour and mask
+/// bytes `write_png_plain`, `write_png_palette` and `write_png_alpha` put in
+/// their streams, each compressed by TeX Live's zlib at `\pdfcompresslevel`
+/// in one stream from `deflateInit` to `Z_FINISH`. A stream's compressed
+/// bytes depend only on its bytes and the level, not on how they reach
+/// zlib (`write_zip` gives them a PDF buffer at a time), so they are the
+/// bytes `write_zip` would write. When `write_png` reaches the stream, it
+/// takes the result if everything the worker assumed still holds -- the
+/// file, the parameters, the level, no preview or draft mode, a PDF buffer
+/// whose size keeps a pixel's bytes in one chunk -- and `write_zip` writes
+/// those bytes where it would have compressed (`super::output`). Anything
+/// else, or a worker that failed, and the stream is made as before. The
+/// dictionaries are written as before in every case.
+///
+/// **The file.** A resident host restores checkpoints, so a result may be
+/// taken by a later run than the one that started it, before or after the
+/// file changed. A result is keyed by the file's identity (`os::file_stat`:
+/// size, modification and status-change times, inode, device) as the
+/// handle the engine reads it through gives it, and by every setting the
+/// streams depend on (`PngParams`, the level); `write_png` takes the key
+/// afresh from its own handle and the run's settings when it writes, so a
+/// `\pdfximage` of the file with other settings, or a file rewritten, is
+/// another key. The worker reads the file's bytes once, with the same
+/// identity before and after, decodes those bytes (`ftpng_open_mem`) and
+/// keeps their hash; `take` gives a result only while the file's name
+/// still has that identity and its bytes that hash (`hashcache`: hashed
+/// again while the identity is within the racy window of now, when a
+/// same-length rewrite within one tick would keep it). Results for a file
+/// whose identity has moved on are dropped when it is opened again. Unix
+/// only: elsewhere a file has no inode and no status-change time to tell
+/// a handle's file from its name's.
+mod ahead {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Condvar, Mutex, OnceLock};
+
+    /// A file as `os::file_stat` gives it.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    struct Ident {
+        size: u64,
+        mtime_ns: i128,
+        ctime_ns: i128,
+        ino: u64,
+        dev: u64,
+    }
+
+    impl Ident {
+        fn of(m: &std::fs::Metadata) -> Ident {
+            let s = crate::os::file_stat(m);
+            Ident {
+                size: s.size,
+                mtime_ns: s.mtime_ns,
+                ctime_ns: s.ctime_ns,
+                ino: s.ino,
+                dev: s.dev,
+            }
+        }
+
+        fn of_path(name: &CString) -> Option<Ident> {
+            Some(Ident::of(&std::fs::metadata(name.to_str().ok()?).ok()?))
+        }
+    }
+
+    /// What a result was computed from: the file and every setting.
+    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+    pub(super) struct Key {
+        name: CString,
+        file: Ident,
+        params: PngParams,
+        level: i32,
+    }
+
+    /// The compressed streams of an image: the image's, and its mask's.
+    pub(super) enum Streams {
+        Plain(Vec<u8>),
+        Alpha(Vec<u8>, Vec<u8>),
+    }
+
+    impl Streams {
+        fn len(&self) -> usize {
+            match self {
+                Streams::Plain(a) => a.len(),
+                Streams::Alpha(a, b) => a.len() + b.len(),
+            }
+        }
+    }
+
+    /// A result: the streams, and the hash of the file's bytes they were
+    /// made from.
+    pub(super) struct Done {
+        pub(super) streams: Streams,
+        hash: [u64; 2],
+    }
+
+    #[derive(Default)]
+    struct Job {
+        done: Mutex<Option<Option<Arc<Done>>>>,
+        cv: Condvar,
+    }
+
+    /// Results by key; the bytes they hold, to bound them.
+    #[derive(Default)]
+    struct Table {
+        jobs: HashMap<Key, Arc<Job>>,
+        bytes: usize,
+    }
+
+    /// At most this many compressed bytes are kept (a resident host compiles
+    /// the same document again; a command-line run uses each once).
+    const KEEP: usize = 256 << 20;
+
+    fn table() -> &'static Mutex<Table> {
+        static T: OnceLock<Mutex<Table>> = OnceLock::new();
+        T.get_or_init(Default::default)
+    }
+
+    /// The bytes a finished job holds.
+    fn held(j: &Job) -> usize {
+        match j.done.lock() {
+            Ok(d) => d
+                .as_ref()
+                .and_then(|d| d.as_ref())
+                .map_or(0, |d| d.streams.len()),
+            Err(_) => 0,
+        }
+    }
+
+    /// Workers running at once: the other cores.
+    fn permits() -> &'static (Mutex<usize>, Condvar) {
+        static P: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
+        P.get_or_init(|| {
+            let n = std::thread::available_parallelism().map_or(1, |n| n.get());
+            (Mutex::new(n.saturating_sub(1).max(1)), Condvar::new())
+        })
+    }
+
+    fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("FLASHTEX_PNG_AHEAD").as_deref() != Ok("0"))
+    }
+
+    /// The identity of the file `png`'s handle reads (opened again by name
+    /// after a restore, as the engine's own reads would open it).
+    #[cfg(unix)]
+    fn handle_ident(png: &PngImage) -> Option<Ident> {
+        use std::os::unix::io::FromRawFd;
+        // SAFETY: a live handle.
+        let fd = unsafe { ftpng_fd(png.h()) };
+        if fd < 0 {
+            return None;
+        }
+        // SAFETY: the handle's open descriptor, borrowed: never closed here.
+        let f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+        f.metadata().ok().map(|m| Ident::of(&m))
+    }
+
+    #[cfg(not(unix))]
+    fn handle_ident(_png: &PngImage) -> Option<Ident> {
+        None
+    }
+
+    /// The key of image `png` as the run and its file stand now, if a
+    /// result could be used for it: the file its handle reads, which its
+    /// name still names.
+    pub(super) fn key(g: &mut Globals, png: &PngImage) -> Option<Key> {
+        if !cfg!(unix)
+            || !enabled()
+            || !super::super::xpdf::LINKED
+            || super::super::preview()
+            || g.fixed_pdf_draftmode != 0
+        {
+            return None;
+        }
+        let level = g.get_pdf_compress_level();
+        if level <= 0 {
+            return None;
+        }
+        let file = handle_ident(png)?;
+        if Ident::of_path(&png.name)? != file {
+            return None;
+        }
+        Some(Key {
+            name: png.name.clone(),
+            file,
+            params: PngParams::of(g),
+            level,
+        })
+    }
+
+    /// Whether the PDF buffer keeps a pixel in one chunk now (its size a
+    /// multiple of 8; an image is written outside object streams), as the
+    /// worker assumed. (At `\\pdfximage` the buffer may be the object
+    /// stream's; only the writing matters.)
+    pub(super) fn buffer_ok(g: &Globals) -> bool {
+        !g.pdf_os_mode && g.pdf_buf_size > 0 && g.pdf_buf_size % 8 == 0
+    }
+
+    /// Start the work for `key` unless it is done or under way. Results for
+    /// the file under an identity it no longer has go.
+    pub(super) fn start(key: Key) {
+        let job = {
+            let mut t = table().lock().unwrap_or_else(|e| e.into_inner());
+            if t.jobs.contains_key(&key) {
+                return;
+            }
+            let mut freed = 0;
+            t.jobs.retain(|k, j| {
+                let stale = k.name == key.name && k.file != key.file;
+                if stale {
+                    freed += held(j);
+                }
+                !stale
+            });
+            t.bytes = t.bytes.saturating_sub(freed);
+            if t.bytes > KEEP {
+                // the finished ones go; one under way is still waited for
+                t.jobs.retain(|_, j| match j.done.lock() {
+                    Ok(d) => d.is_none(),
+                    Err(_) => false,
+                });
+                t.bytes = 0;
+            }
+            let job = Arc::new(Job::default());
+            t.jobs.insert(key.clone(), job.clone());
+            job
+        };
+        let k = key.clone();
+        let spawned = std::thread::Builder::new()
+            .name("png-ahead".into())
+            .spawn(move || {
+                let (m, cv) = permits();
+                {
+                    let mut n = m.lock().unwrap_or_else(|e| e.into_inner());
+                    while *n == 0 {
+                        n = cv.wait(n).unwrap_or_else(|e| e.into_inner());
+                    }
+                    *n -= 1;
+                }
+                let r = std::panic::catch_unwind(|| compute(&k))
+                    .ok()
+                    .flatten()
+                    .map(Arc::new);
+                {
+                    *m.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                    cv.notify_one();
+                }
+                {
+                    // counted while the table holds the job
+                    let mut t = table().lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(d) = &r {
+                        if t.jobs.get(&k).is_some_and(|j| Arc::ptr_eq(j, &job)) {
+                            t.bytes += d.streams.len();
+                        }
+                    }
+                    *job.done.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+                }
+                job.cv.notify_all();
+            });
+        if spawned.is_err() {
+            table()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .jobs
+                .remove(&key);
+        }
+    }
+
+    /// The result for `key`, waiting for its worker, while the file's name
+    /// still has the identity and the bytes it was made from; `None` if
+    /// there is none.
+    pub(super) fn take(key: &Key) -> Option<Arc<Done>> {
+        let job = table()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .jobs
+            .get(key)?
+            .clone();
+        let d = {
+            let mut d = job.done.lock().unwrap_or_else(|e| e.into_inner());
+            while d.is_none() {
+                d = job.cv.wait(d).unwrap_or_else(|e| e.into_inner());
+            }
+            d.clone().flatten()?
+        };
+        let path = key.name.to_str().ok()?;
+        let m = std::fs::metadata(path).ok()?;
+        if Ident::of(&m) != key.file {
+            return None;
+        }
+        (crate::hashcache::hash_file_from(path, &m).ok()? == d.hash).then_some(d)
+    }
+
+    /// The image stream, of a result for a plain or palette image.
+    pub(super) fn plain(s: Option<&Streams>) -> Option<&[u8]> {
+        match s {
+            Some(Streams::Plain(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The image and mask streams, of a result for an image with alpha.
+    pub(super) fn alpha(s: Option<&Streams>) -> (Option<&[u8]>, Option<&[u8]>) {
+        match s {
+            Some(Streams::Alpha(a, b)) => (Some(a), Some(b)),
+            _ => (None, None),
+        }
+    }
+
+    /// TeX Live's zlib on all of `data` at `level`: `deflateInit`, one
+    /// `deflate(Z_FINISH)` loop, `deflateEnd`.
+    fn compress(level: i32, data: &[u8]) -> Option<Vec<u8>> {
+        let n = u32::try_from(data.len()).ok()?;
+        let mut zs = super::super::zlib::ZStream::new();
+        if zs.deflate_init(level) != super::super::zlib::Z_OK {
+            return None;
+        }
+        let mut out = Vec::with_capacity(data.len() / 2 + 64);
+        let mut buf = vec![0u8; 1 << 16];
+        zs.next_in = data.as_ptr();
+        zs.avail_in = n;
+        let ok = loop {
+            zs.next_out = buf.as_mut_ptr();
+            zs.avail_out = buf.len() as u32;
+            let r = zs.deflate(super::super::zlib::Z_FINISH);
+            out.extend_from_slice(&buf[..buf.len() - zs.avail_out as usize]);
+            if r == super::super::zlib::Z_STREAM_END {
+                break true;
+            }
+            if r != super::super::zlib::Z_OK {
+                break false;
+            }
+        };
+        zs.next_in = std::ptr::null();
+        zs.deflate_end();
+        ok.then_some(out)
+    }
+
+    /// The streams `write_png` would compress for the image of `key`, with
+    /// the hash of the bytes they were made from, or `None` when it copies
+    /// the file's data instead, the file changed while it was read, or
+    /// libpng fails.
+    fn compute(key: &Key) -> Option<Done> {
+        // the file's bytes, read while it has the key's identity
+        if Ident::of_path(&key.name)? != key.file {
+            return None;
+        }
+        let bytes = std::fs::read(key.name.to_str().ok()?).ok()?;
+        if bytes.len() as u64 != key.file.size || Ident::of_path(&key.name)? != key.file {
+            return None;
+        }
+        let hash = crate::persist::hash128(&bytes);
+        let streams = compute_from(key, &bytes)?;
+        Some(Done { streams, hash })
+    }
+
+    /// `compute`'s streams, decoded from the file's `bytes`.
+    fn compute_from(key: &Key, bytes: &[u8]) -> Option<Streams> {
+        let mut err: c_int = 0;
+        // SAFETY: `bytes` outlives the handle (`png`, dropped at the end).
+        let raw = unsafe { ftpng_open_mem(bytes.as_ptr(), bytes.len(), &mut err) };
+        if raw.is_null() || err != 0 {
+            return None;
+        }
+        let png = PngImage {
+            raw: std::cell::Cell::new(raw),
+            name: key.name.clone(),
+        };
+        let p = &key.params;
+        let (png_copy, int_file_gamma) = png_prepare(&png, p).ok()?;
+        if png_copy_ok(&png, png_copy, p, int_file_gamma) {
+            return None;
+        }
+        let alpha_ok = p.minor >= 4 || p.major > 1;
+        let ct = png.color_type();
+        let rgb = match ct {
+            PNG_COLOR_TYPE_GRAY_ALPHA if alpha_ok => false,
+            PNG_COLOR_TYPE_RGB_ALPHA if alpha_ok => true,
+            PNG_COLOR_TYPE_PALETTE
+            | PNG_COLOR_TYPE_GRAY
+            | PNG_COLOR_TYPE_GRAY_ALPHA
+            | PNG_COLOR_TYPE_RGB
+            | PNG_COLOR_TYPE_RGB_ALPHA => {
+                let (colour, _) = rows(&png, Pixel::Simple)?;
+                return Some(Streams::Plain(compress(key.level, &colour)?));
+            }
+            _ => return None,
+        };
+        // write_png_alpha
+        let smask_size = (png.rowbytes() / if rgb { 4 } else { 2 }) * png.height() as usize;
+        let sixteen = png.bit_depth() == 16 && p.hicolor;
+        let px = match (rgb, sixteen) {
+            (false, false) => Pixel::Gray8,
+            (false, true) => Pixel::Gray16,
+            (true, false) => Pixel::Rgb8,
+            (true, true) => Pixel::Rgb16,
+        };
+        let (colour, mut smask) = rows(&png, px)?;
+        smask.resize(smask_size, 0);
+        let mask: Vec<u8> = if png.bit_depth() == 16 {
+            smask.iter().step_by(2).copied().collect()
+        } else {
+            smask
+        };
+        Some(Streams::Alpha(
+            compress(key.level, &colour)?,
+            compress(key.level, &mask)?,
+        ))
+    }
+
+    /// `png_write_rows`' bytes: the colour bytes and the mask bytes, in
+    /// order. A row is split by its own byte positions, which are its
+    /// chunks' (a chunk is `pdf_buf_size` bytes, a multiple of 8, and so of
+    /// every pixel size).
+    pub(super) fn rows(png: &PngImage, px: Pixel) -> Option<(Vec<u8>, Vec<u8>)> {
+        let (height, rowbytes) = (png.height() as usize, png.rowbytes());
+        let mut colour = Vec::new();
+        let mut smask = Vec::new();
+        let mut put = |row: &[u8]| {
+            let at = colour.len();
+            let n = match px {
+                Pixel::Simple => row.len(),
+                Pixel::Gray8 => colour_len::<2, 1>(row.len()),
+                Pixel::Gray16 => colour_len::<4, 2>(row.len()),
+                Pixel::Rgb8 => colour_len::<4, 3>(row.len()),
+                Pixel::Rgb16 => colour_len::<8, 6>(row.len()),
+            };
+            if let Pixel::Simple = px {
+                colour.extend_from_slice(row);
+                return;
+            }
+            let mut dst = vec![0i32; n];
+            match px {
+                Pixel::Gray8 => split_alpha::<2, 1>(row, &mut dst, &mut smask),
+                Pixel::Gray16 => split_alpha::<4, 2>(row, &mut dst, &mut smask),
+                Pixel::Rgb8 => split_alpha::<4, 3>(row, &mut dst, &mut smask),
+                _ => split_alpha::<8, 6>(row, &mut dst, &mut smask),
+            }
+            colour.extend(dst.iter().map(|&s| s as u8));
+            debug_assert_eq!(colour.len(), at + n);
+        };
+        if png.interlace_type() == PNG_INTERLACE_NONE {
+            let mut row = vec![0u8; rowbytes];
+            for _ in 0..height {
+                // SAFETY: `row` holds rowbytes bytes, what libpng writes.
+                if unsafe { ftpng_read_row(png.h(), row.as_mut_ptr()) } != 0 {
+                    return None;
+                }
+                put(&row);
+            }
+        } else {
+            let mut rows: Vec<Vec<u8>> = (0..height).map(|_| vec![0u8; rowbytes]).collect();
+            let mut ptrs: Vec<*mut u8> = rows.iter_mut().map(|r| r.as_mut_ptr()).collect();
+            // SAFETY: `height` row pointers of rowbytes bytes each.
+            if unsafe { ftpng_read_image(png.h(), ptrs.as_mut_ptr()) } != 0 {
+                return None;
+            }
+            for row in &rows {
+                put(row);
+            }
+        }
+        Some((colour, smask))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::super::zlib::{ZStream, Z_FINISH, Z_NO_FLUSH, Z_OK, Z_STREAM_END};
+
+        /// `write_zip`'s way: the bytes a PDF buffer at a time with
+        /// `Z_NO_FLUSH`, then `Z_FINISH`, into a 32 KB output buffer.
+        fn chunked(level: i32, data: &[u8], chunk: usize) -> Vec<u8> {
+            let mut zs = ZStream::new();
+            assert_eq!(zs.deflate_init(level), Z_OK);
+            let mut out = Vec::new();
+            let mut buf = vec![0u8; 32768];
+            zs.next_out = buf.as_mut_ptr();
+            zs.avail_out = buf.len() as u32;
+            let parts: Vec<&[u8]> = data.chunks(chunk).collect();
+            for (i, part) in parts.iter().enumerate() {
+                let finish = i + 1 == parts.len();
+                zs.next_in = part.as_ptr();
+                zs.avail_in = part.len() as u32;
+                loop {
+                    if zs.avail_out == 0 {
+                        out.extend_from_slice(&buf);
+                        zs.next_out = buf.as_mut_ptr();
+                        zs.avail_out = buf.len() as u32;
+                    }
+                    let r = zs.deflate(if finish { Z_FINISH } else { Z_NO_FLUSH });
+                    if finish && r == Z_STREAM_END {
+                        break;
+                    }
+                    assert_eq!(r, Z_OK);
+                    if !finish && zs.avail_in == 0 {
+                        break;
+                    }
+                }
+            }
+            out.extend_from_slice(&buf[..buf.len() - zs.avail_out as usize]);
+            zs.next_in = std::ptr::null();
+            zs.deflate_end();
+            out
+        }
+
+        /// What `ahead` relies on: one stream compressed at once gives the
+        /// bytes `write_zip` gives it a buffer at a time, at every level.
+        #[test]
+        fn compressed_at_once_is_compressed_a_buffer_at_a_time() {
+            let mut x: u32 = 12345;
+            let mut data = Vec::new();
+            // runs, repeats and noise, a little over 1 MB
+            while data.len() < 1_100_000 {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                let n = (x >> 24) as usize + 1;
+                match x % 3 {
+                    0 => data.extend(std::iter::repeat_n((x >> 8) as u8, n)),
+                    1 => {
+                        let at = data.len().saturating_sub(n * 3);
+                        let rep: Vec<u8> = data[at..].iter().take(n).copied().collect();
+                        data.extend(rep);
+                    }
+                    _ => data.extend((0..n).map(|i| (x >> (i % 24)) as u8)),
+                }
+            }
+            for level in [1, 6, 9] {
+                let once = super::compress(level, &data).expect("compressed");
+                for chunk in [1000, 16384, 16385] {
+                    assert_eq!(
+                        once,
+                        chunked(level, &data, chunk),
+                        "level {level}, chunk {chunk}"
+                    );
+                }
+            }
+        }
     }
 }
 
