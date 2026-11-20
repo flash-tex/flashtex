@@ -696,6 +696,25 @@ fn calls_in_math_groups_compare_their_save_stack() {
 }
 
 #[test]
+fn a_call_that_ends_its_paragraph_and_starts_one_never_replays() {
+    // (#2449, REVIEW-D's probe on #2223) a call in horizontal mode on an
+    // empty paragraph inside a `\\vbox`: `\\par` pops the empty hlist,
+    // `\\noindent` sets the vbox's `prev_graf` to 0 (tex.web §1091) and
+    // pushes a list whose head `get_avail` hands back, so `nest_ptr`, the
+    // mode and `tail` end as they started. On main a replay left the line
+    // count: off `[0] [0] [0]`, on `[0] [1] [1]`
+    let s = check(
+        "outerpar",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\par\\noindent}\n\
+         \\def\\one{\\setbox2\\vbox{x\\par\\noindent\\prevgraf=1 \\measure{}\\par\\message{[\\the\\prevgraf]}}}\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert!(stat(&s, "OuterList") >= 1, "{s}");
+}
+
+#[test]
 fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
     // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
     // assignments local (tex.web §1214), like `\globaldefs>0` makes its
