@@ -62,6 +62,7 @@ pub mod s0file;
 pub mod state;
 pub mod statediff;
 pub mod system;
+mod undefined;
 pub mod xetex_ext;
 
 pub use generated::Globals;

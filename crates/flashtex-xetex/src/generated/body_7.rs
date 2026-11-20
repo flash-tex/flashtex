@@ -6927,6 +6927,34 @@ impl Globals {
                                                                         self.set_native_metrics(self.temp_ptr, (self.eqtb[crate::ix::U(((7892342i32) - 1) as usize)].int() > 0i32));
                                                                         t = ((self.mem[crate::ix::U(((self.temp_ptr).wrapping_add(1i32)) as usize)].int()).wrapping_sub(self.mem[crate::ix::U(((self.main_pp).wrapping_add(1i32)) as usize)].int())).wrapping_sub(self.mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(1i32)) as usize)].int());
                                                                         self.free_node(self.temp_ptr, self.mem[crate::ix::U(((self.temp_ptr).wrapping_add(4i32)) as usize)].qqqq().b0());
+                                                                        if (self.font_glue[crate::ix::U((self.main_f) as usize)] == (268435455i32).wrapping_neg()) {
+                                                                            {
+                                                                                self.normalize_selector();
+                                                                                self.print_nl(65626i32);
+                                                                                self.undefined_null_read_note();
+                                                                                {
+                                                                                    if (self.interaction == error_stop_mode) {
+                                                                                    }
+                                                                                    if self.file_line_error_style_p {
+                                                                                        self.print_file_line();
+                                                                                    } else {
+                                                                                        self.print_nl(65544i32);
+                                                                                    }
+                                                                                    self.print(65567i32);
+                                                                                }
+                                                                                self.help_ptr = 0i32;
+                                                                                {
+                                                                                    if (self.interaction == error_stop_mode) {
+                                                                                        self.interaction = scroll_mode;
+                                                                                    }
+                                                                                    if self.log_opened {
+                                                                                        self.error();
+                                                                                    }
+                                                                                    self.history = fatal_error_stop;
+                                                                                    self.jump_out();
+                                                                                }
+                                                                            }
+                                                                        }
                                                                         if (t != self.mem[crate::ix::U(((self.font_glue[crate::ix::U((self.main_f) as usize)]).wrapping_add(1i32)) as usize)].int()) {
                                                                             {
                                                                                 self.temp_ptr = self.new_kern((t).wrapping_sub(self.mem[crate::ix::U(((self.font_glue[crate::ix::U((self.main_f) as usize)]).wrapping_add(1i32)) as usize)].int()));
