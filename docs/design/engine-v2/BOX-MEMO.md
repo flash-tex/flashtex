@@ -209,6 +209,11 @@ later.
   `\insertpenalties`, `\interactionmode`. At the end, the page and contribution lists, `page_so_far`,
   `last_glue`/`last_penalty`/`last_kern`, `output_active` and `insert_penalties` must be as at the
   start.
+- **The paragraph it is in ending.** `\par`, or a display's `$$`, in the paragraph the call was made
+  in (lane AUDIT-GROUPS, #2268). `pop_nest` frees the paragraph's head, and the next paragraph's
+  `push_nest` takes the same node back from `get_avail`. The end check would then find the same list,
+  while the lines and `\parskip` went to the enclosing one. In a paragraph a call may append
+  nothing, so this costs no replay.
 - **Marks.** `\topmark` and its kind (D9's `Why::Mark`). A `\vsplit` that changes the split marks or
   e-TeX's `disc_ptr` (checked at the end).
 - **`last_item` reads outside an allowlist.** The allowlist: `\eTeXversion`, `\pdftexversion`, the
