@@ -94,4 +94,87 @@ final class EditorTextShadowTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(co.shadowHits - hits, 6, "keystrokes took the shadow's text")
         XCTAssertEqual(co.shadowDrifts, 0)
     }
+
+    // MARK: no whole-buffer copy per keystroke (APP-KEYPATH)
+
+    /// Typing, backspaces and a paste in a 3 MB non-ASCII book while the
+    /// last two texts are still held elsewhere (the model and the compiled
+    /// baseline): after the first few keys no keystroke allocates or copies
+    /// a buffer, each text is a retired one brought up to date in place,
+    /// every text is the storage's byte for byte, and texts held elsewhere
+    /// never change.
+    func testKeystrokesReuseARetiredBufferInsteadOfCopyingTheText() {
+        var s = ""
+        let line = "Naïve café patrons — résumé in hand — watched the tide turn; 😀 $x^2$ \\emph{ö}.\n"
+        while s.utf8.count < 3_000_000 { s += line }
+        let storage = NSMutableString(string: s)
+        var shadow = EditorTextShadow(text: s, length16: storage.length)
+        var held: [(text: String, bytes: [UInt8])] = []
+        EditorTextShadow.Spares.resetCounters()
+        var caret = storage.length / 2
+        var keys = 0, copiedAfterWarmup = 0
+        let warmup = EditorTextShadow.Spares.capacity + 1
+        func edit(_ range: NSRange, _ insert: String) {
+            storage.replaceCharacters(in: range, with: insert)
+            let n = (insert as NSString).length
+            let before = EditorTextShadow.Spares.copiedBytes
+            XCTAssertTrue(shadow.apply(storage: storage, edited: NSRange(location: range.location, length: n), delta: n - range.length))
+            keys += 1
+            if keys > warmup { copiedAfterWarmup += EditorTextShadow.Spares.copiedBytes - before }
+            caret = range.location + n
+            XCTAssertEqual(shadow.bytes, (storage as String).utf8.count)
+            if keys % 10 == 0 { XCTAssertTrue(shadow.text.sameBytes(as: storage as String), "key \(keys)") }
+            held.append((shadow.text, keys % 10 == 0 ? Array(shadow.text.utf8) : []))
+            if held.count > 2 { held.removeFirst() }
+        }
+        for ch in "typing a sentence — naïvely 😀 " { edit(NSRange(location: caret, length: 0), String(ch)) }
+        for _ in 0 ..< 5 { edit((storage as NSString).rangeOfComposedCharacterSequence(at: caret - 1), "") }
+        edit(NSRange(location: 1000, length: 0), "a paste\nof two lines é\n")
+        for ch in "more" { edit(NSRange(location: caret, length: 0), String(ch)) }
+        XCTAssertTrue(shadow.text.sameBytes(as: storage as String))
+        for h in held where !h.bytes.isEmpty { XCTAssertEqual(Array(h.text.utf8), h.bytes, "a text held elsewhere changed") }
+        XCTAssertEqual(copiedAfterWarmup, 0, "no keystroke after the first \(warmup) copied the 3 MB text")
+        XCTAssertGreaterThanOrEqual(EditorTextShadow.Spares.reusedInPlace, keys - warmup)
+        print("EditorTextShadow: \(keys) keys at \(shadow.bytes) bytes: copied \(EditorTextShadow.Spares.copiedBytes) B, moved in place \(EditorTextShadow.Spares.movedBytes) B, reused \(EditorTextShadow.Spares.reusedInPlace)")
+    }
+
+    /// The same in the hosted editor (real NSTextView, real ShellModel): a
+    /// 1 MB book, 30 keystrokes; the model's text is the view's after each,
+    /// and the shadow copied the whole text for at most a few of them (the
+    /// first keys, and any key whose oldest kept text a background scan still
+    /// reads).
+    func testTypingInTheHostedEditorCopiesTheTextForFewKeys() async throws {
+        SourceEditorView.Coordinator.verifyShadow = true
+        var s = "\\documentclass{article}\n\\begin{document}\n"
+        while s.utf8.count < 1_000_000 { s += "Naïve café patrons — résumé in hand — watched the tide turn.\n\n" }
+        s += "\\end{document}\n"
+        let model = ShellModel()
+        model.replaceProject(entryText: s)
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700), styleMask: [.titled])
+        window.contentView = NSHostingView(rootView: ContentView().environment(model).environmentObject(NearbyState()))
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.contentView = nil }
+        var found: NSTextView?
+        for _ in 0 ..< 300 {
+            found = TypingBenchDriver.findTextView(in: [window.contentView!])
+            if found != nil { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let tv = try XCTUnwrap(found)
+        let co = try XCTUnwrap(tv.delegate as? SourceEditorView.Coordinator)
+        tv.setSelectedRange(NSRange(location: (tv.string as NSString).length / 2, length: 0))
+        EditorTextShadow.Spares.resetCounters()
+        var copiedKeys = 0
+        for ch in "the quick brown fox jumps over" {
+            let before = EditorTextShadow.Spares.copiedBytes
+            tv.insertText(String(ch), replacementRange: tv.selectedRange())
+            if EditorTextShadow.Spares.copiedBytes > before { copiedKeys += 1 }
+            XCTAssertTrue(model.activeText.sameBytes(as: tv.string))
+            try await Task.sleep(nanoseconds: 5_000_000) // the run loop turns between keys, as typing does
+        }
+        XCTAssertEqual(co.shadowDrifts, 0)
+        XCTAssertLessThanOrEqual(copiedKeys, EditorTextShadow.Spares.capacity + 8, "most keystrokes reused a buffer in place")
+        print("EditorTextShadow hosted: 30 keys at \(model.activeText.utf8.count) bytes: \(copiedKeys) copied the text, reused \(EditorTextShadow.Spares.reusedInPlace)")
+    }
 }
