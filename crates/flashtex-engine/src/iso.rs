@@ -1878,7 +1878,17 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             let (x, y) = w(self, 0);
             self.later("saved cur_align", lh(x), lh(y));
             let (x1, y1) = w(self, 1);
-            self.ptr(K::List, lh(x1), lh(y1)); // the saved preamble
+            if ALIGN_BY_WORDS.with(|c| c.get()) {
+                // an enclosing alignment's preamble, saved while a nested
+                // one runs: tabskip glue and alignrecords, whose `info` is no
+                // node type, as the live one at `align_head` (`roots`), and
+                // compared by its words the same way (lane AUDIT-MATH: a
+                // call in a `\\vbox{\\halign}` in a cell, "unknown node type
+                // 76")
+                self.later("saved preamble", lh(x1), lh(y1));
+            } else {
+                self.ptr(K::List, lh(x1), lh(y1)); // the saved preamble
+            }
             self.later("saved cur_span", rh(x1), rh(y1));
             let (x2, y2) = w(self, 2);
             self.later("saved cur_loop", int(x2), int(y2));

@@ -756,6 +756,25 @@ fn hyphenation_exceptions_are_part_of_the_key() {
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
 
+#[test]
+fn calls_in_a_nested_alignment_compare_the_outer_preamble_by_words() {
+    // (lane AUDIT-MATH) an alignment in a cell of another (amsmath's
+    // `pmatrix` in `align`) saves the outer preamble on the alignment
+    // stack; its alignrecords' `info` is no node type, and the full
+    // verifier walked it as a node list ("unknown node type 76") for
+    // every call replayed in the inner alignment
+    let s = check(
+        "nested-align",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\&=4 \\scrollmode\n\
+         \\def\\measure{\\dimen0=1pt\\relax}\n\
+         \\setbox1\\vbox{\\halign{#&#\\cr a&\\vbox{\\halign{#\\cr\\relax\\measure x\\cr\\relax\\measure y\\cr\
+         \\relax\\measure z\\cr}}\\cr}}\n\
+         \\setbox1\\vbox{\\halign{#\\cr\\vbox{\\halign{#&#\\cr\\relax\\measure x&\\relax\\measure y\\cr\
+         \\relax\\measure z&w\\cr}}\\cr}}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
 /// e-TeX's penalty arrays are K2 values kept by content, not by pointer
 /// (BOX-MEMO.md §3): `\clubpenalties` set three times, the third array is
 /// allocated where the first one was freed, and a call that breaks a
