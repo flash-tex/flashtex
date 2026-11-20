@@ -34,7 +34,9 @@ expect() { # expect <description> <command...>
 }
 
 # 0. The check script itself must parse under the macOS /bin/bash (3.2).
-expect "check script parses under /bin/bash -n" /bin/bash -n "$CHECK"
+# NixOS has no /bin/bash (the PC runners), so there it parses under PATH's bash.
+SH=/bin/bash; [ -x "$SH" ] || SH=$(command -v bash)
+expect "check script parses under $SH -n" "$SH" -n "$CHECK"
 
 # 1. The violations fire.
 set +e
