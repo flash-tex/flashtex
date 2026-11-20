@@ -2007,9 +2007,18 @@ impl Globals {
         let cmd = utf16_to_name(&units);
         flashtex_engine::system::runsystem(&cmd)
     }
-    /// texmfmp.c's `calledit`: the editor is not run in phase S0; the
-    /// program ends as TeX Live's does after the editor.
-    pub fn call_edit(&mut self, _s: i32, _l: i32, _n: i32) {
+    /// texmfmp.c's `calledit` (tex.ch [51.1333]), after `E` at an error
+    /// prompt: the editor command of `TEXEDIT` run as the pdfTeX engine runs
+    /// it (`flashtex_engine::system::run_editor`), then the program ends
+    /// with status 1. Its `%s` is `Xchr(filename[i])` for each UTF-16 unit
+    /// of the name, and xetex.h's `Xchr(x)` is `x` stored in a `char`: the
+    /// unit's low byte (`é日.tex` gives the bytes E9 E5 `.tex`, as TeX
+    /// Live's XeTeX does). The input files are only read; the process ends.
+    pub fn call_edit(&mut self, s: i32, l: i32, n: i32) {
+        let name: Vec<u8> = (s..s + l)
+            .map(|k| self.str_pool[k as usize] as u8)
+            .collect();
+        flashtex_engine::system::run_editor(&name, n);
         exit_process(self, 1)
     }
 }

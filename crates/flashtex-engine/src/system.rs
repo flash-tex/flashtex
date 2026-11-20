@@ -3733,22 +3733,31 @@ impl Globals {
         let name: Vec<u8> = (s..s + l)
             .map(|k| self.xchr[self.str_pool[k as usize] as usize])
             .collect();
-        let edit = texmf_var("TEXEDIT").unwrap_or_else(|| "vi +%d '%s'".into());
-        match edit_command(edit.as_bytes(), &name, n) {
-            Ok(cmd) => {
-                let _ = std::io::stdout().flush();
-                record_effect("edit", &cmd);
-                if c_system(&cmd) != 0 {
-                    eprintln!("! Trouble executing `{}'.", String::from_utf8_lossy(&cmd));
-                }
-            }
-            // kpathsea's FATAL: `%s: fatal: ` and `.\n` around the message.
-            Err(twice) => eprintln!(
-                "{}: fatal: call_edit: `%%{twice}' appears twice in editor command.",
-                invocation_name()
-            ),
-        }
+        run_editor(&name, n);
         exit_process(self, 1)
+    }
+}
+
+/// `calledit`'s editor run, shared with the XeTeX port: the command of
+/// `TEXEDIT` (the environment or texmf.cnf, else web2c's default `vi +%d
+/// '%s'`) with `%s` the file name `name` (the bytes `Xchr` gave) and `%d`
+/// the line `n`, run by the shell; `! Trouble executing` on stderr when it
+/// fails. The caller ends the program with status 1 after it.
+pub fn run_editor(name: &[u8], n: i32) {
+    let edit = texmf_var("TEXEDIT").unwrap_or_else(|| "vi +%d '%s'".into());
+    match edit_command(edit.as_bytes(), name, n) {
+        Ok(cmd) => {
+            let _ = std::io::stdout().flush();
+            record_effect("edit", &cmd);
+            if c_system(&cmd) != 0 {
+                eprintln!("! Trouble executing `{}'.", String::from_utf8_lossy(&cmd));
+            }
+        }
+        // kpathsea's FATAL: `%s: fatal: ` and `.\n` around the message.
+        Err(twice) => eprintln!(
+            "{}: fatal: call_edit: `%%{twice}' appears twice in editor command.",
+            invocation_name()
+        ),
     }
 }
 
