@@ -6106,6 +6106,9 @@ impl Session {
         // and made again only where that does not show its answer)
         let mut verify = crate::lookupproof::Verifier::new();
         self.aux_appeared = false;
+        // a lookup kept below with an answer that no longer holds
+        // (`fixed_created`)
+        let mut kept_stale = false;
         for (i, l) in j
             .lookups
             .iter()
@@ -6128,6 +6131,7 @@ impl Session {
                         .as_deref()
                         .is_some_and(|p| self.fixed_created.contains(&system::out_key(p)))
                 {
+                    kept_stale = true;
                     continue;
                 }
                 if l.found.is_none() && now.as_deref().is_some_and(|p| p.ends_with(".aux")) {
@@ -6151,6 +6155,23 @@ impl Session {
             }
             if !seen.iter().any(|(x, _)| *x == d) {
                 seen.push((d, s));
+            }
+        }
+        // The journal keeps an answer for this pass that the directories,
+        // as they are now, no longer give (the `.aux` a stopped first
+        // compile wrote, which that run looked for and did not find): the
+        // signatures taken above are newer than that answer, so they vouch
+        // for no lookup. With them the next check, the directories
+        // unchanged since (the pass rewrites the files, it creates none),
+        // took every answer as holding and never made that lookup again:
+        // the compile ended after one pass, the `.aux` unread (#2186, where
+        // the signatures were not racy: more than `RACY_NS` after the
+        // stopped run made its files). No signature forces the lookups
+        // again (`truncate_journal`).
+        if kept_stale {
+            for (_, s) in seen.iter_mut() {
+                *s = StatSig::default();
+                s.racy = true;
             }
         }
         self.changed_lookup_last = bad_last;

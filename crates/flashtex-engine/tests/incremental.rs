@@ -1706,6 +1706,53 @@ fn a_cold_run_stopped_past_s0_is_kept() {
     }
 }
 
+/// Issue #2186: a first compile (no `.aux`) stopped past S₀, and the next
+/// compile only once the working directory's signature is no longer racy
+/// (`StatSig::racy`: more than `RACY_NS` after the stopped run made its
+/// files; a slow machine, a debug build, or the user reading a page before
+/// typing). That compile's first pass takes the stopped run's lookup of the
+/// `.aux` as it was made (not there: `fixed_created`), and it creates no
+/// file, so the directory's signature is the same when the pass ends: the
+/// check before the next pass must make that lookup again all the same.
+/// It took the unchanged directory as proof that no lookup's answer had
+/// changed, the compile ended after one pass, and the PDF kept the first
+/// pass's undefined references (`a_cold_run_stopped_past_s0_is_kept`'s
+/// "opened and stopped" case on a slow machine, 123587 vs 132171 bytes).
+#[test]
+fn a_stopped_first_compiles_aux_is_looked_for_again_past_the_racy_window() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = refs_doc("", 8);
+    let dir = e.dir.join("cold-stop-open-settled");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), &base).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let mut h = Host::start(&e, &dir);
+    let r = h.cmd("compile-interrupt 1 2");
+    assert!(r.contains("\"preempted\":true"), "not stopped: {r}");
+    assert!(
+        dir.join("doc.aux").exists(),
+        "the stopped run wrote no .aux"
+    );
+    // past the racy window: the directory's signature now proves that
+    // nothing was added to it or removed since
+    let window = u64::try_from(flashtex_engine::system::RACY_NS).unwrap();
+    std::thread::sleep(std::time::Duration::from_nanos(window + 200_000_000));
+    let edited = base.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
+    std::fs::write(dir.join("doc.tex"), &edited).unwrap();
+    std::fs::write(reference.join("doc.tex"), &edited).unwrap();
+    let r2 = h.cmd("compile");
+    assert!(
+        field(&r2, "passes").parse::<usize>().unwrap_or(0) > 1,
+        "the .aux the stopped run wrote was not read by a next pass: {r2}"
+    );
+    check_against(&e, &dir, &reference, &r2, "opened, stopped and settled");
+}
+
 /// Lane COLD-OPEN: a first compile (no `.aux`) takes its `.aux` point where
 /// `\document` begins, before it looks for the `.aux`, so the passes the new
 /// `.aux` asks for restart there, not from the format; the output is a
