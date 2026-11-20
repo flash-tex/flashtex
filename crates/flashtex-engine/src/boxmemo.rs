@@ -95,6 +95,22 @@ struct Config {
     stats_out: Option<String>,
     debug: bool,
     verify_fail: bool,
+    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-let or swap-glue): the replay
+    /// swaps which control sequence shares which list, or which skip
+    /// register shares which glue specification, on purpose (`bm_swap`), to
+    /// show that the full-state verifier sees it.
+    fault_swap: Option<Swap>,
+}
+
+/// `Config::fault_swap`: what `Globals::bm_swap` swaps.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Swap {
+    /// The sources of the first two `\let`s of a control sequence to a
+    /// macro.
+    Let,
+    /// The sources of the first two assignments that share a skip
+    /// register's glue specification (`\skip1=\skip2`).
+    Glue,
 }
 
 /// The macros offered by default (BOX-MEMO.md §2, §11): framed.sty's frame
@@ -163,6 +179,11 @@ pub struct Stats {
     /// many differed.
     pub full_verified: u64,
     pub full_differences: u64,
+    /// Of those, the comparisons the restricted walk settled, and those
+    /// the full walk did (`incr::same_state`: periodic, or the restricted
+    /// one did not hold).
+    pub restricted_walks: u64,
+    pub full_walks: u64,
     /// Control sequences a replay entered again (`Op::NewCs`, §12.3).
     pub entered: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
@@ -680,6 +701,11 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                 stats_out: std::env::var("FLASHTEX_BOXMEMO_STATS").ok(),
                 debug: std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some(),
                 verify_fail: std::env::var_os("FLASHTEX_BOXMEMO_VERIFY_FAIL").is_some(),
+                fault_swap: match std::env::var("FLASHTEX_BOXMEMO_FAULT").as_deref() {
+                    Ok("swap-let") => Some(Swap::Let),
+                    Ok("swap-glue") => Some(Swap::Glue),
+                    _ => None,
+                },
             });
         }
         f(c.as_ref().unwrap())
@@ -859,6 +885,19 @@ thread_local! {
 /// The host: an edit's window opens (`true`) or closes.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+}
+
+/// `incr::same_state` settled a full-state comparison by the restricted
+/// walk (`true`) or the full one.
+pub(crate) fn note_walk(restricted: bool) {
+    ST.with(|s| {
+        let mut s = s.borrow_mut();
+        if restricted {
+            s.stats.restricted_walks += 1;
+        } else {
+            s.stats.full_walks += 1;
+        }
+    });
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -4262,6 +4301,59 @@ impl Globals {
         }
     }
 
+    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-let): the first two `\let`s
+    /// of a control sequence to a macro swap their sources. With
+    /// `\let\R\X \let\S\Y`, `X` and `Y` macros with equal bodies, the
+    /// replay gives `R` `Y`'s list and `S` `X`'s: every reference count is
+    /// what the normal path leaves, so no word of either list differs; only
+    /// the pairing of each list with itself through `X` and `Y`, entries
+    /// neither path wrote, shows it (review of #2211, REVIEW-C2 M1).
+    ///
+    /// FLASHTEX_BOXMEMO_FAULT=swap-glue does the same to the first two
+    /// assignments that share a skip register's glue specification
+    /// (`\skip1=\skip2`, `Val::GlueFrom`): with equal specifications held
+    /// by a box register too, only the box's glue nodes, which pair each
+    /// specification with itself, show it.
+    ///
+    /// The first replay of the job is left whole: the job's first
+    /// comparison is a full walk (`incr::same_state`'s periodic one), and a
+    /// difference ends the entry's replays, so the swap is met by the
+    /// restricted walk.
+    fn bm_swap(ops: &[Op], what: Swap) -> Vec<Op> {
+        static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut ops = ops.to_vec();
+        if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+            return ops;
+        }
+        let lets: Vec<usize> = (0..ops.len())
+            .filter(|&i| match what {
+                Swap::Let => matches!(&ops[i], Op::Def { t, v: Val::LetCs(_), .. }
+                    if (CALL..=LONG_OUTER_CALL).contains(t)),
+                Swap::Glue => matches!(
+                    &ops[i],
+                    Op::Def {
+                        v: Val::GlueFrom(..),
+                        ..
+                    }
+                ),
+            })
+            .collect();
+        if let [i, j, ..] = lets[..] {
+            let (Op::Def { t: ti, v: vi, .. }, Op::Def { t: tj, v: vj, .. }) =
+                (ops[i].clone(), ops[j].clone())
+            else {
+                unreachable!()
+            };
+            if let Op::Def { t, v, .. } = &mut ops[i] {
+                (*t, *v) = (tj, vj);
+            }
+            if let Op::Def { t, v, .. } = &mut ops[j] {
+                (*t, *v) = (ti, vi);
+            }
+        }
+        ops
+    }
+
     /// Replay entry `i` of `cs`; its trailer token, if any, for the caller
     /// to back up (`main_control` then runs it).
     fn bm_replay(&mut self, cs: i32, i: usize) -> Option<i32> {
@@ -4292,7 +4384,14 @@ impl Globals {
                 }
             }
         }
-        for o in &ops {
+        let swapped;
+        let run: &[Op] = if let Some(what) = with_config(|c| c.fault_swap) {
+            swapped = Self::bm_swap(&ops, what);
+            &swapped
+        } else {
+            &ops
+        };
+        for o in run {
             match o {
                 Op::Begin(c) => self.new_save_level(*c),
                 Op::End => self.unsave(),
