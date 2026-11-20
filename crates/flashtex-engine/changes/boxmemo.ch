@@ -48,6 +48,14 @@
   flush_list(p);
 @z
 
+@x pdftex.web l.4541 - a box a recording frees may be one of its holes
+    hlist_node,vlist_node,unset_node: begin flush_node_list(list_ptr(p));
+@y
+    hlist_node,vlist_node,unset_node: begin
+      if bm_rec_on then flashtex_bm_free_box(p);
+      flush_node_list(list_ptr(p));
+@z
+
 @x pdftex.web l.6585 (after changes/readset.ch) - a name looked up is a read, found or not
 found: if rs_on then flashtex_id_read(j,l,p);
 @y
@@ -311,6 +319,15 @@ if intr_rec_on then flashtex_intr_command;
 if bm_rec_on then flashtex_bm_command;
 @z
 
+@x pdftex.web l.29733 - every box context a recording makes is checked (\.{\\lastbox}, \.{\\vsplit})
+@!n:halfword; {a box number}
+begin case cur_chr of
+@y
+@!n:halfword; {a box number}
+begin if bm_rec_on then flashtex_bm_begin_box;
+case cur_chr of
+@z
+
 @x pdftex.web l.29735 - a box a recording moves out of its register
 box_code: begin scan_register_num; fetch_box(cur_box);
   change_box(null); {the box becomes void, at the same level}
@@ -318,6 +335,13 @@ box_code: begin scan_register_num; fetch_box(cur_box);
 box_code: begin scan_register_num; fetch_box(cur_box);
   change_box(null); {the box becomes void, at the same level}
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
+@z
+
+@x pdftex.web l.30171 - ... and one whose list it moves (\.{\\unhbox}, \.{\\unvbox})
+else  begin link(tail):=list_ptr(p); change_box(null);
+@y
+else  begin link(tail):=list_ptr(p); change_box(null);
+  if bm_rec_on then flashtex_bm_box_use(cur_val,4);
 @z
 
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
@@ -507,6 +531,7 @@ function flashtex_bm_enabled:boolean; external;
 procedure flashtex_bm_loaded; external;
 procedure flashtex_bm_new_cs(@!p:pointer); external;
 procedure flashtex_bm_freed(@!p:pointer); external;
+procedure flashtex_bm_free_box(@!p:pointer); external;
 procedure flashtex_bm_call(@!n:integer;@!s:integer;@!w:pointer); external;
 procedure flashtex_bm_group(@!c:group_code); external;
 procedure flashtex_bm_unsave; external;
@@ -521,6 +546,7 @@ procedure flashtex_bm_internal; external;
 procedure flashtex_bm_pop_cond; external;
 procedure flashtex_bm_switch; external;
 procedure flashtex_bm_command; external;
+procedure flashtex_bm_begin_box; external;
 procedure flashtex_bm_box(@!n:integer); external;
 procedure flashtex_bm_box_use(@!n:integer;@!k:integer); external;
 procedure flashtex_bm_reg_read(@!t:integer;@!n:integer); external;

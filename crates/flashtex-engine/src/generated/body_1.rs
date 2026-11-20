@@ -2965,6 +2965,9 @@ impl Globals {
                             match __av_mem[crate::ix::U((p) as usize)].hh().b0() {
                                 hlist_node | vlist_node | unset_node => {
                                     {
+                                        if self.bm_rec_on {
+                                            self.flashtex_bm_free_box(p);
+                                        }
                                         self.flush_node_list(__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh());
                                         self.free_node(p, box_node_size);
                                         break 'l_done_f;

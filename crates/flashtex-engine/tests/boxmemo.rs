@@ -195,6 +195,23 @@ fn outside_the_model_never_replays() {
 }
 
 #[test]
+fn lastbox_in_a_box_context_never_takes_the_outer_list() {
+    // (lane AUDIT-MATH) `\\setbox3\\lastbox` reaches `begin_box` through
+    // `scan_box`, not as a command of its own: it took the box the call
+    // was offered after off the outer list, and `\\endgroup` freed it
+    // (`link` of the recorded tail, read at the end, was a freed node's)
+    let s = check(
+        "lastbox-outer",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\def\\measure{\\begingroup\\setbox3\\lastbox\\global\\dimen1=\\wd3 \\endgroup}\n\
+         \\def\\one#1{\\setbox1#1{\\hbox{\\vrule width 1pt}\\relax\\measure}\\showbox1 }\n\
+         \\one\\hbox\\one\\hbox\\one\\hbox\\one\\vbox\\one\\vbox\\one\\vbox\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
 fn void_box_reads_are_part_of_the_key() {
     let s = check(
         "void",
@@ -221,6 +238,183 @@ fn draw_calls_replay_with_their_hole() {
          \\one{3pt}\\one{3pt}\\one{3pt}\\one{4pt}\\one{4pt}\\one{3pt}\\end\n",
     );
     assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+/// A draw call `\\one` offers in an `\\hbox` after `#1` sets its hole,
+/// `\\box9`, to one of two boxes of the same dimensions, `\\a` and `\\b`.
+const HOLE_PRELUDE: &str = "\\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+    \\def\\one#1{#1\\setbox1\\hbox{\\relax\\measure}\\showbox1 }\n";
+
+#[test]
+fn holes_changed_or_read_past_their_key_never_replay() {
+    // (lane AUDIT-MATH) a replay splices in the register's box of the
+    // moment as it is, so the call may neither change the hole (`\\raise`:
+    // `box_end` shifts it) nor read its contents: `\\copy` of a box the call
+    // made around it, or of the hole itself taken back with `\\lastbox`
+    let s = check(
+        "hole-changed",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n",
+            HOLE_PRELUDE,
+            "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+             \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n\
+             \\def\\measure{\\raise2pt\\box9\\relax}\\one\\a\\one\\a\\one\\a\n\
+             \\def\\measure{\\begingroup\\setbox2\\hbox{\\box9}\\copy2\\box2\\endgroup}\\one\\a\\one\\a\\one\\b\n\
+             \\def\\measure{\\begingroup\\box9\\setbox3\\lastbox\\copy3\\box3\\endgroup}\\one\\a\\one\\a\\one\\b\n\
+             \\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    // a box the call made around the hole may still be measured and
+    // unboxed: that moves the hole node, unread
+    let s = check(
+        "hole-unboxed",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n",
+            HOLE_PRELUDE,
+            "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+             \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n\
+             \\def\\measure{\\begingroup\\setbox2\\hbox{\\box9}\\dimen0=\\wd2 \\unhbox2\\kern\\dimen0\\endgroup}\n\
+             \\one\\a\\one\\a\\one\\a\\one\\b\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn holes_in_a_formula_never_replay() {
+    // (lane AUDIT-MATH) a box moved into a formula is a noad's `sub_box`:
+    // `make_scripts` widens and shifts it (tex.web §756), and `clean_box`
+    // frees the kern of a box that is a character and a kern (§721)
+    let Some((files, fonts)) = math_fonts() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "hole-math",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
+            fonts,
+            HOLE_PRELUDE,
+            "\\def\\a{\\setbox9\\hbox{\\r f\\kern1pt}}\\def\\b{\\setbox9\\hbox{\\kern1pt\\r f}}\n\
+             \\def\\measure{$x^{\\box9}$}\\one\\a\\one\\a\\one\\a\n\
+             \\def\\measure{$\\mathop{\\box9}\\limits$}\\one\\b\\one\\b\\one\\a\\end\n",
+        ]
+        .concat(),
+        &files,
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+/// (lane DRAFTS-BM2) `\setbox2\box9` makes the hole itself the box of a
+/// register the call wrote. `measure` uses it; each call is offered with
+/// the hole's contents `calls` names (`\a` and `\b` have the same key and
+/// other contents), and none may replay.
+fn hole_set_to_a_register(tag: &str, measure: &str, calls: &str, math: bool) {
+    let mut files = vec![];
+    let mut fonts = "";
+    if math {
+        let Some((f, m)) = math_fonts() else {
+            common::no_texlive();
+            return;
+        };
+        files = f;
+        fonts = m;
+    }
+    let s = check_with(
+        tag,
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
+            fonts,
+            HOLE_PRELUDE,
+            if math {
+                "\\def\\a{\\setbox9\\hbox{\\r f\\kern1pt}}\\def\\b{\\setbox9\\hbox{\\kern1pt\\r f}}\n"
+            } else {
+                "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+                 \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n"
+            },
+            "\\def\\measure{",
+            measure,
+            "}",
+            calls,
+            "\\end\n",
+        ]
+        .concat(),
+        &files,
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn a_copy_of_a_register_set_to_the_hole_never_replays() {
+    // `\\copy2` copies the hole's contents into the output by value
+    hole_set_to_a_register(
+        "hole-own-copy",
+        "\\begingroup\\setbox2\\box9\\copy2\\box2\\endgroup",
+        "\\one\\a\\one\\a\\one\\b",
+        false,
+    );
+}
+
+#[test]
+fn an_unhbox_of_a_register_set_to_the_hole_never_replays() {
+    // `\\unhbox2` moves the hole's list, its contents, into the output and
+    // frees the hole node (`unpackage`, tex.web §1110)
+    hole_set_to_a_register(
+        "hole-own-unhbox",
+        "\\begingroup\\setbox2\\box9\\unhbox2\\endgroup",
+        "\\one\\a\\one\\a\\one\\b",
+        false,
+    );
+}
+
+#[test]
+fn a_register_set_to_the_hole_moved_into_a_formula_never_replays() {
+    // `\\box2` in math mode makes the hole a noad's `sub_box`; `make_op`'s
+    // `clean_box` frees the kern of a box that is a character and a kern
+    // (tex.web §721), which the key does not see
+    hole_set_to_a_register(
+        "hole-own-math",
+        "\\begingroup\\setbox2\\box9 $\\mathop{\\box2}\\limits$\\endgroup",
+        "\\one\\b\\one\\b\\one\\a",
+        true,
+    );
+}
+
+#[test]
+fn a_freed_hole_is_never_taken_for_a_box_made_after_it() {
+    // (lane DRAFTS-BM2) setting again the register the call set to the hole,
+    // or to a box around it, frees the hole; the next box node takes its
+    // address, and the end took that box for the hole: a replay spliced the
+    // register's box in its place (with BOX-MEMO on, `\\kern 2.0` and a
+    // `0.0` rule where pdfTeX has the call's own 2pt rule)
+    let rule = "\\hbox to 2pt{\\vrule width 2pt height 1pt}";
+    for (i, setup) in [
+        "\\begingroup\\setbox2\\box9 \\setbox2\\hbox{}\\endgroup",
+        "\\begingroup\\setbox2\\hbox{\\box9}\\setbox2\\hbox{}\\endgroup",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let s = check(
+            &format!("hole-freed-{i}"),
+            &[
+                "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n",
+                HOLE_PRELUDE,
+                "\\def\\a{\\setbox9\\hbox{\\vrule width 2pt height 1pt}}\n\
+                 \\def\\b{\\setbox9\\hbox{\\kern2pt\\vrule width 0pt height 1pt}}\n\
+                 \\def\\measure{",
+                setup,
+                rule,
+                rule,
+                "}\\one\\a\\one\\a\\one\\b\\one\\b\\end\n",
+            ]
+            .concat(),
+        );
+        assert_eq!(stat(&s, "hits"), 0, "{setup}: {s}");
+    }
 }
 
 #[test]
@@ -518,12 +712,37 @@ fn a_box_made_in_a_group_is_not_the_calls_after_it() {
 
 /// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
 fn cmr10() -> Option<Vec<u8>> {
+    tex_file("cmr10.tfm")
+}
+
+/// TeX Live's file `name`, or `None` (the test then passes with a note).
+fn tex_file(name: &str) -> Option<Vec<u8>> {
     let bin = flashtex_engine::resolver::find_texlive_bin()?;
     let out = Command::new(bin.join("kpsewhich"))
-        .arg("cmr10.tfm")
+        .arg(name)
         .output()
         .ok()?;
     std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+/// Files for [`check_with`]: (name, bytes).
+type Files = Vec<(&'static str, Vec<u8>)>;
+
+/// Plain TeX's four text-size fonts, as files for [`check_with`], and the
+/// lines that load them into families 0-3 at every size.
+fn math_fonts() -> Option<(Files, &'static str)> {
+    let mut files = vec![];
+    for n in ["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"] {
+        files.push((n, tex_file(n)?));
+    }
+    Some((
+        files,
+        "\\font\\r=cmr10 \\font\\i=cmmi10 \\font\\s=cmsy10 \\font\\e=cmex10\n\
+         \\textfont0=\\r \\scriptfont0=\\r \\scriptscriptfont0=\\r\n\
+         \\textfont1=\\i \\scriptfont1=\\i \\scriptscriptfont1=\\i\n\
+         \\textfont2=\\s \\scriptfont2=\\s \\scriptscriptfont2=\\s\n\
+         \\textfont3=\\e \\scriptfont3=\\e \\scriptscriptfont3=\\e\n",
+    ))
 }
 
 #[test]

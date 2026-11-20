@@ -503,6 +503,23 @@ How a draw call is recorded and replayed:
   - At replay, that node is spliced into the rebuilt fragment where the recording found it.
   - `\copy`, `\unhbox` and `\unvbox` of a box not made by the call abandon the recording, because
     they read its contents.
+  - So does anything else that reads the hole's contents or changes it, since a replay splices the
+    register's box in as it is (lane AUDIT-MATH):
+    - `\copy` or `\unhcopy` of a register the call wrote whose box is or holds the hole, and
+      `\unhbox` of the hole itself (`\setbox2\box9\unhbox2`);
+    - `\lastbox` taking the hole back off a list;
+    - the hole freed (`flush_node_list`, as when a register set to it or to a box around it is set
+      again): a box made later can take its address, and the end would take it for the hole
+      (lane DRAFTS-BM2);
+    - a hole the normal path left with other dimensions or another shift than the key's
+      (`\raise`, `\lower`, `\moveleft` and `\moveright` set its shift in `box_end`, tex.web
+      §1076);
+    - a box moved in math mode. It becomes a noad's `sub_box`: `make_scripts` widens and shifts
+      it (§756), `make_op` shifts it (§750), `clean_box` frees the kern of a box that is a
+      character and a kern (§721), and `rebox` frees it.
+
+    `\unhbox` and `\unvbox` of a box the call made around the hole still replay: they move the
+    hole node and don't read it.
 - **The rest of the outer list is untouched.** These are also recorded and replayed: `space_factor`
   (box_end sets it to 1000), the voided register, and the mode (unchanged).
 - **The page builder never runs.** In restricted horizontal mode it cannot.
