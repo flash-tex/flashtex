@@ -25,10 +25,10 @@
      "engine_kind": "tex",
      "engine_sha256": "eed8d2e8072174b0bcbb5345cf7a37ddabce1281a9089c846cc614a997857041",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
-     "host": "runnervm0hi8g",
+     "host": "ip-10-0-133-241",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-     "platform": "Linux 7.0.0-1020-azure x86_64",
+     "platform": "Linux 7.0.0-1016-aws x86_64",
      "source": "parity"
     },
     {
@@ -38,20 +38,20 @@
      "engine_kind": "tex",
      "engine_sha256": "eed8d2e8072174b0bcbb5345cf7a37ddabce1281a9089c846cc614a997857041",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
-     "host": "runnervm0hi8g",
+     "host": "ip-10-0-139-1",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-     "platform": "Linux 7.0.0-1020-azure x86_64",
+     "platform": "Linux 7.0.0-1016-aws x86_64",
      "source": "parity"
     },
     {
-     "date": "2026-11-22T11:12:46Z",
+     "date": "2026-11-22T16:13:28Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "eed8d2e8072174b0bcbb5345cf7a37ddabce1281a9089c846cc614a997857041",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "git_sha": "1ac9f7b2555d2c7e61d656a5c8a2690fef9683a4",
-     "host": "runnervm0hi8g",
+     "host": "ip-10-0-132-173",
      "host_label": "linux-da64c3ac8273",
      "identity_problem": null,
      "ignored_tiers": [],
@@ -61,22 +61,22 @@
       "texlive_root": "/home/runner/work/_temp/texlive/2026",
       "tlpdb_sha256": "50f564d8438549d29274e29cd9cfb4cdad2caa65d32517a2390c6d6f4472ab00"
      },
-     "platform": "Linux 7.0.0-1020-azure x86_64",
+     "platform": "Linux 7.0.0-1016-aws x86_64",
      "records_git_sha": true,
      "source": "nightly"
     },
     {
-     "host": "runnervm0hi8g",
+     "host": "ip-10-0-132-173",
      "identity_problem": null,
      "source": "latex-suites"
     },
     {
-     "host": "runnervm0hi8g",
+     "host": "ip-10-0-132-173",
      "identity_problem": null,
      "source": "package-smoke"
     },
     {
-     "host": "runnervm0hi8g",
+     "host": "ip-10-0-132-173",
      "identity_problem": null,
      "source": "fonts"
     }
@@ -234,7 +234,7 @@
    "metric": "P-T1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-133-241",
     "invalid": null,
     "note": "not run",
     "of": null,
@@ -271,7 +271,7 @@
    "metric": "P-T2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-133-241",
     "invalid": null,
     "note": "not run",
     "of": null,
@@ -312,7 +312,7 @@
    "metric": "L0",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-133-241",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -353,7 +353,7 @@
    "metric": "L1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-133-241",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -394,7 +394,7 @@
    "metric": "L2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-133-241",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -435,7 +435,7 @@
    "metric": "L3",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-133-241",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -716,7 +716,7 @@
    "metric": "P-T1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not run",
     "of": null,
@@ -751,7 +751,7 @@
    "metric": "P-T2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not run",
     "of": null,
@@ -792,7 +792,7 @@
    "metric": "L0",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -833,7 +833,7 @@
    "metric": "L1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -874,7 +874,7 @@
    "metric": "L2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -915,7 +915,7 @@
    "metric": "L3",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -956,7 +956,7 @@
    "metric": "P-T1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not run",
     "of": null,
@@ -991,7 +991,7 @@
    "metric": "P-T2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not run",
     "of": null,
@@ -1032,7 +1032,7 @@
    "metric": "L0",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -1073,7 +1073,7 @@
    "metric": "L1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -1114,7 +1114,7 @@
    "metric": "L2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -1155,7 +1155,7 @@
    "metric": "L3",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-139-1",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -1196,7 +1196,7 @@
    "metric": "P-T1",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -1231,7 +1231,7 @@
    "metric": "P-T2",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": "not evaluated in this run",
     "of": null,
@@ -1275,7 +1275,7 @@
      "harness error": 3790,
      "oracle": 1210
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": null,
     "of": 0,
@@ -1319,7 +1319,7 @@
      "harness error": 3790,
      "oracle": 1210
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": null,
     "of": 0,
@@ -1363,7 +1363,7 @@
      "harness error": 3790,
      "oracle": 1210
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": null,
     "of": 0,
@@ -1407,7 +1407,7 @@
      "harness error": 3790,
      "oracle": 1210
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": null,
     "of": 0,
@@ -1451,7 +1451,7 @@
      "harness error": 3790,
      "oracle": 1210
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": null,
     "of": 0,
@@ -1486,7 +1486,7 @@
    "metric": "tests",
    "new": {
     "excluded": {},
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": "22 failed, 0 unexpected against this host's pdfTeX (reference run); dirs: latex2e/base 799/800, latex2e/required/amsmath 39/39, latex2e/required/cyrillic 1/1, latex2e/required/firstaid 23/23, latex2e/required/graphics@etex 31/31, latex2e/required/latex-lab 316/330, latex2e/required/tools 129/132, latex3/l3kernel 202/206, latex3/l3kernel[config-backend]@etex-dvips 14/14, latex3/l3kernel[config-backend]@etex-dvisvgm 14/14",
     "of": 1590,
@@ -1524,7 +1524,7 @@
     "excluded": {
      "the reference does not compile it on this TeX Live; the candidate fails identically": 3
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": "excluded: tabls, tabu, thmtools",
     "of": 481,
@@ -1561,7 +1561,7 @@
     "excluded": {
      "oracle fails too": 17
     },
-    "host": "runnervm0hi8g",
+    "host": "ip-10-0-132-173",
     "invalid": null,
     "note": "per kind: opentype 0/0, pk 70/70, truetype 3/3, type1 294/294, vf 74/74",
     "of": 441,
